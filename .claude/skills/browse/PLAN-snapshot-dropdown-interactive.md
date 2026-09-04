@@ -1,0 +1,1 @@
+/Users/oliverstevenson/conductor/repos/shiedler/.claude/skills/gstack/browse/PLAN-snapshot-dropdown-interactive.md
