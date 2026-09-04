@@ -59,6 +59,9 @@ pub enum ShieldError {
     #[msg("This configuration change is not a loosening action. Use tighten (instant) instead.")]
     NotALoosening,
 
+    #[msg("This amount is at or above the row-4 top-up threshold and cannot execute on the instant path. Use propose_top_up instead (30m+ cooldown, CRE-extendable).")]
+    AmountRequiresGatedTopUp,
+
     #[msg("Arithmetic overflow.")]
     MathOverflow,
 

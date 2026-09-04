@@ -27,7 +27,7 @@ import {
   executeFullExitIx,
   executeTopUpIx,
   executeRuleChangeIx,
-  fetchVault,
+  fetchProposal,
   SHIELD_PROGRAM_ID,
 } from "./shield-client";
 
@@ -105,18 +105,21 @@ async function cmdExecuteMatured(
 
   if (category === ProposalCategory.TopUp) {
     if (!destinationTokenAccount) throw new Error("top-up execution requires a destination token account");
-    const state = await fetchVault(connection, vault);
-    if (!state) throw new Error("vault not found");
-    // NOTE: the recovery CLI doesn't know the destination owner without
-    // reading the proposal account's raw bytes (ProposalAction is a
-    // hand-decoded enum this file doesn't parse for brevity) -- in
-    // practice the operator supplies the destination token account
-    // directly, which is all execute_top_up needs.
+    // The destination OWNER is read directly off the pending proposal --
+    // this is the fix that makes standalone recovery actually standalone
+    // (Invariant 10): earlier, this command required the caller to
+    // already know the destination owner out-of-band, which defeats the
+    // point of a recovery tool. Now it only needs a destination token
+    // account (any correctly-owned SPL account works; the program itself
+    // verifies ownership against the registry).
+    const [proposal] = proposalPda(vault, ProposalCategory.TopUp);
+    const decoded = await fetchProposal(connection, proposal);
+    if (!decoded || decoded.action.kind !== "topUp") throw new Error("no pending top-up proposal found");
     const ix = executeTopUpIx({
       executor: authorityKp.publicKey,
       vault,
       vaultTokenAccount,
-      destinationOwner: destinationTokenAccount, // caller-supplied; see note above
+      destinationOwner: decoded.action.destinationOwner,
       destinationTokenAccount,
     });
     const tx = new Transaction().add(ix);

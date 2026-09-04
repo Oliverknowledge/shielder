@@ -363,7 +363,7 @@ pub mod shield_vault {
 
         let balance = ctx.accounts.vault_token_account.amount;
         let threshold = ctx.accounts.vault.top_up_threshold_amount(balance)?;
-        require!(amount < threshold, ShieldError::NotATightening); // amount too large for instant path
+        require!(amount < threshold, ShieldError::AmountRequiresGatedTopUp);
 
         ctx.accounts.vault.roll_buckets(now)?;
         ctx.accounts.vault.check_and_reserve_velocity(amount)?;

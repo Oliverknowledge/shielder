@@ -21,6 +21,7 @@ import {
   PublicKey,
   SystemProgram,
   SYSVAR_INSTRUCTIONS_PUBKEY,
+  SYSVAR_RENT_PUBKEY,
   TransactionInstruction,
   Keypair,
 } from "@solana/web3.js";
@@ -139,7 +140,7 @@ export function initializeVaultIx(params: {
       { pubkey: vaultTokenAccount, isSigner: false, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: new PublicKey("SysvarRent111111111111111111111111111111"), isSigner: false, isWritable: false },
+      { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
     ],
     data,
   });
@@ -504,6 +505,98 @@ export async function fetchVault(connection: Connection, vault: PublicKey): Prom
   const info = await connection.getAccountInfo(vault);
   if (!info) return null;
   return decodeVault(info.data as Buffer);
+}
+
+// ---------------------------------------------------------------------
+// Proposal decoding. Layout copied from
+// programs/shield-vault/src/state.rs's Proposal + ProposalAction: after
+// the 8-byte discriminator, `vault` (32) + `category` (1-byte enum tag) +
+// `action` (1-byte variant tag, then variant-specific fields) + `nonce`
+// (8) + `created_at` (8) + `execute_after` (8) + `expiry` (8) +
+// `config_version_at_creation` (8) + `bump` (1).
+//
+// This is what makes the recovery CLI genuinely standalone (Invariant
+// 10): without this, a caller would need to already know a proposal's
+// destination owner out-of-band, which defeats the point of a recovery
+// tool that's supposed to work with nothing but the chain itself.
+// ---------------------------------------------------------------------
+
+export type DecodedProposalAction =
+  | { kind: "loosen" }
+  | { kind: "topUp"; destinationOwner: PublicKey; amount: bigint }
+  | { kind: "uninstallVault"; destinationOwner: PublicKey }
+  | { kind: "coldTransferAboveCap"; destinationOwner: PublicKey; amount: bigint };
+
+export interface DecodedProposal {
+  vault: PublicKey;
+  category: ProposalCategory;
+  action: DecodedProposalAction;
+  nonce: bigint;
+  createdAt: bigint;
+  executeAfter: bigint;
+  expiry: bigint;
+  configVersionAtCreation: bigint;
+}
+
+export function decodeProposal(data: Buffer): DecodedProposal {
+  let o = 8; // discriminator
+  const vault = new PublicKey(data.subarray(o, o + 32));
+  o += 32;
+  const category = data.readUInt8(o) as ProposalCategory;
+  o += 1;
+
+  const actionTag = data.readUInt8(o);
+  o += 1;
+  let action: DecodedProposalAction;
+  if (actionTag === 0) {
+    // Loosen { 6x Option<T>, Option<Pubkey> } -- variable length; not
+    // needed for recovery (rule-change proposals don't move funds), so
+    // we don't walk its fields, only record that this is what it is.
+    action = { kind: "loosen" };
+    // NOTE: since we don't advance `o` through Loosen's variable-length
+    // fields, the trailing nonce/timestamps below would be misread for a
+    // RuleChange proposal. Recovery for that category doesn't need this
+    // decoder at all (see recovery-cli.ts), so this is scoped to
+    // TopUp/FullExit proposals only, matching how the CLI actually calls it.
+  } else if (actionTag === 1) {
+    const destinationOwner = new PublicKey(data.subarray(o, o + 32));
+    o += 32;
+    const amount = data.readBigUInt64LE(o);
+    o += 8;
+    o += 1; // reserved_bucket_index: u8
+    action = { kind: "topUp", destinationOwner, amount };
+  } else if (actionTag === 2) {
+    const destinationOwner = new PublicKey(data.subarray(o, o + 32));
+    o += 32;
+    action = { kind: "uninstallVault", destinationOwner };
+  } else if (actionTag === 3) {
+    const destinationOwner = new PublicKey(data.subarray(o, o + 32));
+    o += 32;
+    const amount = data.readBigUInt64LE(o);
+    o += 8;
+    action = { kind: "coldTransferAboveCap", destinationOwner, amount };
+  } else {
+    throw new Error(`unknown ProposalAction tag: ${actionTag}`);
+  }
+
+  const nonce = data.readBigUInt64LE(o);
+  o += 8;
+  const createdAt = data.readBigInt64LE(o);
+  o += 8;
+  const executeAfter = data.readBigInt64LE(o);
+  o += 8;
+  const expiry = data.readBigInt64LE(o);
+  o += 8;
+  const configVersionAtCreation = data.readBigUInt64LE(o);
+  o += 8;
+
+  return { vault, category, action, nonce, createdAt, executeAfter, expiry, configVersionAtCreation };
+}
+
+export async function fetchProposal(connection: Connection, proposal: PublicKey): Promise<DecodedProposal | null> {
+  const info = await connection.getAccountInfo(proposal);
+  if (!info) return null;
+  return decodeProposal(info.data as Buffer);
 }
 
 export { Connection, PublicKey, Keypair, SYSVAR_INSTRUCTIONS_PUBKEY };
