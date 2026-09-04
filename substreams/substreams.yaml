@@ -1,0 +1,113 @@
+specVersion: v0.1.0
+package:
+  name: shield_behavioral_memory
+  version: v0.1.0
+  url: https://github.com/shiedler/port-vila
+  doc: |
+    Shield's behavioral-memory pipeline. Parses raw Solana instruction data
+    for the Shield vault program and its registered execution wallets, and
+    derives, per docs/designs/shield-treasury-vault.md:
+
+      - top-up / return totals per execution wallet
+      - realized P&L via closed-cycle USDC accounting (with FIFO cost-basis
+        as an upgrade path once the closed-cycle module is solid)
+      - loss-streak sequences (7-day recency window)
+      - median funding size (30-day rolling window)
+      - rolling cumulative funding velocity (24h sliding window)
+
+    All aggregated PER USER across every execution wallet that user has
+    registered with their Shield vault -- not per-wallet -- so structuring a
+    reload across multiple registered wallets can't evade the same limits a
+    single wallet would hit (see Premise 4 / Invariant 6 in the design doc).
+
+imports:
+  solana: https://github.com/streamingfast/firehose-solana/releases/download/v0.1.0/solana-common-v0.1.0.spkg
+
+protobuf:
+  files:
+    - shield/v1/behavioral.proto
+  importPaths:
+    - ./proto
+
+binaries:
+  default:
+    type: wasm/rust-v1
+    file: ./target/wasm32-unknown-unknown/release/shield_behavioral_memory.wasm
+
+modules:
+  # --- Stage 1: raw extraction ---------------------------------------
+  - name: map_vault_transfers
+    kind: map
+    initialBlock: 0 # set to Shield's actual deployment slot before running
+    inputs:
+      - source: sf.solana.type.v1.Block
+    output:
+      type: proto:shield.v1.VaultTransfers
+    doc: |
+      Filters each block's transactions down to instructions that invoke
+      the Shield vault program (declare_id! in programs/shield-vault), and
+      decodes each into a typed VaultTransfer event: top-up, cold transfer,
+      full exit, deposit, or registration change. This is the load-bearing
+      onchain-truth layer -- everything downstream derives from it, not
+      from a self-reported balance.
+
+  - name: map_execution_wallet_activity
+    kind: map
+    initialBlock: 0
+    inputs:
+      - source: sf.solana.type.v1.Block
+      - map: map_vault_transfers # to know which wallets are registered as `execution`
+    output:
+      type: proto:shield.v1.ExecutionWalletActivity
+    doc: |
+      For every wallet registered as `execution` (per map_vault_transfers'
+      registration events), decodes swap instructions from Jupiter,
+      Raydium, and pump.fun in that wallet's transaction history into a
+      normalized SwapEvent (in-token, in-amount, out-token, out-amount,
+      slot, tx signature). This is the raw feed the P&L / loss-streak
+      derivation below consumes.
+
+  # --- Stage 2: stateful behavioral derivation ------------------------
+  - name: store_user_behavioral_state
+    kind: store
+    updatePolicy: set
+    valueType: proto:shield.v1.UserBehavioralState
+    inputs:
+      - map: map_vault_transfers
+      - map: map_execution_wallet_activity
+    doc: |
+      The stateful core. Per Shield vault (== per user), maintains:
+
+        - top_up_total_usdc / return_total_usdc, keyed by execution wallet
+          and aggregated across all of that user's execution wallets
+        - realized_pnl_usdc: closed-cycle USDC accounting (total USDC sent
+          to an execution wallet minus total USDC returned from it,
+          counting only completed round-trips -- NOT net-flow against
+          "current holdings value", which would require a price oracle we
+          deliberately don't take on; see design doc Graph section)
+        - loss_streak: consecutive realized-loss round-trips, decayed by
+          the 7-day recency window
+        - median_funding_size_usdc: computed over a 30-day rolling window
+          of top-up amounts
+        - rolling_velocity_usdc: sum of outbound vault transfers (top-ups +
+          capped cold transfers) inside a 24h sliding window -- this
+          mirrors the vault program's own onchain accumulator so the
+          subgraph and the vault agree on what "velocity" means; the vault
+          is still the enforcement authority, this is the queryable mirror
+          for the scoreboard and the Guardian.
+
+  # --- Stage 3: subgraph output ---------------------------------------
+  - name: graph_out
+    kind: map
+    inputs:
+      - store: store_user_behavioral_state
+        mode: deltas
+    output:
+      type: proto:sf.substreams.sink.entity.v1.EntityChanges
+    doc: |
+      Emits entity changes for The Graph's Substreams-powered subgraph:
+      one `UserBehavioralProfile` entity per Shield vault, queryable via
+      the standard subgraph GraphQL endpoint. This is what the scoreboard
+      and the Guardian's heuristic layer both read from.
+
+network: solana-mainnet-beta

@@ -1,0 +1,22 @@
+[workspace]
+
+[package]
+name = "shield_behavioral_memory"
+version = "0.1.0"
+edition = "2021"
+description = "Shield's Substreams-for-Solana behavioral-memory pipeline"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+substreams = "0.5"
+substreams-solana = "0.10"
+prost = "0.11"
+bs58 = "0.5"
+sha2 = "0.10"
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = "debuginfo"

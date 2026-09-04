@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["programs/shield-vault"]
+# substreams/ is a separate wasm32-unknown-unknown crate with its own
+# [workspace] table -- excluded here so its (very different) dependency
+# tree never has to reconcile with the Anchor program's.
+exclude = ["substreams"]
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1

@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package shield.v1;
+
+// One decoded Shield-vault-program instruction, normalized across the
+// program's instruction set. Mirrors the ProposalAction / instruction
+// surface in programs/shield-vault/src/lib.rs -- this is the ground truth
+// the rest of the pipeline derives from.
+message VaultTransfer {
+  string vault = 1; // vault PDA, base58
+  string signature = 2; // transaction signature, base58
+  int64 slot = 3;
+  int64 block_time = 4; // unix seconds
+
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    DEPOSIT = 1; // inbound, always unrestricted
+    INSTANT_TOP_UP = 2; // row 4, below-threshold path
+    PROPOSED_TOP_UP_EXECUTED = 3; // row 4, gated path, at execution
+    INSTANT_COLD_TRANSFER = 4; // row 6, capped, instant
+    PROPOSED_COLD_TRANSFER_ABOVE_CAP_EXECUTED = 5; // row 5 (cold branch)
+    FULL_EXIT_EXECUTED = 6; // row 5 (uninstall branch)
+    REGISTER_EXECUTION = 7;
+    REGISTER_COLD_EXECUTED = 8; // via execute_rule_change
+    REMOVE_REGISTRATION = 9;
+    TIGHTEN = 10;
+    APPLY_CRE_VERDICT = 11;
+  }
+  Kind kind = 5;
+
+  string destination_owner = 6; // registered owner pubkey, if applicable
+  uint64 amount_usdc_raw = 7; // 6-decimal USDC raw units, if applicable
+}
+
+message VaultTransfers {
+  repeated VaultTransfer transfers = 1;
+}
+
+// A normalized swap in a registered execution wallet, decoded from
+// Jupiter / Raydium / pump.fun instruction data.
+message SwapEvent {
+  string execution_wallet = 1;
+  string signature = 2;
+  int64 slot = 3;
+  int64 block_time = 4;
+  string venue = 5; // "jupiter" | "raydium" | "pumpfun"
+  string in_mint = 6;
+  uint64 in_amount_raw = 7;
+  string out_mint = 8;
+  uint64 out_amount_raw = 9;
+}
+
+message ExecutionWalletActivity {
+  repeated SwapEvent swaps = 1;
+}
+
+// One closed round-trip: USDC left the execution wallet into a position,
+// and (some of) it later came back as USDC. Realized, not unrealized --
+// this is what "closed-cycle USDC accounting" means in the design doc.
+message ClosedCycle {
+  string execution_wallet = 1;
+  uint64 usdc_out_raw = 2; // USDC that funded the position
+  uint64 usdc_in_raw = 3; // USDC that came back when it closed
+  int64 opened_at = 4;
+  int64 closed_at = 5;
+  bool is_loss = 6; // usdc_in_raw < usdc_out_raw
+}
+
+// Per-user (per-vault) behavioral state, aggregated across every
+// execution wallet that user has registered. This is the store's value
+// type and the entity the subgraph exposes.
+message UserBehavioralProfile {
+  string vault = 1;
+  string authority = 2;
+
+  uint64 top_up_total_usdc_raw = 3;
+  uint64 return_total_usdc_raw = 4;
+
+  // Closed-cycle USDC accounting: realized_pnl = return_total - top_up_total
+  // over CLOSED cycles only. Signed; negative means net realized loss.
+  int64 realized_pnl_usdc_raw = 5;
+
+  uint32 loss_streak = 6; // consecutive closed-cycle losses, 7-day recency window
+  int64 loss_streak_last_updated = 7;
+
+  uint64 median_funding_size_usdc_raw = 8; // 30-day rolling window
+  uint64 rolling_velocity_usdc_raw = 9; // 24h sliding window, mirrors onchain accumulator
+
+  repeated string registered_execution_wallets = 10;
+  repeated string registered_cold_wallets = 11;
+
+  int64 last_updated_at = 12;
+}
+
+message UserBehavioralProfiles {
+  repeated UserBehavioralProfile profiles = 1;
+}

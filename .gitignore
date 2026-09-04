@@ -1,1 +1,26 @@
 .claude/skills/gstack/
+
+# Rust / Anchor build output
+/target/
+substreams/target/
+programs/shield-vault/target/
+**/*.rs.bk
+
+# Solana keypairs — never commit a real one; the deploy keypair here is
+# throwaway/hackathon-only but still excluded on principle.
+target/deploy/*-keypair.json
+
+# Node / bun
+node_modules/
+bun.lock
+
+# CRE compiled artifacts (rebuildable via `bunx cre-compile`)
+cre/*.wasm
+cre/*.js
+
+# Substreams compiled artifacts (rebuildable via cargo build --target wasm32-unknown-unknown)
+substreams/**/*.wasm
+
+# Misc
+.DS_Store
+*.log

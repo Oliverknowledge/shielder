@@ -1,0 +1,30 @@
+{
+  "name": "shield",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shield — a treasury vault that gates the reload, not the trade. ETHGlobal hackathon submission.",
+  "scripts": {
+    "build": "anchor build",
+    "test": "anchor test",
+    "test:unit": "bun test",
+    "demo": "bun run client/demo.ts",
+    "recover": "bun run client/recovery-cli.ts"
+  },
+  "dependencies": {
+    "@chainlink/cre-sdk": "^1.19.1",
+    "@coral-xyz/anchor": "^0.32.1",
+    "@solana/spl-token": "^0.4.15",
+    "@solana/web3.js": "^1.98.4",
+    "borsh": "^2.0.0",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/chai": "^4.3.16",
+    "@types/mocha": "^10.0.7",
+    "chai": "^4.4.1",
+    "mocha": "^10.7.0",
+    "ts-mocha": "^10.0.0",
+    "typescript": "^5.5.4"
+  }
+}
