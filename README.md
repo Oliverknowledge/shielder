@@ -22,8 +22,9 @@ This README covers what's built and how to run it.
 | Shield Vault (Anchor program) | `programs/shield-vault/` | Solana | Compiles to a real deployable `.so` |
 | Behavioral memory pipeline | `substreams/` | The Graph (Substreams-for-Solana) | Compiles to a real deployable `.wasm`; core math unit-tested |
 | Confidential evaluation workflow | `cre/workflow.ts` | Chainlink CRE | Compiles to a real deployable CRE `.wasm` via `cre-compile` |
-| Demo client | `client/demo.ts` | — | Typechecks against real `@solana/web3.js` |
-| Recovery CLI | `client/recovery-cli.ts` | — | Typechecks; proves Invariant 10 |
+| Demo client (CLI) | `client/demo.ts` | — | **Run live end-to-end** against a local validator |
+| Web dashboard | `app/` | — | **Run live**; same instruction-building code as the CLI |
+| Recovery CLI | `client/recovery-cli.ts` | — | **Run live end-to-end**; proves Invariant 10 |
 
 Every component above was actually compiled in this environment with its
 real toolchain against its real dependencies — not just written and hoped
@@ -165,18 +166,51 @@ than the hand-rolled Ed25519 verifier in `ed25519.rs`, if a CRE-Solana
 receiver is deployed for whatever network this targets. Validate that path
 first; if it works, `ed25519.rs` becomes deletable.
 
-### Demo client & recovery CLI
+### Running it live (local validator)
 
 ```bash
+export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+
+# 1. Deploy the built program to a local validator (immutable by default
+#    with --bpf-program -- satisfies Invariant 11 for free in this mode)
+solana-test-validator --reset --quiet \
+  --bpf-program 4Z46Kz8ygX5Efw22ABbQ2LTf329N3nD2J81Z3CAY5Hyx target/deploy/shield_vault.so &
+
+# 2. Bootstrap a demo vault: creates a test USDC mint, initializes a
+#    vault, registers a stand-in "Axiom" execution wallet, funds it with
+#    $10,000. State is written to /tmp/shield-demo-state.json.
+export SHIELD_RPC_URL="http://127.0.0.1:8899"
+solana airdrop 100 --url $SHIELD_RPC_URL
 bun install
+bun run scripts/bootstrap-local-demo.ts
+```
+
+Then either drive it from the CLI:
+
+```bash
 bun run client/demo.ts scoreboard <authorityPubkey>
+bun run client/demo.ts top-up ~/.config/solana/id.json <axiomWallet> 3800
 bun run client/recovery-cli.ts status <authorityPubkey>
 ```
 
-Both typecheck clean against the real `@solana/web3.js`. Neither has been
-run against a live deployed program yet — that requires `SHIELD_RPC_URL`
-pointed at a cluster with the vault actually deployed (see "Next steps"
-below for the exact remaining sequence).
+...or from the web dashboard:
+
+```bash
+bun run dev:app   # http://localhost:5173
+```
+
+Upload your Solana CLI keypair JSON (e.g. `~/.config/solana/id.json`) in
+the dashboard's connect panel, paste in the Axiom wallet pubkey the
+bootstrap script printed, and click through the same three demo actions
+the CLI exposes. **The dashboard and the CLI call the exact same
+instruction-building code** (`client/shield-client.ts`) — this isn't two
+separate implementations that could quietly drift apart, it's one client
+library with two front ends.
+
+All of the above has actually been run, live, against a deployed program
+on a local validator in the course of building this — including catching
+and fixing two real bugs (see git history) that only surfaced once real
+transactions were sent, not from code review alone.
 
 ## Verified vs. not yet run live
 
@@ -204,13 +238,22 @@ runs, all reproducible with the commands above):
   toolchain to a real deployable artifact, using the real `@chainlink/cre-sdk`
   API (verified against its shipped `.d.ts` files and one of its own
   standard-test examples, not guessed).
-- The demo client and recovery CLI typecheck against the real
-  `@solana/web3.js` client library.
+- **The demo client, the web dashboard, and the recovery CLI have all
+  been run live** against the deployed program on a local validator — a
+  real vault, initialized, funded with $10,000 test USDC, a real $3,800
+  top-up rejected on the instant path and correctly queued on the gated
+  path, the 30-minute delay proven real by an early-execution attempt
+  failing on-chain with `ProposalNotMatured`, a real 24h-delayed limit
+  raise, and a real rejection of a full-exit to an unregistered
+  destination (the scam-address protection, working end-to-end). This
+  live run caught and fixed two real bugs neither review process nor
+  static typechecking had found (see git history).
 
 **Not yet run live** (the honest remainder — this is the actual "Next
 steps" list, not a vague TODO):
-1. Deploy `shield_vault.so` to devnet; confirm the program ID, run
-   `initialize_vault` against a real (devnet) USDC-equivalent mint.
+1. Deploy `shield_vault.so` to devnet (only run against a local validator
+   so far); confirm the program ID, run `initialize_vault` against a real
+   devnet USDC-equivalent mint.
 2. Resolve Axiom's real deposit-address pattern (design doc Open Question
    #1) — blocks the Substreams module's `map_vault_transfers` filter from
    being validated against real transaction data.

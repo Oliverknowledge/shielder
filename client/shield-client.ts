@@ -27,7 +27,12 @@ import {
 } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import * as borsh from "borsh";
-import { createHash } from "node:crypto";
+import { sha256 } from "@noble/hashes/sha2.js";
+
+// This module is isomorphic on purpose (Node CLI scripts AND the browser
+// dashboard in app/ both import it) -- @noble/hashes works in both
+// environments, `node:crypto` does not. One source of truth for
+// instruction encoding, not two copies that can silently drift apart.
 
 export const SHIELD_PROGRAM_ID = new PublicKey("4Z46Kz8ygX5Efw22ABbQ2LTf329N3nD2J81Z3CAY5Hyx");
 
@@ -38,8 +43,8 @@ export const SHIELD_PROGRAM_ID = new PublicKey("4Z46Kz8ygX5Efw22ABbQ2LTf329N3nD2
 // visible diff, same rationale as substreams/src/constants.rs's sighash().
 // ---------------------------------------------------------------------
 
-export function sighash(name: string): Buffer {
-  return createHash("sha256").update(`global:${name}`).digest().subarray(0, 8) as Buffer;
+export function sighash(name: string): Uint8Array {
+  return sha256(new TextEncoder().encode(`global:${name}`)).subarray(0, 8);
 }
 
 // ---------------------------------------------------------------------

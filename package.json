@@ -8,23 +8,33 @@
     "test": "anchor test",
     "test:unit": "bun test",
     "demo": "bun run client/demo.ts",
-    "recover": "bun run client/recovery-cli.ts"
+    "recover": "bun run client/recovery-cli.ts",
+    "dev:app": "cd app && vite",
+    "build:app": "cd app && vite build"
   },
   "dependencies": {
     "@chainlink/cre-sdk": "^1.19.1",
     "@coral-xyz/anchor": "^0.32.1",
+    "@noble/hashes": "^2.4.0",
     "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.98.4",
     "borsh": "^2.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "@types/chai": "^4.3.16",
     "@types/mocha": "^10.0.7",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
     "chai": "^4.4.1",
     "mocha": "^10.7.0",
     "ts-mocha": "^10.0.0",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vite": "^8.2.2",
+    "vite-plugin-node-polyfills": "^0.28.0"
   }
 }

@@ -21,6 +21,9 @@ cre/*.js
 # Substreams compiled artifacts (rebuildable via cargo build --target wasm32-unknown-unknown)
 substreams/**/*.wasm
 
+# Web dashboard build output (rebuildable via `bun run build:app`)
+app/dist/
+
 # Misc
 .DS_Store
 *.log
