@@ -246,7 +246,11 @@ export function Protection() {
             <div>
               <p className="eyebrow">Pending weakening change</p>
               <p className="small" style={{ marginTop: 4 }}>{describeLoosen(ruleChange.action.params)}</p>
-              <p className="tiny muted">Created under configuration v{ruleChange.configVersionAtCreation.toString()}; tightening anything before it activates cancels it.</p>
+              <p className="tiny muted">
+                {ruleChange.configVersionAtCreation !== vault.configVersion
+                  ? "Superseded: you tightened something after proposing this, so the vault will refuse to apply it. Cancel it to clear the slot."
+                  : `Created under configuration v${ruleChange.configVersionAtCreation.toString()}; tightening anything before it activates cancels it.`}
+              </p>
             </div>
             <div className="row" style={{ gap: 6 }}>
               {Number(ruleChange.executeAfter) <= now ? (

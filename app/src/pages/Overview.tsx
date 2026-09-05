@@ -200,14 +200,17 @@ export function Overview() {
                       ? "Leave Shield"
                       : `Withdraw ${usd(p.action.amount)} to cold wallet`;
               const matured = Number(p.executeAfter) <= now;
+              const stale = p.configVersionAtCreation !== vault.configVersion;
               return (
                 <div key={p.address.toBase58()} className="list-row">
                   <div>
                     <div style={{ fontWeight: 600 }}>{label}</div>
-                    <div className="tiny muted">{matured ? "Ready to execute" : <>Activates in <Countdown until={p.executeAfter} now={now} format="compact" /></>}</div>
+                    <div className="tiny muted">
+                      {stale ? "Superseded: you tightened something after proposing this, so it can no longer apply." : matured ? "Ready to execute" : <>Activates in <Countdown until={p.executeAfter} now={now} format="compact" /></>}
+                    </div>
                   </div>
                   <div className="row" style={{ gap: 6 }}>
-                    <Pill tone={matured ? "protect" : "pending"}>{matured ? "Ready" : "Waiting"}</Pill>
+                    <Pill tone={stale ? "neutral" : matured ? "protect" : "pending"}>{stale ? "Superseded" : matured ? "Ready" : "Waiting"}</Pill>
                     <button
                       className="btn btn-ghost btn-sm"
                       disabled={!!busy}
