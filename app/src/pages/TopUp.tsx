@@ -143,6 +143,19 @@ export function TopUp() {
     return { tone: "blocked", icon: "lock" as const, text: <>Will be blocked.</> };
   })();
 
+  if (executionWallets.length === 0) {
+    return (
+      <main className="page page-narrow fade-in">
+        <div className="page-head">
+          <p className="eyebrow">Top up</p>
+          <h1>No trading wallet yet</h1>
+          <p>Shield can only send to wallets you've registered. Add your trading wallet under Protection; it becomes usable after the {hoursLabel(vault.loosenCooldownSecs)} wait.</p>
+        </div>
+        <Link to="/protection" className="btn">Go to Protection</Link>
+      </main>
+    );
+  }
+
   return (
     <main className="page page-narrow fade-in">
       <div className="page-head">

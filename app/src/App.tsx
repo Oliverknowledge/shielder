@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { BrowserRouter, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { ShieldProvider, useShield, NETWORK } from "./lib/shield";
 import { ToastHost, Icon, Skeleton } from "./components/ui";
@@ -32,8 +32,47 @@ function LoadingPage() {
   );
 }
 
+function AccountMenu() {
+  const { signer, disconnect, network } = useShield();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  if (!signer) return null;
+  const pk = signer.publicKey.toBase58();
+  return (
+    <div className="account-wrap" ref={ref}>
+      <button className="account" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}>
+        <i />
+        <span className="mono ellipsis">{short(pk)}</span>
+      </button>
+      {open && (
+        <div className="menu" role="menu">
+          <div className="tiny muted">{signer.kind === "demo" ? "Demo key" : signer.label} · {network}</div>
+          <div className="addr" style={{ marginTop: 4 }}>{pk}</div>
+          <div className="row" style={{ marginTop: 10, gap: 6 }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => { void navigator.clipboard?.writeText(pk); setOpen(false); }}>Copy address</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setOpen(false); void disconnect(); }}>Sign out</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Shell() {
-  const { signer, vault, loading, disconnect, now } = useShield();
+  const { signer, vault, loading, now } = useShield();
   const hasVault = !!vault;
   const cooldownActive = vault ? Number(vault.cooldownUntil) > now : false;
 
@@ -62,12 +101,7 @@ function Shell() {
           </nav>
         )}
         <div className="topbar-right">
-          {signer ? (
-            <button className="account" onClick={() => void disconnect()} title={`${signer.publicKey.toBase58()} · click to sign out`}>
-              <i />
-              <span className="mono ellipsis">{short(signer.publicKey.toBase58())}</span>
-            </button>
-          ) : null}
+          <AccountMenu />
         </div>
       </header>
 

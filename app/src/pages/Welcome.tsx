@@ -94,7 +94,7 @@ export function Welcome() {
         {NETWORK !== "mainnet-beta" && (
           <div style={{ marginTop: 14 }}>
             {!showDemo ? (
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowDemo(true)}>
+              <button className={`btn ${installed.length === 0 ? "btn-secondary btn-block" : "btn-ghost btn-sm"}`} onClick={() => setShowDemo(true)}>
                 Continue with a demo key ({NETWORK})
               </button>
             ) : (

@@ -42,10 +42,11 @@ Products" ($5,000).
 `substreams info` lists the 7 modules). Publishing to substreams.dev
 (`substreams publish`) needs the same account.
 
-**How it is used in the product:** the Behaviour screen, the Overview's
-"your trading, from the chain" card, the top-up blocked copy ("you realised
-$1,420 in losses in the last 24 hours"), and the monitor's verdict all come
-from flows the pipeline classifies. Remove it and none of those exist.
+**How it is used in the product:** the Behaviour screen ("You sent $1,500 to
+Axiom. $80 came back."), the Overview's loss strip and "What happened
+recently" feed, the top-up blocked card ("You've realised $1,420 in losses in
+the last hour"), and the monitor's verdict all come from flows the pipeline
+classifies. Remove it and none of those exist.
 
 **Demo moment:** Behaviour screen after the trading wallet sends back less
 than it received: "Sent $1,500 · Came back $80 · Net realised flow −$1,420",

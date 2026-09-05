@@ -31,7 +31,7 @@ export function FlowScene({
       <div className="flow-box protect">
         <div className="lbl">Protected treasury</div>
         <div className="v">{usd(treasury)}</div>
-        <div className="sub">{phase === "blocked" && amount > 0n ? "nothing left" : phase === "moving" && amount > 0n ? `−${usd(amount)}` : ""}</div>
+        <div className="sub">{phase === "blocked" && amount > 0n ? "unchanged" : phase === "moving" && amount > 0n ? `−${usd(amount)}` : ""}</div>
       </div>
       <div className="flow-lane">
         <motion.div className={`flow-dot ${phase === "blocked" ? "blocked" : ""}`} variants={dotVariants} animate={phase} initial="idle" />
@@ -41,13 +41,16 @@ export function FlowScene({
           transition={{ duration: 0.6, delay: phase === "blocked" ? 0.45 : 0 }}
         />
       </div>
-      <div className="flow-box trade">
+      <motion.div
+        className="flow-box trade"
+        animate={phase === "blocked" ? { x: [0, 0, -4, 4, -2, 0], transition: { duration: 0.9, times: [0, 0.5, 0.6, 0.7, 0.85, 1] } } : phase === "done" ? { scale: [1, 1.02, 1], transition: { duration: 0.35 } } : { x: 0, scale: 1 }}
+      >
         <div className="lbl">{bankrollLabel}</div>
         <div className="v">{bankroll === null ? "—" : usd(bankroll)}</div>
         <div className="sub" style={{ color: phase === "blocked" ? "var(--blocked)" : phase === "done" ? "var(--protect)" : undefined, fontWeight: phase === "idle" ? 400 : 500 }}>
           {amount > 0n && phase !== "idle" ? (phase === "blocked" ? `${usd(amount)} did not move` : phase === "done" ? `+${usd(amount)}` : `receiving ${usd(amount)}`) : ""}
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }
