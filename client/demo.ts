@@ -4,6 +4,8 @@
  * the real program. Reads the state file scripts/bootstrap-demo.ts wrote.
  *
  *   bun run client/demo.ts scoreboard
+ *   bun run client/demo.ts faucet <usdc>              # DEMO: mint test USDC to the authority (via the server)
+ *   bun run client/demo.ts deposit <usdc>             # deposit from the authority's wallet into the vault
  *   bun run client/demo.ts top-up <usdc>              # instant if allowed, else explains why not
  *   bun run client/demo.ts schedule-top-up <usdc>     # gated path (proposal)
  *   bun run client/demo.ts execute-top-up
@@ -22,6 +24,7 @@ import { createTransferInstruction, getAssociatedTokenAddressSync, getAccount } 
 import {
   ProposalCategory,
   cancelProposalIx,
+  depositIx,
   evaluateTopUp,
   executeTopUpIx,
   fetchAllProposals,
@@ -221,6 +224,17 @@ async function demoReturn(amountUsdc: number) {
   await send(`execution wallet returns ${fmt(usdcToRaw(amountUsdc))} to the vault`, [createTransferInstruction(from, vaultAta, exec.publicKey, usdcToRaw(amountUsdc))], [exec]);
 }
 
+async function faucet(amountUsdc: number) {
+  const res = await fetch(`${API}/api/demo/faucet`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ owner: authority.publicKey.toBase58(), amountUsdc, mint: state.usdcMint }) });
+  console.log(res.ok ? `✅ minted ${fmt(usdcToRaw(amountUsdc))} test USDC: ${((await res.json()) as { signature: string }).signature}` : `❌ faucet: ${await res.text()}`);
+}
+
+async function deposit(amountUsdc: number) {
+  const v = (await fetchVault(connection, vault))!;
+  const ata = getAssociatedTokenAddressSync(v.usdcMint, authority.publicKey);
+  await send(`deposited ${fmt(usdcToRaw(amountUsdc))}`, [depositIx({ depositor: authority.publicKey, vault, sourceTokenAccount: ata, amount: usdcToRaw(amountUsdc) })]);
+}
+
 async function evaluate() {
   const res = await fetch(`${API}/api/vault/${vault.toBase58()}/evaluate`, { method: "POST" });
   const j = (await res.json()) as { assessment: { headline: string; lines: string[]; triggered: boolean; actionable: boolean }; verdict: { relayed: boolean; signature: string | null; error: string | null } | null };
@@ -234,6 +248,8 @@ async function main() {
   const [, , cmd, ...args] = process.argv;
   switch (cmd) {
     case "scoreboard": return scoreboard();
+    case "faucet": return faucet(Number(args[0] ?? 10000));
+    case "deposit": return deposit(Number(args[0]));
     case "top-up": return topUp(Number(args[0]));
     case "schedule-top-up": return scheduleTopUp(Number(args[0]));
     case "execute-top-up": return executeTopUp();

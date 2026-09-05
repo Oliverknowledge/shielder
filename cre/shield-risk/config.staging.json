@@ -1,0 +1,6 @@
+{
+  "shieldApiUrl": "http://localhost:8787",
+  "programId": "4Z46Kz8ygX5Efw22ABbQ2LTf329N3nD2J81Z3CAY5Hyx",
+  "secretId": "SHIELD_VERIFIER_SEED_B64",
+  "deliver": true
+}

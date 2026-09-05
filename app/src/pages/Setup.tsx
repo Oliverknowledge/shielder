@@ -104,12 +104,15 @@ export function Setup() {
     // make sure the execution wallet can receive USDC
     const execAta = getAssociatedTokenAddressSync(mint, new PublicKey(draft.executionAddress), true);
     ixs.push(createAssociatedTokenAccountIdempotentInstruction(signer.publicKey, execAta, new PublicKey(draft.executionAddress), mint));
+    // Mark as activated before sending: the provider refreshes the vault as
+    // soon as the transaction confirms, and the redirect guard must not fire
+    // before the deposit step has been shown.
+    setActivated(true);
     try {
       await run("Shield activated", ixs);
-      setActivated(true);
       await refresh();
     } catch {
-      /* toast shown */
+      setActivated(false);
     }
   };
 

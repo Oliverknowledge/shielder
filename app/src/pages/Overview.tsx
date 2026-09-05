@@ -1,15 +1,46 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useShield } from "../lib/shield";
-import { Countdown, Money, Pill, Progress } from "../components/ui";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { useShield, API_URL, NETWORK } from "../lib/shield";
+import { Countdown, Field, Money, MoneyInput, Pill, Progress, Sheet, useToast } from "../components/ui";
 import { usd, duration, hoursLabel } from "../lib/format";
-import { evaluateTopUp, rollingVelocity, ProposalCategory, OwnerType, COOLDOWN_REASON } from "../../../client/shield-client";
+import { evaluateTopUp, rollingVelocity, ProposalCategory, OwnerType, COOLDOWN_REASON, cancelProposalIx, depositIx, usdcToRaw } from "../../../client/shield-client";
 import { useAction } from "../lib/actions";
-import { cancelProposalIx } from "../../../client/shield-client";
+import { getJson } from "../lib/api";
 
 export function Overview() {
-  const { vault, balance, proposals, wallets, server, now, vaultAddress, signer } = useShield();
+  const { vault, balance, proposals, wallets, server, now, vaultAddress, signer, walletUsdc, health, refresh } = useShield();
   const { run, busy } = useAction();
+  const toast = useToast();
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [depositAmount, setDepositAmount] = useState("");
+  const [faucetBusy, setFaucetBusy] = useState(false);
   if (!vault || !vaultAddress || !signer) return null;
+
+  const deposit = async () => {
+    const amt = usdcToRaw(Number(depositAmount || 0));
+    if (amt <= 0n) return;
+    const ata = getAssociatedTokenAddressSync(vault.usdcMint, signer.publicKey, true);
+    try {
+      await run(`Deposited ${usd(amt)}`, [depositIx({ depositor: signer.publicKey, vault: vaultAddress, sourceTokenAccount: ata, amount: amt })]);
+      setDepositOpen(false);
+      setDepositAmount("");
+    } catch {
+      /* toast shown */
+    }
+  };
+  const faucet = async () => {
+    setFaucetBusy(true);
+    try {
+      await getJson(`${API_URL}/api/demo/faucet`, { method: "POST", body: JSON.stringify({ owner: signer.publicKey.toBase58(), amountUsdc: Number(depositAmount || 10000) || 10000, mint: vault.usdcMint.toBase58() }) });
+      toast.ok("Test USDC minted to your wallet");
+      await refresh();
+    } catch (e) {
+      toast.err(`Faucet failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setFaucetBusy(false);
+    }
+  };
 
   const cooldownActive = Number(vault.cooldownUntil) > now;
   const bankroll = wallets.filter((w) => w.kind === OwnerType.Execution && w.active).reduce((a, w) => a + (w.usdc ?? 0n), 0n);
@@ -41,7 +72,10 @@ export function Overview() {
               {usd(vault.protectedFloor)} floor · {usd(headroom)} available for top-ups under your rules
             </p>
           </div>
-          <Pill tone={status.tone}>{status.label}</Pill>
+          <div className="row" style={{ gap: 8, flexDirection: "column", alignItems: "flex-end" }}>
+            <Pill tone={status.tone}>{status.label}</Pill>
+            <button className="btn btn-secondary btn-sm" onClick={() => setDepositOpen(true)}>Deposit</button>
+          </div>
         </div>
         <div style={{ marginTop: 18 }}>
           <Progress value={Number(vault.protectedFloor)} max={Number(balance) || 1} tone="protect" />
@@ -189,6 +223,24 @@ export function Overview() {
           <p className="tiny muted" style={{ marginTop: 10 }}>Your current protection stays fully in force until a change activates. Cancelling is always instant.</p>
         </section>
       )}
+
+      <Sheet open={depositOpen} onClose={() => setDepositOpen(false)} title="Deposit into the treasury">
+        <div className="stack">
+          <p className="small dim">Deposits are never gated. Only what leaves the vault is governed by your rules.</p>
+          <Field label="Amount" hint={`In your wallet: ${walletUsdc === null ? "…" : usd(walletUsdc)} USDC`}>
+            <MoneyInput value={depositAmount} onChange={setDepositAmount} autoFocus />
+          </Field>
+          {NETWORK !== "mainnet-beta" && health?.demo && walletUsdc !== null && walletUsdc < usdcToRaw(Number(depositAmount || 0)) && (
+            <div className="warn-box row-between">
+              <span>Not enough test USDC in your wallet.</span>
+              <button className="btn btn-secondary btn-sm" onClick={() => void faucet()} disabled={faucetBusy}>{faucetBusy ? "Minting…" : "Mint test USDC"}</button>
+            </div>
+          )}
+          <button className="btn btn-block btn-protect" disabled={!!busy || !(Number(depositAmount) > 0) || (walletUsdc !== null && walletUsdc < usdcToRaw(Number(depositAmount || 0)))} onClick={() => void deposit()}>
+            {busy ? "Confirming…" : `Deposit ${Number(depositAmount) > 0 ? usd(Number(depositAmount)) : ""}`}
+          </button>
+        </div>
+      </Sheet>
     </main>
   );
 }

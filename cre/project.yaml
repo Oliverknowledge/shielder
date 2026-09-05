@@ -1,0 +1,21 @@
+# ==========================================================================
+# CRE PROJECT SETTINGS — Shield
+# ==========================================================================
+# The Shield risk workflow makes no chain reads or writes from CRE itself:
+# the enclave signs an Ed25519 verdict that Shield's relayer submits to the
+# Solana vault program, which verifies it against the key the USER pinned.
+# RPCs are listed so the CLI's chain validation is satisfied and so the
+# native `SolanaClient.writeReport` path (see README) can be enabled later.
+staging-settings:
+  rpcs:
+    - chain-name: solana-devnet
+      url: https://api.devnet.solana.com
+    - chain-name: ethereum-testnet-sepolia
+      url: https://ethereum-sepolia-rpc.publicnode.com
+
+production-settings:
+  rpcs:
+    - chain-name: solana-mainnet
+      url: https://api.mainnet-beta.solana.com
+    - chain-name: ethereum-mainnet
+      url: https://ethereum-rpc.publicnode.com

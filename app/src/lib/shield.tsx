@@ -123,6 +123,7 @@ function Inner({ children }: { children: ReactNode }) {
   const [serverError, setServerError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const inflight = useRef(false);
+  const vaultExistsRef = useRef(false);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
@@ -139,6 +140,7 @@ function Inner({ children }: { children: ReactNode }) {
     inflight.current = true;
     try {
       const v = await fetchVault(connection, vaultAddress);
+      vaultExistsRef.current = !!v;
       setVault(v);
       if (v) {
         const [vaultAta] = vaultTokenAccountPda(vaultAddress);
@@ -173,9 +175,11 @@ function Inner({ children }: { children: ReactNode }) {
     try {
       const h = await getJson<ServerHealth>(`${API_URL}/api/health`);
       setHealth(h);
-      if (vaultAddress) {
+      if (vaultAddress && vaultExistsRef.current) {
         const p = await getJson<VaultPayload>(`${API_URL}/api/vault/${vaultAddress.toBase58()}`);
         setServer(p);
+      } else {
+        setServer(null);
       }
       setServerError(null);
     } catch (e) {
