@@ -1,0 +1,80 @@
+/**
+ * The vault's rules as plain-English sentences, plus the mapping from a
+ * sentence's value back to the program's tighten/loosen parameters.
+ */
+import { PublicKey } from "@solana/web3.js";
+import { OwnerType, usdcToRaw, type LoosenParams, type TightenParams, type VaultState } from "../../../client/shield-client";
+import { usd, hoursLabel, short, rawToNumber } from "./format";
+
+export type RuleKey = "floor" | "daily" | "threshold" | "lossTrigger" | "lossCooldown" | "cap" | "loosenDelay" | "exitDelay";
+
+export interface RuleDef {
+  key: RuleKey;
+  name: string;
+  kind: "usd" | "pct" | "hours" | "days";
+  /** Is a higher value the stricter one? */
+  strictIsHigher: boolean;
+  current: (v: VaultState) => number;
+  /** Sentence around the value: before + <value> + after. */
+  before: string;
+  after: string;
+  why: string;
+}
+
+export const RULES: RuleDef[] = [
+  { key: "floor", name: "Protected floor", kind: "usd", strictIsHigher: true, current: (v) => rawToNumber(v.protectedFloor), before: "Never let a top-up take my treasury below ", after: ".", why: "Only a full exit, after its delay, can go under the floor." },
+  { key: "daily", name: "Daily top-up limit", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.velocityThreshold), before: "Send at most ", after: " to trading wallets in any 24 hours.", why: "Added up across every top-up. Splitting them doesn't help." },
+  { key: "lossTrigger", name: "Loss trigger", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.lossTriggerUsdc), before: "After I lose ", after: " or more in a day, block new top-ups.", why: "Measured by what actually comes back from your trading wallet, on-chain." },
+  { key: "lossCooldown", name: "Pause after losses", kind: "hours", strictIsHigher: true, current: (v) => Number(v.lossCooldownSecs) / 3600, before: "Keep top-ups blocked for ", after: " after that.", why: "The vault sets the length itself; the monitor can't choose it." },
+  { key: "threshold", name: "Large top-up pause", kind: "pct", strictIsHigher: false, current: (v) => v.topUpThresholdBps / 100, before: "Make any single top-up worth ", after: " of the treasury or more wait 30 minutes.", why: "A short pause before big moves. Cancel it any time." },
+  { key: "cap", name: "Instant cold-wallet cap", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.emergencyCap), before: "Let up to ", after: " move to my cold wallet instantly, even during a cooldown.", why: "Larger amounts take the exit path." },
+  { key: "loosenDelay", name: "Weakening delay", kind: "hours", strictIsHigher: true, current: (v) => Number(v.loosenCooldownSecs) / 3600, before: "Make any weakening of these rules wait ", after: ".", why: "Never less than 1 hour. Tightening never waits." },
+  { key: "exitDelay", name: "Exit delay", kind: "days", strictIsHigher: true, current: (v) => Number(v.fullExitCooldownSecs) / 86400, before: "Make leaving Shield take ", after: ".", why: "Your whole balance goes to a cold wallet you registered. Cancel any time before." },
+];
+
+export const ruleByKey = (k: RuleKey): RuleDef => RULES.find((r) => r.key === k)!;
+
+export function paramFor(key: RuleKey, value: number): { tighten: TightenParams; loosen: LoosenParams } {
+  switch (key) {
+    case "floor": return { tighten: { newProtectedFloor: usdcToRaw(value) }, loosen: { newProtectedFloor: usdcToRaw(value) } };
+    case "daily": return { tighten: { newVelocityThreshold: usdcToRaw(value) }, loosen: { newVelocityThreshold: usdcToRaw(value) } };
+    case "threshold": return { tighten: { newTopUpThresholdBps: Math.round(value * 100) }, loosen: { newTopUpThresholdBps: Math.round(value * 100) } };
+    case "lossTrigger": return { tighten: { newLossTriggerUsdc: usdcToRaw(value) }, loosen: { newLossTriggerUsdc: usdcToRaw(value) } };
+    case "lossCooldown": return { tighten: { newLossCooldownSecs: BigInt(Math.round(value * 3600)) }, loosen: { newLossCooldownSecs: BigInt(Math.round(value * 3600)) } };
+    case "cap": return { tighten: { newEmergencyCap: usdcToRaw(value) }, loosen: { newEmergencyCap: usdcToRaw(value) } };
+    case "loosenDelay": return { tighten: { newLoosenCooldownSecs: BigInt(Math.round(value * 3600)) }, loosen: { newLoosenCooldownSecs: BigInt(Math.round(value * 3600)) } };
+    case "exitDelay": return { tighten: { newFullExitCooldownSecs: BigInt(Math.round(value * 86400)) }, loosen: { newFullExitCooldownSecs: BigInt(Math.round(value * 86400)) } };
+  }
+}
+
+export function fmtRule(def: Pick<RuleDef, "kind">, value: number): string {
+  if (def.kind === "usd") return usd(value);
+  if (def.kind === "pct") return `${value}%`;
+  if (def.kind === "hours") return hoursLabel(value * 3600);
+  return `${value} day${value === 1 ? "" : "s"}`;
+}
+
+export const isStricter = (def: RuleDef, from: number, to: number): boolean => (def.strictIsHigher ? to > from : to < from);
+
+export interface ChangeLine {
+  name: string;
+  from: string | null;
+  to: string;
+}
+
+/** A pending weakening proposal, as "name: from → to" lines. */
+export function describeLoosen(p: LoosenParams, v: VaultState | null): ChangeLine[] {
+  const lines: ChangeLine[] = [];
+  const cur = (k: RuleKey) => (v ? fmtRule(ruleByKey(k), ruleByKey(k).current(v)) : null);
+  if (p.newProtectedFloor !== undefined) lines.push({ name: "Protected floor", from: cur("floor"), to: usd(p.newProtectedFloor) });
+  if (p.newVelocityThreshold !== undefined) lines.push({ name: "Daily top-up limit", from: cur("daily"), to: usd(p.newVelocityThreshold) });
+  if (p.newTopUpThresholdBps !== undefined) lines.push({ name: "Large top-up pause", from: cur("threshold"), to: `${p.newTopUpThresholdBps / 100}%` });
+  if (p.newLossTriggerUsdc !== undefined) lines.push({ name: "Loss trigger", from: cur("lossTrigger"), to: usd(p.newLossTriggerUsdc) });
+  if (p.newLossCooldownSecs !== undefined) lines.push({ name: "Pause after losses", from: cur("lossCooldown"), to: hoursLabel(p.newLossCooldownSecs) });
+  if (p.newEmergencyCap !== undefined) lines.push({ name: "Instant cold-wallet cap", from: cur("cap"), to: usd(p.newEmergencyCap) });
+  if (p.newLoosenCooldownSecs !== undefined) lines.push({ name: "Weakening delay", from: cur("loosenDelay"), to: hoursLabel(p.newLoosenCooldownSecs) });
+  if (p.newFullExitCooldownSecs !== undefined) lines.push({ name: "Exit delay", from: cur("exitDelay"), to: hoursLabel(p.newFullExitCooldownSecs) });
+  if (p.newRiskVerifier !== undefined) lines.push(p.newRiskVerifier.equals(PublicKey.default) ? { name: "Monitor", from: "on", to: "off" } : { name: "Monitor", from: null, to: short(p.newRiskVerifier.toBase58()) });
+  if (p.registerOwner) lines.push({ name: p.registerKind === OwnerType.Cold ? "New cold wallet" : "New trading wallet", from: null, to: p.registerLabel || short(p.registerOwner.toBase58()) });
+  return lines.length ? lines : [{ name: "Rule change", from: null, to: "" }];
+}

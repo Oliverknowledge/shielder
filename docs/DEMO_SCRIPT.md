@@ -37,16 +37,17 @@ Chainlink CRE for a monitor even we can't lean on."
 
 | Time | Screen | Do | Say |
 |---|---|---|---|
-| 0:00 | Overview | show $10,000 protected, $0 bankroll | "Wallets protect your keys. They don't protect you from yourself. This is $10,000 in a Shield treasury. $6,000 is a floor nothing can touch. $2,000 a day can go to my trading wallet." |
+| 0:00 | Overview | the capital bar: floor · refillable · trading, all green, "You can top up $2,000 more today" | "Wallets protect your keys. They don't protect you from yourself. This is $10,000 in a Shield treasury. $6,000 is a floor nothing can touch. $2,000 a day can go to my trading wallet." |
 | 0:15 | Top up | type 1500, press Top up; watch the dot cross | "I move $1,500 to Axiom. Instant. Shield never gates trades, only refills." |
 | 0:25 | terminal | `bun run client/demo.ts return 80` | "I trade. It goes badly. $80 comes back. That transfer is a plain SPL transfer; Axiom never talks to Shield." |
-| 0:35 | Overview (auto-updates) | pill flips to **Loss cooldown**, "Can I top up right now? No · 17h 59m" | "Within seconds The Graph pipeline sees $1,500 out, $80 back. My rule says: $1,000 realised loss pauses top-ups for 18 hours. A signed verdict lands on-chain. The vault armed the pause itself." |
-| 0:50 | Top up | type 500, press Top up; dot hits the wall; blocked card | "This isn't an alert. The program rejected it. That's the rejection signature. $8,580 stays protected. 17 hours 58 minutes." |
-| 1:05 | Behaviour | scroll: sent/came back/net, session bar, Evidence sheet | "Sent $1,500. $80 came back. Net −$1,420. Every number is a transaction, and the hash of this evidence is stored in the vault with the verdict." |
-| 1:20 | Protection | Change daily limit → 5000 → **Change scheduled 23:59:5x** | "I can make myself safer instantly. Making myself less safe waits 24 hours, and I can cancel it the whole time." |
+| 0:35 | Overview (auto-updates) | status flips to **Loss cooldown**; the refillable slice of the bar greys out; the strip reads "Top-ups paused until 6:02 PM · your loss rule fired after $1,420 in losses · 17h 59m" | "Within seconds The Graph pipeline sees $1,500 out, $80 back. My rule says: $1,000 realised loss pauses top-ups for 18 hours. A signed verdict lands on-chain. The vault armed the pause itself." |
+| 0:50 | Top up | type 500, press Top up; the dot hits the wall and recoils; **"$500 stays protected."** with the reason, the countdown, the evidence lines and the rejection signature | "This isn't an alert. The program rejected it. That's the rejection signature. $8,580 stays protected. 17 hours 58 minutes." |
+| 1:05 | Behaviour | "You sent $1,500 to Axiom. $80 came back." with the came-back/lost bar; What Shield noticed; tap Evidence | "Sent $1,500. $80 came back. Net −$1,420. Every number is a transaction, and the hash of this evidence is stored in the vault with the verdict." |
+| 1:20 | Protection | Change daily limit → 3000: the sheet says **Activates in 24 hours**; schedule it; the **Weakening change scheduled** card counts down from 23:59:5x, "Your current $2,000 stays in force until then" | "Making myself less safe waits 24 hours, and I can cancel it the whole time." |
+| 1:27 | Protection | Change floor → 7000: **Applies instantly** → Tighten now; the value flashes green and the pending weakening flips to **Superseded** | "Making myself safer is instant. And the moment I tighten anything, whatever I'd scheduled to weaken is thrown out. Tighten fast, loosen slowly." |
 | 1:30 | Protection | Start the exit → 7 days pending | "Leaving entirely takes 7 days. Not trapped: just a decision instead of a reflex." |
 | 1:38 | Protection | Move funds → $150 to Ledger → confirmed | "De-risking is always instant, even during the cooldown." |
-| 1:46 | Activity | scroll the feed | "Every event, on-chain, with the verdict and its evidence." |
+| 1:46 | Activity | scroll the feed: the blocked top-up sits between the verdict and the tighten, with its rejection signature | "Every event, on-chain, with the verdict and its evidence. Even the top-up that didn't happen." |
 | 1:53 | Overview | hold | "Shield turns your own history into protection future-you can't rage-click away." |
 
 ## 3–4 minute version

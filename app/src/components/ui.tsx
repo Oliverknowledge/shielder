@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { hms, duration, usd } from "../lib/format";
 import { explorerUrl } from "../lib/shield";
@@ -18,8 +19,8 @@ export function ToastHost({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<Toast[]>([]);
   const push = useCallback((t: Omit<Toast, "id">) => {
     const id = Date.now() + Math.random();
-    setItems((prev) => [...prev, { ...t, id }]);
-    setTimeout(() => setItems((prev) => prev.filter((x) => x.id !== id)), t.kind === "err" ? 7000 : 4500);
+    setItems((prev) => [...prev.slice(-2), { ...t, id }]);
+    setTimeout(() => setItems((prev) => prev.filter((x) => x.id !== id)), t.kind === "err" ? 7000 : 4000);
   }, []);
   return (
     <ToastCtx.Provider value={{ push }}>
@@ -60,13 +61,49 @@ export function useToast() {
 
 // ---------------- primitives ----------------
 
-export function Pill({ tone, children }: { tone: "protect" | "pending" | "blocked" | "neutral" | "bankroll"; children: ReactNode }) {
-  return <span className={`pill pill-${tone}`}>{children}</span>;
+export type Tone = "protect" | "pending" | "blocked" | "neutral" | "bankroll";
+
+export function Pill({ tone, live, children }: { tone: Tone; live?: boolean; children: ReactNode }) {
+  return <span className={`pill pill-${tone}${live ? " pill-live" : ""}`}>{children}</span>;
 }
 
-export function Money({ raw, size = "m", cents, sign }: { raw: bigint | string | number; size?: "xl" | "l" | "m" | "s"; cents?: boolean; sign?: boolean }) {
+export function Dot({ tone }: { tone: Tone }) {
+  return <span className={`dot dot-${tone}`} aria-hidden />;
+}
+
+/** Tween a number toward its target (respects reduced motion). */
+export function useTween(target: number, ms = 650): number {
+  const [v, setV] = useState(target);
+  const cur = useRef(target);
+  useEffect(() => {
+    const from = cur.current;
+    const to = target;
+    if (from === to) return;
+    if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      cur.current = to;
+      setV(to);
+      return;
+    }
+    const start = performance.now();
+    let raf = 0;
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - start) / ms);
+      const e = 1 - Math.pow(1 - p, 3);
+      cur.current = from + (to - from) * e;
+      setV(cur.current);
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+  return v;
+}
+
+export function Money({ raw, size = "m", cents, sign, tween, className = "" }: { raw: bigint | string | number; size?: "xl" | "l" | "m" | "s"; cents?: boolean; sign?: boolean; tween?: boolean; className?: string }) {
   const cls = size === "xl" ? "money-xl" : size === "l" ? "money-l" : size === "m" ? "money-m" : "num";
-  return <span className={cls}>{usd(raw, { cents, sign })}</span>;
+  const target = typeof raw === "number" ? raw : Number(raw) / 1_000_000;
+  const shown = useTween(tween ? target : target, tween ? 650 : 0);
+  return <span className={`${cls} ${className}`}>{usd(tween ? shown : target, { cents, sign })}</span>;
 }
 
 /** Live countdown to a unix timestamp. */
@@ -85,32 +122,53 @@ export function Progress({ value, max, tone = "" }: { value: number; max: number
   );
 }
 
+/** Floor | refillable | trading, proportional to total capital. */
+export function CapitalBar({ floor, room, trade, locked }: { floor: bigint; room: bigint; trade: bigint; locked?: boolean }) {
+  const total = Number(floor + room + trade) || 1;
+  const w = (x: bigint) => `${(Number(x) / total) * 100}%`;
+  return (
+    <div className="capital" role="img" aria-label={`Floor ${usd(floor)}, refillable ${usd(room)}, trading ${usd(trade)}`}>
+      {floor > 0n && <i className="seg-floor" style={{ flexBasis: w(floor) }} />}
+      {room > 0n && <i className={`seg-room${locked ? " locked" : ""}`} style={{ flexBasis: w(room) }} />}
+      {trade > 0n && <i className="seg-trade" style={{ flexBasis: w(trade) }} />}
+    </div>
+  );
+}
+
 export function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () => void; title?: string; children: ReactNode }) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
   }, [open, onClose]);
-  return (
+  // Portal to <body>: the sheet must sit in the root stacking context so it
+  // covers the fixed tab bar and topbar on every page.
+  return createPortal(
     <AnimatePresence>
       {open && (
-        <motion.div className="sheet-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
+        <motion.div className="sheet-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} onClick={onClose}>
           <motion.div
             className="sheet"
             role="dialog"
             aria-modal="true"
-            initial={{ y: 24, opacity: 0 }}
+            initial={{ y: 28, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 16, opacity: 0 }}
+            exit={{ y: 20, opacity: 0 }}
             transition={{ duration: 0.24, ease: [0.2, 0.8, 0.2, 1] }}
             onClick={(e) => e.stopPropagation()}
           >
+            <div className="sheet-grab" />
             {title && (
               <div className="row-between" style={{ marginBottom: 16 }}>
                 <h2 className="title">{title}</h2>
                 <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close">
-                  Close
+                  <Icon name="x" size={18} />
                 </button>
               </div>
             )}
@@ -118,7 +176,8 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }
 
@@ -132,24 +191,29 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   );
 }
 
-export function MoneyInput({ value, onChange, placeholder = "0", autoFocus }: { value: string; onChange: (v: string) => void; placeholder?: string; autoFocus?: boolean }) {
+export function MoneyInput({ value, onChange, placeholder = "0", autoFocus, variant = "inline" }: { value: string; onChange: (v: string) => void; placeholder?: string; autoFocus?: boolean; variant?: "hero" | "inline" | "small" }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const width = Math.max(1, (value || placeholder).length);
   return (
-    <div className="input-money">
+    <div className={`amount ${variant === "inline" ? "inline" : variant === "small" ? "small" : ""}${value === "" ? " empty" : ""}`} onClick={() => ref.current?.focus()}>
       <span>$</span>
       <input
+        ref={ref}
         inputMode="decimal"
         autoFocus={autoFocus}
         placeholder={placeholder}
         value={value}
-        onChange={(e) => onChange(e.target.value.replace(/[^0-9.]/g, ""))}
+        size={width}
+        style={variant === "inline" ? undefined : { width: `${width + 0.4}ch` }}
+        onChange={(e) => onChange(e.target.value.replace(/[^0-9.]/g, "").replace(/^0+(?=\d)/, ""))}
         aria-label="Amount in USDC"
       />
     </div>
   );
 }
 
-export function Skeleton({ w = "100%", h = 18 }: { w?: number | string; h?: number }) {
-  return <span className="skeleton" style={{ display: "inline-block", width: w, height: h }} />;
+export function Skeleton({ w = "100%", h = 18, style }: { w?: number | string; h?: number; style?: React.CSSProperties }) {
+  return <span className="skeleton" style={{ display: "inline-block", width: w, height: h, ...style }} />;
 }
 
 export function Stepper({ step, total }: { step: number; total: number }) {
@@ -180,8 +244,10 @@ export function EmptyState({ title, body, action }: { title: string; body?: stri
   );
 }
 
-export function Icon({ name, size = 20 }: { name: "home" | "topup" | "behaviour" | "protection" | "activity" | "shield" | "arrow" | "check" | "lock" | "pause" | "x"; size?: number }) {
-  const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+export type IconName = "home" | "topup" | "behaviour" | "protection" | "activity" | "shield" | "arrow" | "check" | "lock" | "pause" | "x" | "clock" | "bolt" | "external" | "back";
+
+export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
+  const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
   switch (name) {
     case "home":
       return <svg {...common}><path d="M3 11.5 12 4l9 7.5" /><path d="M5 10v10h14V10" /></svg>;
@@ -197,6 +263,8 @@ export function Icon({ name, size = 20 }: { name: "home" | "topup" | "behaviour"
       return <svg {...common} strokeWidth={0} fill="currentColor"><path d="M12 2 4 5v6c0 5.5 3.6 9.7 8 11 4.4-1.3 8-5.5 8-11V5l-8-3z" /><path d="M12 7v9" stroke="var(--paper)" strokeWidth={2} strokeLinecap="round" /></svg>;
     case "arrow":
       return <svg {...common}><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>;
+    case "back":
+      return <svg {...common}><path d="M19 12H5" /><path d="m11 18-6-6 6-6" /></svg>;
     case "check":
       return <svg {...common}><path d="m5 12 5 5L20 7" /></svg>;
     case "lock":
@@ -205,5 +273,11 @@ export function Icon({ name, size = 20 }: { name: "home" | "topup" | "behaviour"
       return <svg {...common}><path d="M9 5v14" /><path d="M15 5v14" /></svg>;
     case "x":
       return <svg {...common}><path d="M6 6l12 12" /><path d="M18 6 6 18" /></svg>;
+    case "clock":
+      return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>;
+    case "bolt":
+      return <svg {...common}><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" /></svg>;
+    case "external":
+      return <svg {...common}><path d="M14 4h6v6" /><path d="M20 4 10 14" /><path d="M18 13v6H5V6h6" /></svg>;
   }
 }

@@ -1,78 +1,113 @@
+import { useMemo } from "react";
 import { useShield } from "../lib/shield";
-import { ExplorerLink, Pill } from "../components/ui";
-import { usd, dateTime, short, hoursLabel } from "../lib/format";
-import type { EventJson } from "../lib/api";
+import { Dot, ExplorerLink, Skeleton, type Tone } from "../components/ui";
+import { usd, short, timeOnly, dayLabel, clockTime } from "../lib/format";
+import { describeEvents } from "../lib/events";
+import { useAttempts } from "../lib/attempts";
+import { COOLDOWN_REASON } from "../../../client/shield-client";
 
-function describe(e: EventJson, labelOf: (owner: string) => string): { title: string; body: string; tone: "protect" | "pending" | "blocked" | "neutral" | "bankroll" } {
-  const d = e.data;
-  switch (e.name) {
-    case "VaultInitialized":
-      return { title: "Shield activated", body: `Floor ${usd(String(d.protectedFloor))}, daily limit ${usd(String(d.velocityThreshold))}`, tone: "protect" };
-    case "Deposited":
-      return { title: `Deposited ${usd(String(d.amount))}`, body: `Treasury now ${usd(String(d.newBalance))}`, tone: "protect" };
-    case "RegistrationChanged":
-      return { title: `${d.active ? "Registered" : "Removed"} ${d.kind === 1 ? "cold" : "trading"} wallet`, body: `${d.label || short(String(d.owner))}`, tone: d.active ? "neutral" : "protect" };
-    case "PolicyTightened":
-      return { title: "Protection tightened", body: `Applied instantly · config v${d.configVersion}${Number(d.cooldownUntil) > 0 ? ` · pause until ${dateTime(Number(d.cooldownUntil))}` : ""}`, tone: "protect" };
-    case "LoosenProposed":
-      return { title: "Weakening change scheduled", body: `Activates ${dateTime(Number(d.executeAfter))}`, tone: "pending" };
-    case "LoosenExecuted":
-      return { title: "Weakening change applied", body: `Proposal #${d.nonce} matured and was executed`, tone: "neutral" };
-    case "ProposalCancelled":
-      return { title: "Change cancelled", body: `Proposal #${d.nonce}`, tone: "protect" };
-    case "TopUpExecuted":
-      return { title: `Top-up ${usd(String(d.amount))} to ${labelOf(String(d.destinationOwner))}`, body: `${d.instant ? "Instant" : "After the pause"} · ${usd(String(d.velocityAfter))} used of today's limit`, tone: "bankroll" };
-    case "TopUpProposed":
-      return { title: `Large top-up ${usd(String(d.amount))} scheduled`, body: `Can move ${dateTime(Number(d.executeAfter))}`, tone: "pending" };
-    case "ColdTransferExecuted":
-      return { title: `${usd(String(d.amount))} to cold wallet`, body: labelOf(String(d.destinationOwner)), tone: "protect" };
-    case "FullExitProposed":
-      return { title: d.uninstall ? "Exit from Shield scheduled" : `Withdrawal ${usd(String(d.amount))} scheduled`, body: `Executes ${dateTime(Number(d.executeAfter))}`, tone: "blocked" };
-    case "FullExitExecuted":
-      return { title: `Exited ${usd(String(d.amount))}`, body: labelOf(String(d.destinationOwner)), tone: "blocked" };
-    case "RiskVerdictApplied":
-      return { title: `Loss rule fired: ${usd(String(d.realizedLossUsdc))} attested`, body: `${d.extended ? "Top-ups paused until" : "Already paused until"} ${dateTime(Number(d.cooldownUntil))} · verdict #${d.nonce}`, tone: "blocked" };
-    default:
-      return { title: e.name, body: "", tone: "neutral" };
-  }
+interface Item {
+  ts: number;
+  key: string;
+  title: string;
+  body: string;
+  tone: Tone;
+  category: string;
+  sig: string | null;
+  amount?: { text: string; tone: Tone };
 }
 
 export function Activity() {
-  const { server, serverError, wallets, vault } = useShield();
+  const { server, serverError, serverLoading, wallets, vault, vaultAddress, now } = useShield();
+  const attempts = useAttempts(vaultAddress?.toBase58() ?? null);
   const labelOf = (owner: string) => wallets.find((w) => w.owner === owner)?.label ?? short(owner);
 
+  const items = useMemo<Item[]>(() => {
+    const out: Item[] = [];
+    const evs = server?.events ?? [];
+    const views = describeEvents(evs, labelOf, now);
+    evs.forEach((e, i) => {
+      const v = views[i];
+      out.push({ ts: e.blockTime, key: `${e.signature}-${e.name}-${out.length}`, title: v.title, body: v.body, tone: v.tone, category: v.category, sig: e.signature, amount: v.amount });
+    });
+    for (const a of attempts) {
+      const why =
+        a.reason === "CooldownActive"
+          ? vault && vault.cooldownReason === COOLDOWN_REASON.SELF_PAUSE
+            ? "You had paused top-ups"
+            : "Loss cooldown was active"
+          : a.reason === "VelocityThresholdExceeded"
+            ? "Over your daily limit"
+            : a.reason === "ProtectedFloorBreached"
+              ? "Would have breached your floor"
+              : a.reason ?? "Rejected by the vault";
+      out.push({ ts: a.ts, key: `attempt-${a.ts}-${a.amount}`, title: `Top-up of ${usd(a.amount)} to ${a.destinationLabel} blocked`, body: `${why} · the money never left the treasury`, tone: "blocked", category: "Blocked", sig: a.sig, amount: { text: usd(a.amount), tone: "blocked" } });
+    }
+    return out.sort((x, y) => y.ts - x.ts);
+  }, [server?.events, attempts, wallets, vault, now]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const groups = useMemo(() => {
+    const g: { label: string; items: Item[] }[] = [];
+    for (const it of items) {
+      const label = dayLabel(it.ts, now);
+      const last = g[g.length - 1];
+      if (last && last.label === label) last.items.push(it);
+      else g.push({ label, items: [it] });
+    }
+    return g;
+  }, [items, now]);
+
   return (
-    <main className="page page-narrow fade-in">
-      <div style={{ marginBottom: 12 }}>
+    <main className="page page-mid fade-in">
+      <div className="page-head">
         <p className="eyebrow">Activity</p>
-        <h1 className="title" style={{ marginTop: 4 }}>Everything the vault did, on-chain</h1>
-        {vault && <p className="small muted" style={{ marginTop: 4 }}>Config version {vault.configVersion.toString()} · {vault.lastVerdictNonce.toString()} verdict{vault.lastVerdictNonce === 1n ? "" : "s"} accepted · weakening waits {hoursLabel(vault.loosenCooldownSecs)}</p>}
+        <h1>Proof of everything Shield did</h1>
+        <p>Every line is a Solana transaction you can open. A blocked top-up never moved money, but the rejection is on-chain too.</p>
       </div>
-      {!server ? (
-        <div className="card">
-          <p className="dim">Activity needs the indexer{serverError ? ` (${serverError})` : ""}. The vault itself is unaffected.</p>
+
+      {vault && Number(vault.cooldownUntil) > now && (
+        <div className="strip strip-blocked" style={{ marginBottom: 20 }}>
+          <div className="grow">Top-ups paused until <b>{clockTime(Number(vault.cooldownUntil), now)}</b>{vault.cooldownReason === COOLDOWN_REASON.RISK_VERDICT ? " by your loss rule" : " by you"}.</div>
         </div>
-      ) : server.events.length === 0 ? (
-        <div className="card"><p className="muted">No events yet.</p></div>
+      )}
+
+      {!server && serverLoading && !serverError ? (
+        <div className="feed" aria-busy="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="feed-item">
+              <Dot tone="neutral" />
+              <div><Skeleton w={220} h={16} /><div style={{ marginTop: 6 }}><Skeleton w={160} h={12} /></div></div>
+              <span />
+            </div>
+          ))}
+        </div>
+      ) : !server && attempts.length === 0 ? (
+        <div className="panel">
+          <p className="dim">Activity needs the Shield server{serverError ? ` (${serverError})` : ""}. The vault itself is unaffected.</p>
+        </div>
+      ) : items.length === 0 ? (
+        <div className="panel"><p className="muted">Nothing yet.</p></div>
       ) : (
-        <div className="card">
-          <div className="list">
-            {server.events.map((e, i) => {
-              const d = describe(e, labelOf);
-              return (
-                <div key={`${e.signature}-${i}`} className="list-row" style={{ alignItems: "flex-start" }}>
-                  <div>
-                    <div className="row" style={{ gap: 8 }}>
-                      <span style={{ fontWeight: 600 }}>{d.title}</span>
+        <div className="feed">
+          {groups.map((g) => (
+            <div key={g.label} className="feed-day">
+              <p className="eyebrow">{g.label}</p>
+              {g.items.map((it) => (
+                <div key={it.key} className="feed-item">
+                  <Dot tone={it.tone} />
+                  <div style={{ minWidth: 0 }}>
+                    <div className="t">{it.title}</div>
+                    {it.body && <div className="b">{it.body}</div>}
+                    <div className="m">
+                      {timeOnly(it.ts)} · {it.category}
+                      {it.sig && <> · <ExplorerLink sig={it.sig} /></>}
                     </div>
-                    <div className="small dim">{d.body}</div>
-                    <div className="tiny muted">{dateTime(e.blockTime)} · slot {e.slot} · <ExplorerLink sig={e.signature} /></div>
                   </div>
-                  <Pill tone={d.tone}>{e.name.replace(/([a-z])([A-Z])/g, "$1 $2")}</Pill>
+                  {it.amount ? <div className={`amt ${it.amount.tone === "protect" ? "c-protect" : it.amount.tone === "blocked" ? "c-blocked" : ""}`} style={it.amount.tone === "blocked" ? { textDecoration: "line-through", textDecorationThickness: 1.5 } : undefined}>{it.amount.text}</div> : <span />}
                 </div>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          ))}
         </div>
       )}
     </main>

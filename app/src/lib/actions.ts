@@ -60,7 +60,7 @@ export function useAction() {
       setBusy(label);
       try {
         const sig = await sendTx(ixs, { recordRejection: opts.recordRejection });
-        if (!opts.silent) toast.ok(`${label} confirmed`, sig);
+        if (!opts.silent) toast.ok(label, sig);
         return sig;
       } catch (e) {
         const d = describeError(e);

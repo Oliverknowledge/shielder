@@ -81,6 +81,8 @@ export interface ShieldData {
   server: VaultPayload | null;
   health: ServerHealth | null;
   serverError: string | null;
+  /** True until the first server response (or failure) for this vault. */
+  serverLoading: boolean;
   refresh: () => Promise<void>;
   sendTx: (ixs: TransactionInstruction[], opts?: { recordRejection?: boolean }) => Promise<string>;
   simulate: (ixs: TransactionInstruction[]) => Promise<{ ok: true } | { ok: false; error: ShieldErrorName | null; logs: string[] }>;
@@ -121,6 +123,7 @@ function Inner({ children }: { children: ReactNode }) {
   const [server, setServer] = useState<VaultPayload | null>(null);
   const [health, setHealth] = useState<ServerHealth | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [serverLoading, setServerLoading] = useState(true);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const inflight = useRef(false);
   const vaultExistsRef = useRef(false);
@@ -178,19 +181,23 @@ function Inner({ children }: { children: ReactNode }) {
       if (vaultAddress && vaultExistsRef.current) {
         const p = await getJson<VaultPayload>(`${API_URL}/api/vault/${vaultAddress.toBase58()}`);
         setServer(p);
+        setServerLoading(false);
       } else {
         setServer(null);
       }
       setServerError(null);
     } catch (e) {
       setServerError(e instanceof Error ? e.message : String(e));
+      setServerLoading(false);
     }
   }, [vaultAddress]);
 
   useEffect(() => {
     setLoading(true);
-    void refresh();
-    void refreshServer();
+    setServerLoading(true);
+    // The server payload is only meaningful once we know the vault exists,
+    // so the first server fetch follows the first chain fetch.
+    void refresh().then(() => refreshServer());
     const a = setInterval(() => void refresh(), 4000);
     const b = setInterval(() => void refreshServer(), 4000);
     return () => {
@@ -294,6 +301,7 @@ function Inner({ children }: { children: ReactNode }) {
     server,
     health,
     serverError,
+    serverLoading,
     refresh,
     sendTx,
     simulate,

@@ -4,7 +4,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletReadyState } from "@solana/wallet-adapter-base";
 import { motion } from "motion/react";
 import { useShield, NETWORK } from "../lib/shield";
-import { Icon } from "../components/ui";
+import { CapitalBar, Dot, Icon } from "../components/ui";
 
 export function Welcome() {
   const { signer, vault, loading, connectDemo } = useShield();
@@ -24,7 +24,7 @@ export function Welcome() {
   const tryDemo = () => {
     try {
       const arr = JSON.parse(demoJson) as number[];
-      if (!Array.isArray(arr) || arr.length !== 64) throw new Error("expected a 64-number Solana keypair array");
+      if (!Array.isArray(arr) || arr.length !== 64) throw new Error("Expected a 64-number Solana keypair array");
       connectDemo(arr);
     } catch (e) {
       setDemoError(e instanceof Error ? e.message : String(e));
@@ -33,34 +33,45 @@ export function Welcome() {
 
   return (
     <main className="page page-narrow fade-in">
-      <div style={{ padding: "40px 0 28px" }}>
-        <p className="eyebrow" style={{ marginBottom: 14 }}>Self-custodial commitment layer · Solana</p>
+      <div style={{ padding: "36px 0 28px" }}>
+        <p className="eyebrow" style={{ marginBottom: 14 }}>Self-custodial · Solana</p>
         <h1 className="display" style={{ maxWidth: "14ch" }}>
           Wallets protect your keys. <span className="serif" style={{ fontStyle: "italic", fontWeight: 400 }}>Shield protects you from your own decisions.</span>
         </h1>
-        <p className="lead" style={{ marginTop: 18, maxWidth: "44ch" }}>
-          Keep most of your capital in a treasury that future-you can’t rage-click open. Trade freely from a bankroll. Refill it only by rules you set while calm.
+        <p className="lead" style={{ marginTop: 18, maxWidth: "46ch" }}>
+          Keep most of your capital in a treasury that future-you can't rage-click open. Trade from a bankroll. Refill it only by rules you set while calm.
         </p>
       </div>
 
-      <div className="grid-3" style={{ marginBottom: 28 }}>
-        {[
-          ["Protected treasury", "Real on-chain enforcement. Not a notification, not a setting: the money cannot move."],
-          ["Tighten fast, loosen slowly", "Making yourself safer is instant. Making yourself less safe waits 24 hours."],
-          ["Your history, your rules", "Shield watches what actually came back from your trading wallet and pauses reloads after real losses."],
-        ].map(([t, b]) => (
-          <div key={t} className="card-plain">
-            <h3 style={{ fontSize: 15, marginBottom: 6 }}>{t}</h3>
-            <p className="small dim">{b}</p>
+      <section className="card card-hero" aria-label="How Shield splits your capital">
+        <div className="row-between">
+          <p className="eyebrow">Say you put in $10,000</p>
+          <span className="tiny muted">example</span>
+        </div>
+        <div style={{ marginTop: 14 }}>
+          <CapitalBar floor={6_000_000_000n} room={2_000_000_000n} trade={2_000_000_000n} />
+          <div className="legend">
+            <span><i style={{ background: "var(--protect)" }} />Never touched <b>$6,000</b></span>
+            <span><i style={{ background: "var(--protect-2)" }} />Refillable by rule <b>$2,000</b></span>
+            <span><i style={{ background: "var(--bankroll-2)" }} />Trading now <b>$2,000</b></span>
           </div>
-        ))}
+        </div>
+        <p className="title" style={{ marginTop: 20, fontSize: 19 }}>
+          It doesn't stop you trading. <span className="dim" style={{ fontWeight: 500 }}>It stops you topping up after a bad day.</span>
+        </p>
+      </section>
+
+      <div className="notice-list" style={{ margin: "24px 4px 28px" }}>
+        <div className="notice"><Dot tone="protect" /><span><b>Real enforcement.</b> Not a notification, not a setting. When a top-up is blocked, the money cannot move.</span></div>
+        <div className="notice"><Dot tone="pending" /><span><b>Tighten fast, loosen slowly.</b> Making yourself safer is instant. Making yourself less safe waits 24 hours.</span></div>
+        <div className="notice"><Dot tone="bankroll" /><span><b>Your history, your rules.</b> Shield watches what actually came back from your trading wallet and pauses reloads after real losses.</span></div>
       </div>
 
       <div className="card">
         <h2 className="title" style={{ marginBottom: 4 }}>Connect a wallet</h2>
         <p className="small muted" style={{ marginBottom: 16 }}>Your wallet is the only authority over the vault. Shield never holds keys.</p>
         <div className="stack-s">
-          {installed.length === 0 && <p className="small dim">No Solana wallet detected. Install Phantom, Solflare or Backpack, or use a demo key below.</p>}
+          {installed.length === 0 && <p className="small dim">No Solana wallet detected. Install Phantom, Solflare or Backpack{NETWORK !== "mainnet-beta" ? ", or continue with a demo key below" : ""}.</p>}
           {installed.map((w) => (
             <motion.button
               key={w.adapter.name}
@@ -81,16 +92,16 @@ export function Welcome() {
         </div>
 
         {NETWORK !== "mainnet-beta" && (
-          <div style={{ marginTop: 18 }}>
+          <div style={{ marginTop: 14 }}>
             {!showDemo ? (
               <button className="btn btn-ghost btn-sm" onClick={() => setShowDemo(true)}>
                 Continue with a demo key ({NETWORK})
               </button>
             ) : (
               <div className="stack-s fade-in">
-                <p className="tiny muted">Paste a Solana CLI keypair JSON (the 64-number array). Kept in this tab’s session only. Never do this with a real key.</p>
+                <p className="tiny muted">Paste a Solana CLI keypair JSON (the 64-number array). Kept in this tab's session only. Never do this with a real key.</p>
                 <textarea className="input mono" rows={3} value={demoJson} onChange={(e) => setDemoJson(e.target.value)} placeholder="[12,34,…]" />
-                {demoError && <p className="tiny" style={{ color: "var(--blocked)" }}>{demoError}</p>}
+                {demoError && <p className="tiny c-blocked">{demoError}</p>}
                 <div className="row">
                   <button className="btn btn-sm" onClick={tryDemo} disabled={!demoJson.trim()}>
                     Use demo key
@@ -106,7 +117,7 @@ export function Welcome() {
       </div>
 
       <p className="tiny muted" style={{ marginTop: 20 }}>
-        Built on a Solana program (immutable enforcement), The Graph Substreams (behavioural memory) and a Chainlink CRE confidential workflow (tamper-resistant monitor). Rules are enforced by code you can read.
+        A Solana program enforces the rules. The Graph Substreams remembers what came back. A Chainlink CRE confidential workflow signs the loss verdicts. All of it is code you can read.
       </p>
     </main>
   );

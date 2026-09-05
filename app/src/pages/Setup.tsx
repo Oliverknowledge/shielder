@@ -5,8 +5,8 @@ import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAd
 import { motion } from "motion/react";
 import { useShield, API_URL, NETWORK } from "../lib/shield";
 import { useAction } from "../lib/actions";
-import { Field, MoneyInput, Stepper, useToast } from "../components/ui";
-import { usd, hoursLabel } from "../lib/format";
+import { CapitalBar, Dot, Field, Icon, MoneyInput, Stepper, useToast } from "../components/ui";
+import { usd, hoursLabel, short } from "../lib/format";
 import { depositIx, initializeVaultIx, registerOwnerIx, usdcToRaw, vaultPda, OwnerType } from "../../../client/shield-client";
 import { getJson } from "../lib/api";
 
@@ -101,7 +101,6 @@ export function Setup() {
     if (draft.coldAddress) {
       ixs.push(registerOwnerIx({ authority: signer.publicKey, vault: vaultPk, owner: new PublicKey(draft.coldAddress), kind: OwnerType.Cold, label: draft.coldLabel || "Cold" }));
     }
-    // make sure the execution wallet can receive USDC
     const execAta = getAssociatedTokenAddressSync(mint, new PublicKey(draft.executionAddress), true);
     ixs.push(createAssociatedTokenAccountIdempotentInstruction(signer.publicKey, execAta, new PublicKey(draft.executionAddress), mint));
     // Mark as activated before sending: the provider refreshes the vault as
@@ -133,7 +132,7 @@ export function Setup() {
     setFaucetBusy(true);
     try {
       await getJson(`${API_URL}/api/demo/faucet`, { method: "POST", body: JSON.stringify({ owner: signer.publicKey.toBase58(), amountUsdc: n(draft.deposit) || 10000 }) });
-      toast.ok(`Test USDC minted to your wallet`);
+      toast.ok("Test USDC added to your wallet");
       await refresh();
     } catch (e) {
       toast.err(`Faucet failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -142,7 +141,9 @@ export function Setup() {
     }
   };
 
-  const floorPct = n(draft.deposit) > 0 ? Math.min(100, Math.round((n(draft.floor) / n(draft.deposit)) * 100)) : 0;
+  const dep = n(draft.deposit);
+  const floor = Math.min(n(draft.floor), dep);
+  const floorPct = dep > 0 ? Math.min(100, Math.round((n(draft.floor) / dep) * 100)) : 0;
 
   return (
     <main className="page page-narrow fade-in">
@@ -155,25 +156,25 @@ export function Setup() {
       <motion.div key={step} initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.2 }} style={{ marginTop: 24 }}>
         {step === 0 && (
           <div className="stack">
-            <div>
-              <h1 className="title">Where does your money go?</h1>
-              <p className="dim" style={{ marginTop: 6 }}>Shield can only send to addresses you register. Your trading wallet gets top-ups under your rules. A cold wallet is where you exit to.</p>
+            <div className="page-head" style={{ marginBottom: 0 }}>
+              <h1>Where does your money go?</h1>
+              <p>Shield can only send to wallets you register now. Your trading wallet gets top-ups under your rules. A cold wallet is where you exit to.</p>
             </div>
             <div className="card stack">
-              <p className="eyebrow">Trading wallet (execution)</p>
+              <p className="eyebrow">Trading wallet</p>
               <Field label="Address" hint="Axiom, a Telegram bot, an exchange deposit address: wherever you actually trade from.">
                 <input className="input mono" value={draft.executionAddress} onChange={(e) => set({ executionAddress: e.target.value.trim() })} placeholder="Solana address" />
               </Field>
-              <Field label="Label">
+              <Field label="Name">
                 <input className="input" value={draft.executionLabel} onChange={(e) => set({ executionLabel: e.target.value.slice(0, 24) })} />
               </Field>
             </div>
             <div className="card stack">
-              <p className="eyebrow">Cold wallet (optional now, 24h to add later)</p>
+              <p className="eyebrow">Cold wallet · optional now, 24h to add later</p>
               <Field label="Address" hint="A wallet you control and don't trade from. Small emergency amounts can move here instantly; a full exit takes 7 days.">
                 <input className="input mono" value={draft.coldAddress} onChange={(e) => set({ coldAddress: e.target.value.trim() })} placeholder="Solana address" />
               </Field>
-              <Field label="Label">
+              <Field label="Name">
                 <input className="input" value={draft.coldLabel} onChange={(e) => set({ coldLabel: e.target.value.slice(0, 24) })} />
               </Field>
             </div>
@@ -182,9 +183,9 @@ export function Setup() {
 
         {step === 1 && (
           <div className="stack">
-            <div>
-              <h1 className="title">Choose your protection</h1>
-              <p className="dim" style={{ marginTop: 6 }}>Set these while you’re calm. You can always tighten them instantly. Loosening any of them waits 24 hours.</p>
+            <div className="page-head" style={{ marginBottom: 0 }}>
+              <h1>Choose your protection</h1>
+              <p>Set these while you're calm. Tightening any of them later is instant. Loosening waits 24 hours.</p>
             </div>
             <div className="card stack">
               <Field label="Capital you'll deposit">
@@ -194,19 +195,28 @@ export function Setup() {
                 <MoneyInput value={draft.floor} onChange={(v) => set({ floor: v })} />
                 <div className="chips" style={{ marginTop: 8 }}>
                   {[50, 60, 70, 80].map((p) => (
-                    <button key={p} className={`chip ${floorPct === p ? "active" : ""}`} onClick={() => set({ floor: String(Math.round((n(draft.deposit) * p) / 100)) })}>
+                    <button key={p} className={`chip ${floorPct === p ? "active" : ""}`} onClick={() => set({ floor: String(Math.round((dep * p) / 100)) })}>
                       {p}%
                     </button>
                   ))}
                 </div>
               </Field>
+              {dep > 0 && (
+                <div>
+                  <CapitalBar floor={usdcToRaw(floor)} room={usdcToRaw(Math.max(0, dep - floor))} trade={0n} />
+                  <div className="legend">
+                    <span><i style={{ background: "var(--protect)" }} />Never touched <b>{usd(floor)}</b></span>
+                    <span><i style={{ background: "var(--protect-2)" }} />Refillable by rule <b>{usd(Math.max(0, dep - floor))}</b></span>
+                  </div>
+                </div>
+              )}
               <Field label="Daily top-up limit" hint="Everything that leaves for trading in any rolling 24 hours, added together. Four $500 top-ups count as $2,000.">
                 <MoneyInput value={draft.daily} onChange={(v) => set({ daily: v })} />
               </Field>
             </div>
             <div className="card stack">
               <p className="eyebrow">After losses</p>
-              <Field label="Loss trigger" hint="When money that comes back from your trading wallet is this much short of what you sent (in 24 hours), Shield pauses top-ups.">
+              <Field label="Loss trigger" hint="When what comes back from your trading wallet is this much short of what you sent, within 24 hours, Shield pauses top-ups.">
                 <MoneyInput value={draft.lossTrigger} onChange={(v) => set({ lossTrigger: v })} />
               </Field>
               <Field label="Pause length">
@@ -218,7 +228,7 @@ export function Setup() {
                   ))}
                 </div>
               </Field>
-              <Field label="Large top-ups wait 30 minutes above" hint="A single top-up at or above this share of the treasury waits half an hour before it can move.">
+              <Field label="Large top-ups wait 30 minutes from" hint="A single top-up at or above this share of the treasury waits half an hour before it can move.">
                 <div className="chips">
                   {[10, 20, 30, 50].map((p) => (
                     <button key={p} className={`chip ${draft.thresholdPct === p ? "active" : ""}`} onClick={() => set({ thresholdPct: p })}>
@@ -229,11 +239,11 @@ export function Setup() {
               </Field>
             </div>
             <div className="card">
-              <div className="row-between">
-                <div>
+              <div className="row-between" style={{ gap: 16 }}>
+                <div style={{ minWidth: 0 }}>
                   <p style={{ fontWeight: 600 }}>Shield monitor</p>
-                  <p className="small dim">Watches your trading wallet’s real on-chain flows and can only ever pause top-ups by your rule above. It can’t move money or loosen anything.</p>
-                  {!health?.monitor.verifier && <p className="tiny" style={{ color: "var(--pending)", marginTop: 4 }}>Server not reachable: the monitor can be added later.</p>}
+                  <p className="small dim">Watches your trading wallet's real on-chain flows. It can only ever pause top-ups by your loss rule. It can't move money or loosen anything.</p>
+                  {!health?.monitor.verifier && <p className="tiny c-pending" style={{ marginTop: 4 }}>Server not reachable: the monitor can be added later.</p>}
                 </div>
                 <button className={`switch ${draft.monitor && health?.monitor.verifier ? "on" : ""}`} onClick={() => set({ monitor: !draft.monitor })} aria-label="Toggle monitor" disabled={!health?.monitor.verifier} />
               </div>
@@ -243,55 +253,64 @@ export function Setup() {
 
         {step === 2 && (
           <div className="stack">
-            <div>
-              <h1 className="title">Your rules, in plain English</h1>
-              <p className="dim" style={{ marginTop: 6 }}>These are enforced by the vault program itself. Read them like a contract with yourself.</p>
+            <div className="page-head" style={{ marginBottom: 0 }}>
+              <h1>Your rules, in plain English</h1>
+              <p>The vault program enforces these. Read them like a contract with yourself.</p>
             </div>
             <div className="card">
-              <ol className="stack-s" style={{ margin: 0, paddingLeft: 20, lineHeight: 1.6 }}>
-                <li>Of the <b>{usd(n(draft.deposit))}</b> I deposit, <b>{usd(n(draft.floor))}</b> is protected. Top-ups can never touch it.</li>
-                <li>I can send at most <b>{usd(n(draft.daily))}</b> to my trading wallet in any 24 hours, however I split it.</li>
-                <li>Any single top-up worth <b>{draft.thresholdPct}%</b> or more of the treasury waits <b>30 minutes</b>.</li>
-                <li>If <b>{usd(n(draft.lossTrigger))}</b> or more doesn’t come back from my trading wallet within 24 hours, top-ups pause for <b>{hoursLabel(draft.lossCooldownHours * 3600)}</b>.</li>
-                <li>Making any rule stricter is instant. Making any rule weaker waits <b>24 hours</b>, and I can cancel it any time.</li>
-                <li>Up to <b>$200</b> can move instantly to a cold wallet. Leaving Shield entirely takes <b>7 days</b>.</li>
-                <li>Only my wallet can move funds. Shield’s monitor can pause top-ups by rule 4, and nothing else.</li>
-              </ol>
+              <div className="list">
+                {[
+                  <>Of the <b>{usd(dep)}</b> I deposit, <b>{usd(n(draft.floor))}</b> is never touched by a top-up.</>,
+                  <>I can send at most <b>{usd(n(draft.daily))}</b> to my trading wallet in any 24 hours, however I split it.</>,
+                  <>After I lose <b>{usd(n(draft.lossTrigger))}</b> or more in a day, top-ups are blocked for <b>{hoursLabel(draft.lossCooldownHours * 3600)}</b>.</>,
+                  <>Any single top-up worth <b>{draft.thresholdPct}%</b> of the treasury or more waits <b>30 minutes</b>.</>,
+                  <>Making any rule stricter is instant. Making any rule weaker waits <b>24 hours</b>, and I can cancel it any time.</>,
+                  <>Up to <b>$200</b> can move to my cold wallet instantly. Leaving Shield takes <b>7 days</b>.</>,
+                  <>Only my wallet can move funds. Shield's monitor can pause top-ups by rule 3, and nothing else.</>,
+                ].map((s, i) => (
+                  <div key={i} className="rule" style={{ padding: "12px 0" }}>
+                    <div className="s">{s}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
 
         {step === 3 && (
           <div className="stack">
-            <div>
-              <h1 className="title">{activated ? "Shield is active" : "Activate Shield"}</h1>
-              <p className="dim" style={{ marginTop: 6 }}>
-                {activated ? "Now move capital into the treasury. Deposits are always allowed; only what leaves is governed." : "One transaction creates your vault and registers your wallets."}
-              </p>
+            <div className="page-head" style={{ marginBottom: 0 }}>
+              <h1>{activated ? "Shield is active" : "Activate Shield"}</h1>
+              <p>{activated ? "Now move capital into the treasury. Deposits are always allowed; only what leaves is governed." : "One transaction creates your vault and registers your wallets."}</p>
             </div>
             {!activated ? (
-              <div className="card stack-s">
-                <p className="small dim">Program: <span className="mono">{health?.programId ?? "…"}</span></p>
-                <p className="small dim">USDC mint: <span className="mono">{usdcMint ?? "not configured"}</span></p>
+              <div className="card stack">
+                <div className="notice-list">
+                  <div className="notice"><Dot tone="protect" /><span>Creates your vault, owned by <span className="mono">{short(signer.publicKey.toBase58())}</span> and nobody else.</span></div>
+                  <div className="notice"><Dot tone="bankroll" /><span>Registers <b>{draft.executionLabel || "Trading"}</b> as your trading wallet.</span></div>
+                  {draft.coldAddress && <div className="notice"><Dot tone="protect" /><span>Registers <b>{draft.coldLabel || "Cold"}</b> as your cold wallet.</span></div>}
+                  <div className="notice"><Dot tone={draft.monitor && health?.monitor.verifier ? "protect" : "neutral"} /><span>{draft.monitor && health?.monitor.verifier ? "Turns on the Shield monitor for your loss rule." : "No monitor for now. Adding one later is instant."}</span></div>
+                </div>
                 <button className="btn btn-lg btn-block" onClick={() => void activate()} disabled={!!busy || !usdcMint}>
                   {busy ? "Confirming…" : "Create my vault"}
                 </button>
+                <p className="tiny muted">Program {health?.programId ? short(health.programId, 6) : "…"} · USDC {usdcMint ? short(usdcMint, 6) : "not configured"}</p>
               </div>
             ) : (
               <div className="card stack">
-                <Field label="Deposit into the treasury" hint={`Wallet balance: ${walletUsdc === null ? "…" : usd(walletUsdc)} test USDC`}>
+                <Field label="Deposit into the treasury" hint={`In your wallet: ${walletUsdc === null ? "…" : usd(walletUsdc)} USDC`}>
                   <MoneyInput value={draft.deposit} onChange={(v) => set({ deposit: v })} />
                 </Field>
                 {walletUsdc !== null && walletUsdc < usdcToRaw(n(draft.deposit)) && NETWORK !== "mainnet-beta" && health?.demo && (
                   <div className="warn-box row-between">
                     <span>You need test USDC first.</span>
                     <button className="btn btn-secondary btn-sm" onClick={() => void faucet()} disabled={faucetBusy}>
-                      {faucetBusy ? "Minting…" : `Mint ${usd(n(draft.deposit) || 10000)} test USDC`}
+                      {faucetBusy ? "Adding…" : `Get ${usd(n(draft.deposit) || 10000)} test USDC`}
                     </button>
                   </div>
                 )}
                 <button className="btn btn-lg btn-block btn-protect" onClick={() => void deposit()} disabled={!!busy || deposited || (walletUsdc !== null && walletUsdc < usdcToRaw(n(draft.deposit)))}>
-                  {deposited ? "Deposited" : busy ? "Confirming…" : `Deposit ${usd(n(draft.deposit))}`}
+                  {deposited ? <><Icon name="check" size={18} /> Deposited</> : busy ? "Confirming…" : `Deposit ${usd(n(draft.deposit))}`}
                 </button>
                 <button className="btn btn-ghost btn-sm" onClick={() => navigate("/")}>Skip for now</button>
               </div>

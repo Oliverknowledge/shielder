@@ -47,11 +47,52 @@ export function dateTime(ts: number): string {
   return new Date(ts * 1000).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit", day: "numeric", month: "short" });
 }
 
+/** "08:42" or "Tue 08:42" if not today. Used for "protected until …". */
+export function clockTime(ts: number, now = Date.now() / 1000): string {
+  const d = new Date(ts * 1000);
+  const sameDay = new Date(now * 1000).toDateString() === d.toDateString();
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (sameDay) return time;
+  return `${d.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
+}
+
+export function timeOnly(ts: number): string {
+  return new Date(ts * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+/** "Today", "Yesterday", or "Sat, Sep 5". */
+export function dayLabel(ts: number, now = Date.now() / 1000): string {
+  const d = new Date(ts * 1000);
+  const today = new Date(now * 1000);
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return "Today";
+  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
 export const nowSec = () => Math.floor(Date.now() / 1000);
 
 export function hoursLabel(secs: bigint | number): string {
   const h = Number(secs) / 3600;
   if (h >= 48) return `${Math.round(h / 24)} days`;
-  if (h >= 1) return `${Math.round(h * 10) / 10} hours`;
+  if (h >= 1) {
+    const r = Math.round(h * 10) / 10;
+    return `${r} hour${r === 1 ? "" : "s"}`;
+  }
   return `${Math.round(h * 60)} minutes`;
 }
+
+/** "18-hour" / "7-day" / "30-minute", for adjectival use. */
+export function spanAdjective(secs: bigint | number): string {
+  const s = Number(secs);
+  if (s >= 172800 && s % 86400 === 0) return `${s / 86400}-day`;
+  if (s >= 3600 && s % 3600 === 0) return `${s / 3600}-hour`;
+  return `${Math.round(s / 60)}-minute`;
+}
+
+export const rawToNumber = (raw: bigint | string) => Number(raw) / 1_000_000;
+export const pct = (part: bigint | number, whole: bigint | number): number => {
+  const w = Number(whole);
+  return w <= 0 ? 0 : Math.max(0, Math.min(100, (Number(part) / w) * 100));
+};

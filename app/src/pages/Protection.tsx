@@ -4,8 +4,9 @@ import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAd
 import { AnimatePresence, motion } from "motion/react";
 import { useShield } from "../lib/shield";
 import { useAction } from "../lib/actions";
-import { Countdown, Field, MoneyInput, Pill, Sheet, useToast } from "../components/ui";
-import { usd, hoursLabel, duration, short, rawToNumber } from "../lib/format-extra";
+import { Countdown, Dot, Field, Icon, MoneyInput, Pill, Sheet, useToast } from "../components/ui";
+import { usd, hoursLabel, duration, short, clockTime } from "../lib/format";
+import { RULES, paramFor, fmtRule, isStricter, describeLoosen, type RuleDef } from "../lib/rules";
 import {
   ProposalCategory,
   OwnerType,
@@ -21,51 +22,7 @@ import {
   removeRegistrationIx,
   tightenIx,
   usdcToRaw,
-  type LoosenParams,
-  type TightenParams,
 } from "../../../client/shield-client";
-
-type RuleKey = "floor" | "daily" | "threshold" | "lossTrigger" | "lossCooldown" | "cap" | "loosenDelay" | "exitDelay";
-
-interface RuleDef {
-  key: RuleKey;
-  name: string;
-  explain: string;
-  kind: "usd" | "pct" | "hours" | "days";
-  strictIsHigher: boolean; // is a higher value stricter?
-  current: (v: NonNullable<ReturnType<typeof useShield>["vault"]>) => number;
-}
-
-const RULES: RuleDef[] = [
-  { key: "floor", name: "Protected floor", explain: "Top-ups can never take the treasury below this amount. Only a 7-day exit can.", kind: "usd", strictIsHigher: true, current: (v) => rawToNumber(v.protectedFloor) },
-  { key: "daily", name: "Daily top-up limit", explain: "Everything sent to trading wallets in any rolling 24 hours, added together. Splitting a top-up doesn't help.", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.velocityThreshold) },
-  { key: "threshold", name: "Large top-ups wait 30 min above", explain: "A single top-up at or above this share of the treasury waits before it can move.", kind: "pct", strictIsHigher: false, current: (v) => v.topUpThresholdBps / 100 },
-  { key: "lossTrigger", name: "Loss trigger", explain: "When this much doesn't come back from your trading wallet within 24 hours, the monitor's verdict is accepted and top-ups pause.", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.lossTriggerUsdc) },
-  { key: "lossCooldown", name: "Pause after losses", explain: "How long top-ups stay paused once your loss trigger is met. The vault computes this itself; the monitor never chooses it.", kind: "hours", strictIsHigher: true, current: (v) => Number(v.lossCooldownSecs) / 3600 },
-  { key: "cap", name: "Instant cold-wallet cap", explain: "The most that can move to a cold wallet instantly. Larger amounts take the 7-day exit path.", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.emergencyCap) },
-  { key: "loosenDelay", name: "Weakening delay", explain: "How long any weakening change waits before it applies. Can never go below 1 hour.", kind: "hours", strictIsHigher: true, current: (v) => Number(v.loosenCooldownSecs) / 3600 },
-  { key: "exitDelay", name: "Exit delay", explain: "How long leaving Shield (or any large cold withdrawal) waits.", kind: "days", strictIsHigher: true, current: (v) => Number(v.fullExitCooldownSecs) / 86400 },
-];
-
-function paramFor(key: RuleKey, value: number): { tighten: TightenParams; loosen: LoosenParams } {
-  switch (key) {
-    case "floor": return { tighten: { newProtectedFloor: usdcToRaw(value) }, loosen: { newProtectedFloor: usdcToRaw(value) } };
-    case "daily": return { tighten: { newVelocityThreshold: usdcToRaw(value) }, loosen: { newVelocityThreshold: usdcToRaw(value) } };
-    case "threshold": return { tighten: { newTopUpThresholdBps: Math.round(value * 100) }, loosen: { newTopUpThresholdBps: Math.round(value * 100) } };
-    case "lossTrigger": return { tighten: { newLossTriggerUsdc: usdcToRaw(value) }, loosen: { newLossTriggerUsdc: usdcToRaw(value) } };
-    case "lossCooldown": return { tighten: { newLossCooldownSecs: BigInt(Math.round(value * 3600)) }, loosen: { newLossCooldownSecs: BigInt(Math.round(value * 3600)) } };
-    case "cap": return { tighten: { newEmergencyCap: usdcToRaw(value) }, loosen: { newEmergencyCap: usdcToRaw(value) } };
-    case "loosenDelay": return { tighten: { newLoosenCooldownSecs: BigInt(Math.round(value * 3600)) }, loosen: { newLoosenCooldownSecs: BigInt(Math.round(value * 3600)) } };
-    case "exitDelay": return { tighten: { newFullExitCooldownSecs: BigInt(Math.round(value * 86400)) }, loosen: { newFullExitCooldownSecs: BigInt(Math.round(value * 86400)) } };
-  }
-}
-
-function fmtRule(def: RuleDef, value: number): string {
-  if (def.kind === "usd") return usd(value);
-  if (def.kind === "pct") return `${value}%`;
-  if (def.kind === "hours") return hoursLabel(value * 3600);
-  return `${value} day${value === 1 ? "" : "s"}`;
-}
 
 export function Protection() {
   const { vault, proposals, registry, wallets, signer, vaultAddress, now, health } = useShield();
@@ -73,7 +30,7 @@ export function Protection() {
   const toast = useToast();
   const [editing, setEditing] = useState<RuleDef | null>(null);
   const [value, setValue] = useState("");
-  const [scheduled, setScheduled] = useState<{ name: string; from: string; to: string } | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addAddr, setAddAddr] = useState("");
   const [addLabel, setAddLabel] = useState("");
@@ -90,8 +47,9 @@ export function Protection() {
   const exitPending = proposals.find((p) => p.category === ProposalCategory.FullExit);
   const cooldownActive = Number(vault.cooldownUntil) > now;
   const coldWallets = registry.filter((r) => r.kind === OwnerType.Cold && r.active);
-  const monitorIsShield = health?.monitor.verifier && vault.riskVerifier.toBase58() === health.monitor.verifier;
+  const monitorIsShield = !!health?.monitor.verifier && vault.riskVerifier.toBase58() === health.monitor.verifier;
   const monitorSet = !vault.riskVerifier.equals(PublicKey.default);
+  const loosenWait = hoursLabel(vault.loosenCooldownSecs);
 
   const openEdit = (def: RuleDef) => {
     setEditing(def);
@@ -103,14 +61,15 @@ export function Protection() {
     const v = Number(value);
     const cur = editing.current(vault);
     if (!Number.isFinite(v) || v === cur) return setEditing(null);
-    const stricter = editing.strictIsHigher ? v > cur : v < cur;
+    const stricter = isStricter(editing, cur, v);
     const params = paramFor(editing.key, v);
     try {
       if (stricter) {
-        await run(`${editing.name} tightened`, [tightenIx({ authority: signer.publicKey, vault: vaultAddress, ...params.tighten })]);
+        await run(`${editing.name} tightened to ${fmtRule(editing, v)}`, [tightenIx({ authority: signer.publicKey, vault: vaultAddress, ...params.tighten })]);
+        setFlash(editing.key);
+        setTimeout(() => setFlash(null), 1800);
       } else {
-        await run(`Change scheduled`, [proposeLoosenIx({ authority: signer.publicKey, vault: vaultAddress, ...params.loosen })], { silent: true });
-        setScheduled({ name: editing.name, from: fmtRule(editing, cur), to: fmtRule(editing, v) });
+        await run(`Change scheduled: activates in ${loosenWait}`, [proposeLoosenIx({ authority: signer.publicKey, vault: vaultAddress, ...params.loosen })]);
       }
       setEditing(null);
     } catch {
@@ -119,7 +78,7 @@ export function Protection() {
   };
 
   const pause = (hours: number) =>
-    run(`Top-ups paused for ${hours}h`, [tightenIx({ authority: signer.publicKey, vault: vaultAddress, pauseTopUpsUntil: BigInt(now + hours * 3600) })]).catch(() => null);
+    run(`Top-ups paused for ${hours} hours`, [tightenIx({ authority: signer.publicKey, vault: vaultAddress, pauseTopUpsUntil: BigInt(Math.max(Number(vault.cooldownUntil), now) + hours * 3600) })]).catch(() => null);
 
   const executeRuleChange = async () => {
     if (!ruleChange || ruleChange.action.kind !== "loosen") return;
@@ -133,8 +92,7 @@ export function Protection() {
   const addDestination = async () => {
     try {
       const owner = new PublicKey(addAddr.trim());
-      await run("Destination scheduled", [proposeLoosenIx({ authority: signer.publicKey, vault: vaultAddress, registerOwner: owner, registerKind: addKind, registerLabel: addLabel || (addKind === OwnerType.Cold ? "Cold" : "Trading") })], { silent: true });
-      setScheduled({ name: `New ${addKind === OwnerType.Cold ? "cold" : "trading"} wallet`, from: "not allowed", to: `${addLabel || short(owner.toBase58())}` });
+      await run(`New wallet scheduled: usable in ${loosenWait}`, [proposeLoosenIx({ authority: signer.publicKey, vault: vaultAddress, registerOwner: owner, registerKind: addKind, registerLabel: addLabel || (addKind === OwnerType.Cold ? "Cold" : "Trading") })]);
       setAddOpen(false);
       setAddAddr("");
       setAddLabel("");
@@ -145,8 +103,8 @@ export function Protection() {
 
   const proposeExit = async () => {
     const dest = coldWallets.find((c) => c.owner.toBase58() === exitDest) ?? coldWallets[0];
-    if (!dest) return toast.err("Register a cold wallet first (24h).");
-    await run("Exit scheduled (7 days)", [proposeUninstallVaultIx({ authority: signer.publicKey, vault: vaultAddress, destinationOwner: dest.owner })]).catch(() => null);
+    if (!dest) return toast.err(`Register a cold wallet first (waits ${loosenWait}).`);
+    await run(`Exit scheduled: executes in ${duration(Number(vault.fullExitCooldownSecs))}`, [proposeUninstallVaultIx({ authority: signer.publicKey, vault: vaultAddress, destinationOwner: dest.owner })]).catch(() => null);
     setExitOpen(false);
   };
 
@@ -170,7 +128,7 @@ export function Protection() {
       if (amt <= vault.emergencyCap) {
         await run(`Moved ${usd(amt)} to ${dest.label}`, [ensure, instantColdTransferIx({ authority: signer.publicKey, vault: vaultAddress, destinationOwner: dest.owner, destinationTokenAccount: ata, amount: amt })]);
       } else {
-        await run(`Withdrawal of ${usd(amt)} scheduled (7 days)`, [proposeColdTransferAboveCapIx({ authority: signer.publicKey, vault: vaultAddress, destinationOwner: dest.owner, amount: amt })]);
+        await run(`Withdrawal of ${usd(amt)} scheduled (${duration(Number(vault.fullExitCooldownSecs))})`, [proposeColdTransferAboveCapIx({ authority: signer.publicKey, vault: vaultAddress, destinationOwner: dest.owner, amount: amt })]);
       }
       setColdOpen(false);
       setColdAmount("");
@@ -179,131 +137,101 @@ export function Protection() {
     }
   };
 
+  const editValue = Number(value);
+  const editCur = editing ? editing.current(vault) : 0;
+  const editValid = editing !== null && value !== "" && Number.isFinite(editValue) && editValue !== editCur && editValue >= 0;
+  const editStricter = editing ? isStricter(editing, editCur, editValue) : false;
+
   return (
-    <main className="page fade-in">
-      <div style={{ marginBottom: 12 }}>
+    <main className="page page-mid fade-in">
+      <div className="page-head">
         <p className="eyebrow">Protection</p>
-        <h1 className="title" style={{ marginTop: 4 }}>Tighten instantly. Loosen slowly.</h1>
-        <p className="dim" style={{ marginTop: 4 }}>Any change that makes you safer applies now. Any change that makes you less safe waits {hoursLabel(vault.loosenCooldownSecs)} and can be cancelled the whole time.</p>
+        <h1>Tighten instantly. Loosen slowly.</h1>
+        <p>Anything that makes you safer applies now. Anything that makes you less safe waits {loosenWait}, and you can cancel it the whole time.</p>
       </div>
 
+      {cooldownActive && (
+        <div className="strip strip-blocked" style={{ marginBottom: 16 }}>
+          <Icon name="lock" size={18} />
+          <div className="grow">
+            <b>{vault.cooldownReason === COOLDOWN_REASON.SELF_PAUSE ? "Top-ups paused by you" : "Loss cooldown active"}</b> until {clockTime(Number(vault.cooldownUntil), now)}. Cold-wallet moves and cancellations still work.
+          </div>
+          <span className="num right hide-xs" style={{ fontWeight: 600 }}><Countdown until={vault.cooldownUntil} now={now} /></span>
+        </div>
+      )}
+
       <AnimatePresence>
-        {scheduled && (
-          <motion.section className="banner banner-pending" style={{ marginBottom: 16 }} initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-            <p className="eyebrow" style={{ color: "inherit" }}>Change scheduled</p>
-            <div className="row-between" style={{ marginTop: 6, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontWeight: 600 }}>{scheduled.name}</div>
-                <div className="num">{scheduled.from} → {scheduled.to}</div>
-              </div>
-              {ruleChange && (
-                <div style={{ textAlign: "right" }}>
-                  <div className="tiny">Activates in</div>
-                  <div className="money-m"><Countdown until={ruleChange.executeAfter} now={now} /></div>
-                </div>
-              )}
-            </div>
-            <p className="small" style={{ marginTop: 8 }}>Your current protection remains active until then.</p>
-            <button className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setScheduled(null)}>Dismiss</button>
+        {ruleChange && ruleChange.action.kind === "loosen" && (
+          <motion.section key={ruleChange.nonce.toString()} className={`card ${ruleChange.configVersionAtCreation !== vault.configVersion ? "" : "card-tone-pending"}`} style={{ marginBottom: 16 }} initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <PendingChange
+              lines={describeLoosen(ruleChange.action.params, vault)}
+              executeAfter={Number(ruleChange.executeAfter)}
+              now={now}
+              stale={ruleChange.configVersionAtCreation !== vault.configVersion}
+              busy={!!busy}
+              onApply={() => void executeRuleChange()}
+              onCancel={() => void run("Change cancelled", [cancelProposalIx({ authority: signer.publicKey, vault: vaultAddress, category: ProposalCategory.RuleChange })]).catch(() => null)}
+            />
           </motion.section>
         )}
       </AnimatePresence>
 
-      {cooldownActive && (
-        <section className="banner banner-blocked" style={{ marginBottom: 16 }}>
-          <div className="row-between" style={{ flexWrap: "wrap" }}>
-            <div>
-              <p className="eyebrow" style={{ color: "inherit" }}>{vault.cooldownReason === COOLDOWN_REASON.SELF_PAUSE ? "Paused by you" : "Loss cooldown active"}</p>
-              <p className="small" style={{ marginTop: 4 }}>No top-up can move until it ends. Cold-wallet transfers and cancellations still work.</p>
-            </div>
-            <div className="money-m"><Countdown until={vault.cooldownUntil} now={now} /></div>
-          </div>
-        </section>
-      )}
-
-      <div className="grid-2">
-        <section className="card">
-          <p className="eyebrow">Pause top-ups now</p>
-          <p className="small dim" style={{ marginTop: 6 }}>Instant. It only ever extends an existing pause and clears by itself.</p>
-          <div className="chips" style={{ marginTop: 12 }}>
-            {[6, 24, 72].map((h) => (
-              <button key={h} className="chip" disabled={!!busy} onClick={() => void pause(h)}>{h}h</button>
-            ))}
-          </div>
-        </section>
-        <section className="card">
-          <p className="eyebrow">Move to cold wallet</p>
-          <p className="small dim" style={{ marginTop: 6 }}>Up to {usd(vault.emergencyCap)} instantly (shares the daily limit). More takes the {duration(Number(vault.fullExitCooldownSecs))} path.</p>
-          <button className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} disabled={coldWallets.length === 0} onClick={() => { setColdDest(coldWallets[0]?.owner.toBase58() ?? ""); setColdOpen(true); }}>
-            {coldWallets.length ? "Move funds" : "No cold wallet yet"}
-          </button>
-        </section>
-      </div>
-
-      {ruleChange && ruleChange.action.kind === "loosen" && (
-        <section className="card" style={{ marginTop: 16 }}>
-          <div className="row-between" style={{ flexWrap: "wrap" }}>
-            <div>
-              <p className="eyebrow">Pending weakening change</p>
-              <p className="small" style={{ marginTop: 4 }}>{describeLoosen(ruleChange.action.params)}</p>
-              <p className="tiny muted">
-                {ruleChange.configVersionAtCreation !== vault.configVersion
-                  ? "Superseded: you tightened something after proposing this, so the vault will refuse to apply it. Cancel it to clear the slot."
-                  : `Created under configuration v${ruleChange.configVersionAtCreation.toString()}; tightening anything before it activates cancels it.`}
-              </p>
-            </div>
-            <div className="row" style={{ gap: 6 }}>
-              {Number(ruleChange.executeAfter) <= now ? (
-                <button className="btn btn-sm" disabled={!!busy} onClick={() => void executeRuleChange()}>Apply now</button>
-              ) : (
-                <Pill tone="pending"><Countdown until={ruleChange.executeAfter} now={now} format="compact" /></Pill>
-              )}
-              <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run("Change cancelled", [cancelProposalIx({ authority: signer.publicKey, vault: vaultAddress, category: ProposalCategory.RuleChange })]).catch(() => null)}>Cancel</button>
-            </div>
-          </div>
-        </section>
-      )}
-
-      <section className="card" style={{ marginTop: 16 }}>
-        <p className="eyebrow">Your rules</p>
-        <div className="list" style={{ marginTop: 8 }}>
+      <section className="section" style={{ marginTop: 8 }}>
+        <div className="section-head">
+          <h2>Your rules</h2>
+          <span className="tiny muted">Enforced by the vault program</span>
+        </div>
+        <div className="list">
           {RULES.map((def) => (
-            <div key={def.key} className="list-row" style={{ alignItems: "flex-start" }}>
-              <div style={{ flex: 1 }}>
-                <div className="row-between">
-                  <span style={{ fontWeight: 600 }}>{def.name}</span>
+            <div key={def.key} className="rule">
+              <div style={{ minWidth: 0 }}>
+                <div className={`s${flash === def.key ? " flash" : ""}`}>
+                  {def.before}
+                  <b>{fmtRule(def, def.current(vault))}</b>
+                  {def.after}
                 </div>
-                <p className="rule-explain">{def.explain}</p>
+                <div className="why">{def.why}</div>
               </div>
-              <div style={{ textAlign: "right", minWidth: 120 }}>
-                <div className="num" style={{ fontWeight: 600 }}>{fmtRule(def, def.current(vault))}</div>
-                <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => openEdit(def)}>Change</button>
-              </div>
+              <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => openEdit(def)}>Change</button>
             </div>
           ))}
         </div>
       </section>
 
-      <section className="card" style={{ marginTop: 16 }}>
-        <div className="row-between">
-          <p className="eyebrow">Destinations</p>
-          <button className="btn btn-secondary btn-sm" onClick={() => setAddOpen(true)}>Add (waits {hoursLabel(vault.loosenCooldownSecs)})</button>
+      <section className="section">
+        <div className="section-head">
+          <h2>Pause top-ups now</h2>
         </div>
-        <div className="list" style={{ marginTop: 8 }}>
+        <div className="panel row-between wrap">
+          <p className="small dim">Instant. Extends any pause already running and ends by itself.</p>
+          <div className="segmented">
+            {[6, 24, 72].map((h) => (
+              <button key={h} disabled={!!busy} onClick={() => void pause(h)}>{h}h</button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Wallets Shield can send to</h2>
+          <button className="btn btn-secondary btn-sm" onClick={() => setAddOpen(true)}>Add a wallet</button>
+        </div>
+        <div className="list">
           {registry.map((r) => {
             const bal = wallets.find((w) => w.owner === r.owner.toBase58())?.usdc;
             return (
               <div key={r.owner.toBase58()} className="list-row">
-                <div>
+                <div style={{ minWidth: 0 }}>
                   <div className="row" style={{ gap: 8 }}>
                     <span style={{ fontWeight: 600 }}>{r.label || short(r.owner.toBase58())}</span>
                     <Pill tone={r.kind === OwnerType.Cold ? "protect" : "bankroll"}>{r.kind === OwnerType.Cold ? "Cold" : "Trading"}</Pill>
                     {!r.active && <Pill tone="neutral">Removed</Pill>}
                   </div>
-                  <div className="addr">{r.owner.toBase58()}{bal !== undefined && bal !== null ? ` · ${usd(bal)} USDC` : ""}</div>
+                  <div className="addr">{short(r.owner.toBase58(), 6)}{bal !== undefined && bal !== null ? ` · ${usd(bal)} there now` : ""}</div>
                 </div>
                 {r.active && (
-                  <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run(`${r.label || "Destination"} removed`, [removeRegistrationIx({ authority: signer.publicKey, vault: vaultAddress, owner: r.owner })]).catch(() => null)}>
+                  <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run(`${r.label || "Wallet"} removed`, [removeRegistrationIx({ authority: signer.publicKey, vault: vaultAddress, owner: r.owner })]).catch(() => null)}>
                     Remove
                   </button>
                 )}
@@ -311,110 +239,142 @@ export function Protection() {
             );
           })}
         </div>
-        <p className="tiny muted" style={{ marginTop: 10 }}>Shield can only send to these addresses. Types are permanent: a trading wallet can never become a cold wallet. Removing is instant; adding waits.</p>
+        <p className="tiny muted" style={{ marginTop: 10 }}>Removing is instant; adding waits. A wallet's type is permanent, so a trading wallet can never become a cold wallet.</p>
       </section>
 
-      <section className="card" style={{ marginTop: 16 }}>
-        <div className="row-between">
-          <p className="eyebrow">Monitor</p>
-          <Pill tone={monitorSet ? "protect" : "neutral"}>{monitorSet ? (monitorIsShield ? "Shield monitor" : "Custom verifier") : "None"}</Pill>
+      <section className="section">
+        <div className="section-head">
+          <h2>Monitor</h2>
+          <Pill tone={monitorSet ? "protect" : "neutral"}>{monitorSet ? (monitorIsShield ? "Shield monitor" : "Custom") : "None"}</Pill>
         </div>
-        <p className="small dim" style={{ marginTop: 6 }}>
-          {monitorSet
-            ? "A verdict signed by this key, attesting a realised loss at or above your trigger, is the only external thing that can change your vault, and it can only pause top-ups for the length you set. It can't move money, loosen a rule, or block cold transfers and exits."
-            : "No monitor: the loss rule can't fire. Adding one is an instant tightening."}
-        </p>
-        <p className="addr" style={{ marginTop: 6 }}>{monitorSet ? vault.riskVerifier.toBase58() : "—"}</p>
-        <div className="row" style={{ marginTop: 10 }}>
-          {!monitorSet && health?.monitor.verifier && (
-            <button className="btn btn-sm" disabled={!!busy} onClick={() => void run("Monitor added", [tightenIx({ authority: signer.publicKey, vault: vaultAddress, setRiskVerifier: new PublicKey(health.monitor.verifier!) })]).catch(() => null)}>Add Shield monitor</button>
-          )}
-          {monitorSet && (
-            <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run("Removal scheduled", [proposeLoosenIx({ authority: signer.publicKey, vault: vaultAddress, newRiskVerifier: PublicKey.default })], { silent: true }).then(() => setScheduled({ name: "Monitor", from: "on", to: "off" })).catch(() => null)}>
-              Remove (waits {hoursLabel(vault.loosenCooldownSecs)})
-            </button>
-          )}
-        </div>
-      </section>
-
-      <section className="card" style={{ marginTop: 16, borderColor: "#efc9c5" }}>
-        <p className="eyebrow" style={{ color: "var(--blocked)" }}>Leave Shield</p>
-        {exitPending ? (
-          <div className="row-between" style={{ marginTop: 6, flexWrap: "wrap" }}>
-            <div>
-              <p style={{ fontWeight: 600 }}>{exitPending.action.kind === "uninstallVault" ? "Full exit scheduled" : `Withdrawal of ${exitPending.action.kind === "coldTransferAboveCap" ? usd(exitPending.action.amount) : ""} scheduled`}</p>
-              <p className="small dim">
-                {Number(exitPending.executeAfter) <= now ? "Ready to execute." : <>Executes in <Countdown until={exitPending.executeAfter} now={now} format="compact" /></>} · every other rule stays in force until then.
-              </p>
-            </div>
-            <div className="row" style={{ gap: 6 }}>
-              {Number(exitPending.executeAfter) <= now && <button className="btn btn-sm" disabled={!!busy} onClick={() => void executeExit()}>Execute</button>}
-              <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run("Exit cancelled", [cancelProposalIx({ authority: signer.publicKey, vault: vaultAddress, category: ProposalCategory.FullExit })]).catch(() => null)}>Cancel</button>
-            </div>
+        <div className="panel">
+          <p className="small dim">
+            {monitorSet
+              ? `Watches what comes back from your trading wallet. The only thing it can do is pause top-ups for ${hoursLabel(vault.lossCooldownSecs)} when your loss trigger is met. It can't move money, weaken a rule, or block cold-wallet moves and exits.`
+              : "No monitor: your loss rule can't fire. Adding one is an instant tightening."}
+          </p>
+          <div className="row-between wrap" style={{ marginTop: 10 }}>
+            <span className="addr">{monitorSet ? short(vault.riskVerifier.toBase58(), 6) : "—"}</span>
+            {!monitorSet && health?.monitor.verifier && (
+              <button className="btn btn-sm" disabled={!!busy} onClick={() => void run("Monitor added", [tightenIx({ authority: signer.publicKey, vault: vaultAddress, setRiskVerifier: new PublicKey(health.monitor.verifier!) })]).catch(() => null)}>Add Shield monitor</button>
+            )}
+            {monitorSet && (
+              <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run(`Removal scheduled: ${loosenWait}`, [proposeLoosenIx({ authority: signer.publicKey, vault: vaultAddress, newRiskVerifier: PublicKey.default })]).catch(() => null)}>
+                Remove · waits {loosenWait}
+              </button>
+            )}
           </div>
-        ) : (
-          <>
-            <p className="small dim" style={{ marginTop: 6 }}>
-              Your whole balance moves to a cold wallet you registered, after {duration(Number(vault.fullExitCooldownSecs))}. Nothing else changes in the meantime: limits, floor and cooldowns keep working, and you can cancel any time. Shield never traps funds; it just makes leaving a decision rather than a reflex.
-            </p>
-            <button className="btn btn-danger btn-sm" style={{ marginTop: 12 }} onClick={() => { setExitDest(coldWallets[0]?.owner.toBase58() ?? ""); setExitOpen(true); }} disabled={coldWallets.length === 0}>
-              {coldWallets.length ? "Start the exit" : "Register a cold wallet first"}
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Moving money out</h2>
+        </div>
+        <div className="list">
+          <div className="list-row stack-m">
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 600 }}>To your cold wallet</div>
+              <div className="small dim">Up to {usd(vault.emergencyCap)} instantly, even during a cooldown. More waits {duration(Number(vault.fullExitCooldownSecs))}.</div>
+            </div>
+            <button className="btn btn-secondary btn-sm" disabled={coldWallets.length === 0} onClick={() => { setColdDest(coldWallets[0]?.owner.toBase58() ?? ""); setColdOpen(true); }}>
+              {coldWallets.length ? "Move funds" : "No cold wallet"}
             </button>
-          </>
-        )}
+          </div>
+          <div className="list-row stack-m">
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 600 }}>Leave Shield</div>
+              {exitPending ? (
+                <div className="small dim">
+                  {exitPending.action.kind === "uninstallVault" ? "Full exit" : `Withdrawal of ${exitPending.action.kind === "coldTransferAboveCap" ? usd(exitPending.action.amount) : ""}`} scheduled · {Number(exitPending.executeAfter) <= now ? "ready to execute" : <>executes in <b className="num"><Countdown until={exitPending.executeAfter} now={now} format="compact" /></b></>} · every rule stays in force until then
+                </div>
+              ) : (
+                <div className="small dim">Your whole balance moves to a cold wallet after {duration(Number(vault.fullExitCooldownSecs))}. Nothing else changes in the meantime. Cancel any time.</div>
+              )}
+            </div>
+            {exitPending ? (
+              <div className="actions">
+                {Number(exitPending.executeAfter) <= now && <button className="btn btn-sm" disabled={!!busy} onClick={() => void executeExit()}>Execute</button>}
+                <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run("Exit cancelled", [cancelProposalIx({ authority: signer.publicKey, vault: vaultAddress, category: ProposalCategory.FullExit })]).catch(() => null)}>Cancel</button>
+              </div>
+            ) : (
+              <button className="btn btn-danger btn-sm" onClick={() => { setExitDest(coldWallets[0]?.owner.toBase58() ?? ""); setExitOpen(true); }} disabled={coldWallets.length === 0}>
+                {coldWallets.length ? "Start the exit" : "No cold wallet"}
+              </button>
+            )}
+          </div>
+        </div>
       </section>
 
       <Sheet open={!!editing} onClose={() => setEditing(null)} title={editing?.name}>
         {editing && (
           <div className="stack">
-            <p className="small dim">{editing.explain}</p>
-            <Field label={`New value (${editing.kind === "usd" ? "USD" : editing.kind === "pct" ? "% of treasury" : editing.kind})`}>
+            <p className="dim">
+              {editing.before}
+              <b>{fmtRule(editing, editCur)}</b>
+              {editing.after}
+            </p>
+            <Field label={`New value${editing.kind === "usd" ? "" : editing.kind === "pct" ? " (% of treasury)" : editing.kind === "hours" ? " (hours)" : " (days)"}`}>
               {editing.kind === "usd" ? <MoneyInput value={value} onChange={setValue} autoFocus /> : <input className="input" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value.replace(/[^0-9.]/g, ""))} autoFocus />}
             </Field>
-            {(() => {
-              const v = Number(value);
-              const cur = editing.current(vault);
-              if (!Number.isFinite(v) || v === cur || value === "") return <p className="small muted">Enter a different value.</p>;
-              const stricter = editing.strictIsHigher ? v > cur : v < cur;
-              return stricter ? (
-                <div className="banner banner-protect small">Stricter than now. Applies immediately.</div>
-              ) : (
-                <div className="banner banner-pending small">Weaker than now. Scheduled: activates in {hoursLabel(vault.loosenCooldownSecs)}. Your current rule stays in force until then and you can cancel any time.</div>
-              );
-            })()}
-            <button className="btn btn-block" disabled={!!busy || value === "" || Number(value) === editing.current(vault)} onClick={() => void applyEdit()}>
-              {busy ? "Confirming…" : (editing.strictIsHigher ? Number(value) > editing.current(vault) : Number(value) < editing.current(vault)) ? "Apply now" : "Schedule change"}
+            {editValid ? (
+              <>
+                <div className="change-pair">
+                  <span className="from">{fmtRule(editing, editCur)}</span>
+                  <span className="arrow">→</span>
+                  <span>{fmtRule(editing, editValue)}</span>
+                </div>
+                {editStricter ? (
+                  <div className="banner banner-protect small row" style={{ gap: 10 }}>
+                    <Icon name="bolt" size={18} />
+                    <span><b>Applies instantly.</b> Making yourself safer never waits.</span>
+                  </div>
+                ) : (
+                  <div className="banner banner-pending small row" style={{ gap: 10, alignItems: "flex-start" }}>
+                    <Icon name="clock" size={18} />
+                    <span><b>Activates in {loosenWait}.</b> Your current {fmtRule(editing, editCur)} stays in force until then. Cancel any time.</span>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="small muted">Enter a different value.</p>
+            )}
+            <button className={`btn btn-block btn-lg ${editStricter ? "btn-protect" : ""}`} disabled={!!busy || !editValid} onClick={() => void applyEdit()}>
+              {busy ? "Confirming…" : editValid ? (editStricter ? "Tighten now" : `Schedule for ${loosenWait} from now`) : "Change"}
             </button>
           </div>
         )}
       </Sheet>
 
-      <Sheet open={addOpen} onClose={() => setAddOpen(false)} title="Add a destination">
+      <Sheet open={addOpen} onClose={() => setAddOpen(false)} title="Add a wallet">
         <div className="stack">
-          <div className="chips">
-            <button className={`chip ${addKind === OwnerType.Cold ? "active" : ""}`} onClick={() => setAddKind(OwnerType.Cold)}>Cold wallet</button>
-            <button className={`chip ${addKind === OwnerType.Execution ? "active" : ""}`} onClick={() => setAddKind(OwnerType.Execution)}>Trading wallet</button>
+          <div className="segmented" style={{ alignSelf: "flex-start" }}>
+            <button className={addKind === OwnerType.Cold ? "active" : ""} onClick={() => setAddKind(OwnerType.Cold)}>Cold wallet</button>
+            <button className={addKind === OwnerType.Execution ? "active" : ""} onClick={() => setAddKind(OwnerType.Execution)}>Trading wallet</button>
           </div>
           <Field label="Address" hint="The type is permanent for this address.">
             <input className="input mono" value={addAddr} onChange={(e) => setAddAddr(e.target.value)} placeholder="Solana address" />
           </Field>
           <Field label="Label">
-            <input className="input" value={addLabel} onChange={(e) => setAddLabel(e.target.value.slice(0, 24))} />
+            <input className="input" value={addLabel} onChange={(e) => setAddLabel(e.target.value.slice(0, 24))} placeholder={addKind === OwnerType.Cold ? "Ledger" : "Axiom"} />
           </Field>
-          <div className="banner banner-pending small">Because your vault is funded, a new destination is a weakening change. It activates in {hoursLabel(vault.loosenCooldownSecs)}. This is what protects you from “send it to this recovery address” messages.</div>
+          <div className="banner banner-pending small row" style={{ gap: 10, alignItems: "flex-start" }}>
+            <Icon name="clock" size={18} />
+            <span><b>Usable in {loosenWait}.</b> A new destination is a weakening change. This is what protects you from "send it to this recovery address" messages.</span>
+          </div>
           <button className="btn btn-block" disabled={!!busy || !addAddr.trim()} onClick={() => void addDestination()}>Schedule</button>
         </div>
       </Sheet>
 
       <Sheet open={exitOpen} onClose={() => setExitOpen(false)} title="Leave Shield">
         <div className="stack">
-          <p className="small dim">Everything in the treasury moves to the cold wallet you pick, after {duration(Number(vault.fullExitCooldownSecs))}. You can cancel until then.</p>
+          <p className="dim">Everything in the treasury moves to the cold wallet you pick, after {duration(Number(vault.fullExitCooldownSecs))}. You can cancel until then.</p>
           <div className="chips">
             {coldWallets.map((c) => (
               <button key={c.owner.toBase58()} className={`chip ${exitDest === c.owner.toBase58() ? "active" : ""}`} onClick={() => setExitDest(c.owner.toBase58())}>{c.label || short(c.owner.toBase58())}</button>
             ))}
           </div>
-          <button className="btn btn-danger btn-block" disabled={!!busy} onClick={() => void proposeExit()}>Schedule the exit</button>
+          <button className="btn btn-danger btn-block btn-lg" disabled={!!busy} onClick={() => void proposeExit()}>Schedule the exit</button>
         </div>
       </Sheet>
 
@@ -426,25 +386,52 @@ export function Protection() {
             ))}
           </div>
           <MoneyInput value={coldAmount} onChange={setColdAmount} autoFocus />
-          <p className="small dim">{Number(coldAmount || 0) > 0 && usdcToRaw(Number(coldAmount)) > vault.emergencyCap ? `Above the ${usd(vault.emergencyCap)} instant cap: this will be scheduled for ${duration(Number(vault.fullExitCooldownSecs))}.` : `Instant, up to ${usd(vault.emergencyCap)}. Counts toward your daily limit.`}</p>
-          <button className="btn btn-block" disabled={!!busy || !(Number(coldAmount) > 0)} onClick={() => void coldTransfer()}>{busy ? "Confirming…" : "Move"}</button>
+          <div className={`strip ${Number(coldAmount || 0) > 0 && usdcToRaw(Number(coldAmount)) > vault.emergencyCap ? "strip-pending" : "strip-protect"}`}>
+            <Icon name={Number(coldAmount || 0) > 0 && usdcToRaw(Number(coldAmount)) > vault.emergencyCap ? "clock" : "check"} size={18} />
+            <div className="grow">{Number(coldAmount || 0) > 0 && usdcToRaw(Number(coldAmount)) > vault.emergencyCap ? `Above the ${usd(vault.emergencyCap)} instant cap: scheduled for ${duration(Number(vault.fullExitCooldownSecs))} from now.` : `Instant, up to ${usd(vault.emergencyCap)}. Counts toward your daily limit.`}</div>
+          </div>
+          <button className="btn btn-block btn-lg" disabled={!!busy || !(Number(coldAmount) > 0)} onClick={() => void coldTransfer()}>{busy ? "Confirming…" : "Move"}</button>
         </div>
       </Sheet>
     </main>
   );
 }
 
-function describeLoosen(p: LoosenParams): string {
-  const parts: string[] = [];
-  if (p.newProtectedFloor !== undefined) parts.push(`floor → ${usd(p.newProtectedFloor)}`);
-  if (p.newVelocityThreshold !== undefined) parts.push(`daily limit → ${usd(p.newVelocityThreshold)}`);
-  if (p.newTopUpThresholdBps !== undefined) parts.push(`large top-up threshold → ${p.newTopUpThresholdBps / 100}%`);
-  if (p.newLossTriggerUsdc !== undefined) parts.push(`loss trigger → ${usd(p.newLossTriggerUsdc)}`);
-  if (p.newLossCooldownSecs !== undefined) parts.push(`loss pause → ${hoursLabel(p.newLossCooldownSecs)}`);
-  if (p.newEmergencyCap !== undefined) parts.push(`cold cap → ${usd(p.newEmergencyCap)}`);
-  if (p.newLoosenCooldownSecs !== undefined) parts.push(`weakening delay → ${hoursLabel(p.newLoosenCooldownSecs)}`);
-  if (p.newFullExitCooldownSecs !== undefined) parts.push(`exit delay → ${hoursLabel(p.newFullExitCooldownSecs)}`);
-  if (p.newRiskVerifier !== undefined) parts.push(p.newRiskVerifier.equals(PublicKey.default) ? "remove monitor" : `monitor → ${short(p.newRiskVerifier.toBase58())}`);
-  if (p.registerOwner) parts.push(`add ${p.registerKind === OwnerType.Cold ? "cold" : "trading"} wallet ${p.registerLabel || short(p.registerOwner.toBase58())}`);
-  return parts.join(" · ") || "rule change";
+function PendingChange({ lines, executeAfter, now, stale, busy, onApply, onCancel }: { lines: { name: string; from: string | null; to: string }[]; executeAfter: number; now: number; stale: boolean; busy: boolean; onApply: () => void; onCancel: () => void }) {
+  const matured = executeAfter <= now;
+  return (
+    <div>
+      <div className="row" style={{ gap: 8 }}>
+        <Dot tone={stale ? "neutral" : "pending"} />
+        <span className={`eyebrow ${stale ? "" : "c-pending"}`}>{stale ? "Superseded change" : "Weakening change scheduled"}</span>
+      </div>
+      <div className="row-between wrap" style={{ marginTop: 10, alignItems: "flex-start" }}>
+        <div style={{ minWidth: 0 }}>
+          {lines.map((l, i) => (
+            <div key={i} style={{ marginTop: i ? 8 : 0 }}>
+              <div style={{ fontWeight: 600 }}>{l.name}</div>
+              <div className="change-pair">
+                {l.from && <span className="from">{l.from}</span>}
+                {l.from && <span className="arrow">→</span>}
+                <span>{l.to}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        {!stale && !matured && (
+          <div style={{ textAlign: "right" }}>
+            <div className="tiny muted">Activates in</div>
+            <div className="big-count"><Countdown until={executeAfter} now={now} /></div>
+          </div>
+        )}
+      </div>
+      <p className="small dim" style={{ marginTop: 10 }}>
+        {stale ? "You tightened a rule after scheduling this, so the vault will refuse to apply it. Cancel it to clear the slot." : matured ? "The waiting period is over. Apply it, or cancel to keep things as they are." : lines[0]?.from ? `Your current ${lines[0].from} stays in force until then.` : "Your current protection stays in force until then."}
+      </p>
+      <div className="row" style={{ marginTop: 12, gap: 6 }}>
+        {!stale && matured && <button className="btn btn-sm" disabled={busy} onClick={onApply}>Apply now</button>}
+        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={onCancel}>Cancel change</button>
+      </div>
+    </div>
+  );
 }

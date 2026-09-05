@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { useShield, API_URL } from "../lib/shield";
-import { ExplorerLink, Money, Pill, Sheet, useToast } from "../components/ui";
-import { usd, ago, dateTime, short } from "../lib/format";
+import { Dot, ExplorerLink, Pill, Sheet, Skeleton, useToast } from "../components/ui";
+import { usd, ago, dateTime, short, timeOnly, dayLabel, hoursLabel } from "../lib/format";
 import { OwnerType } from "../../../client/shield-client";
 import { getJson, type EvidenceJson } from "../lib/api";
 
 const KIND_LABEL: Record<string, string> = {
   TOP_UP_INSTANT: "Top-up",
-  TOP_UP_GATED: "Top-up (after pause)",
+  TOP_UP_GATED: "Top-up after the pause",
   COLD_TRANSFER: "To cold wallet",
   FULL_EXIT: "Exit",
   RETURN: "Came back",
@@ -15,19 +15,31 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 export function Behaviour() {
-  const { server, serverError, wallets, vault, now, health } = useShield();
+  const { server, serverError, serverLoading, wallets, vault, now } = useShield();
   const toast = useToast();
   const [evidence, setEvidence] = useState<EvidenceJson | null>(null);
+  const [showAllFlows, setShowAllFlows] = useState(false);
   const labelOf = (owner: string) => wallets.find((w) => w.owner === owner)?.label ?? short(owner);
 
   if (!server) {
     return (
-      <main className="page page-narrow">
-        <p className="eyebrow">Behaviour</p>
-        <div className="card" style={{ marginTop: 12 }}>
-          <h2 className="title">Behavioural data unavailable</h2>
-          <p className="dim" style={{ marginTop: 6 }}>The Shield server isn’t reachable{serverError ? ` (${serverError})` : ""}. Your vault’s rules keep working without it; this page needs the indexer to read your trading wallet’s history.</p>
+      <main className="page page-mid fade-in">
+        <div className="page-head">
+          <p className="eyebrow">Behaviour</p>
+          <h1>What actually came back</h1>
         </div>
+        {serverLoading && !serverError ? (
+          <div className="card card-hero" aria-busy="true">
+            <Skeleton w="70%" h={28} />
+            <div style={{ marginTop: 20 }}><Skeleton w="100%" h={18} /></div>
+            <div style={{ marginTop: 12 }}><Skeleton w="50%" h={14} /></div>
+          </div>
+        ) : (
+        <div className="panel">
+          <p style={{ fontWeight: 600 }}>Behaviour needs the Shield server</p>
+          <p className="small dim" style={{ marginTop: 4 }}>It isn't reachable{serverError ? ` (${serverError})` : ""}. Your rules keep working without it; this page reads your trading wallet's history from the indexer.</p>
+        </div>
+        )}
       </main>
     );
   }
@@ -35,13 +47,16 @@ export function Behaviour() {
   const p = server.profile;
   const a = server.assessment;
   const sessions = [...p.sessions].sort((x, y) => y.lastActivityAt - x.lastActivityAt);
-  const realised = sessions.filter((s) => s.realised);
-  const maxAbs = Math.max(1, ...realised.map((s) => Math.abs(Number(s.net))));
   const execWallets = p.wallets.filter((w) => wallets.some((x) => x.owner === w.owner && x.kind === OwnerType.Execution));
-  const sourceLabel =
-    server.source.mode === "substreams"
-      ? `Live from The Graph · Substreams · ${server.source.endpoint}`
-      : `Indexed from Solana RPC (fallback) · set SUBSTREAMS_API_TOKEN to stream from The Graph (${health?.substreamsEndpoint ?? "devnet.sol.streamingfast.io"})`;
+  const sent = BigInt(p.totals.sent);
+  const returned = BigInt(p.totals.returned);
+  const open = execWallets.reduce((acc, w) => acc + BigInt(w.openExposure), 0n);
+  const lost = sent > returned + open ? sent - returned - open : 0n;
+  const gained = returned > sent ? returned - sent : 0n;
+  const tradingLabel = execWallets.map((w) => labelOf(w.owner)).join(" and ") || "your trading wallet";
+  const denom = Number(sent > returned ? sent : returned) || 1;
+  const w = (x: bigint) => `${(Number(x) / denom) * 100}%`;
+  const loss24 = BigInt(p.windows.h24.realisedLoss);
 
   const openEvidence = async (hash: string) => {
     try {
@@ -51,135 +66,142 @@ export function Behaviour() {
     }
   };
 
+  const flows = showAllFlows ? p.timeline : p.timeline.slice(0, 8);
+
   return (
-    <main className="page fade-in">
-      <div className="row-between" style={{ marginBottom: 12, flexWrap: "wrap" }}>
-        <div>
-          <p className="eyebrow">Behaviour</p>
-          <h1 className="title" style={{ marginTop: 4 }}>What actually came back</h1>
-        </div>
-        <span className="tiny muted">{sourceLabel}</span>
+    <main className="page page-mid fade-in">
+      <div className="page-head">
+        <p className="eyebrow">Behaviour</p>
+        <h1>What actually came back</h1>
       </div>
 
-      <section className="card">
-        <div className="grid-3">
-          <div>
-            <p className="eyebrow">Sent to trading wallets</p>
-            <Money raw={p.totals.sent} size="l" />
-          </div>
-          <div>
-            <p className="eyebrow">Came back</p>
-            <Money raw={p.totals.returned} size="l" />
-          </div>
-          <div>
-            <p className="eyebrow">Net realised flow</p>
-            <div className="money-l" style={{ color: Number(p.totals.net) < 0 ? "var(--blocked)" : "var(--protect)" }}>{usd(p.totals.net, { sign: true })}</div>
-          </div>
-        </div>
-        {execWallets.map((w) => (
-          <p key={w.owner} className="small dim" style={{ marginTop: 12 }}>
-            <b>{labelOf(w.owner)}</b>: {w.topUpCount} top-up{w.topUpCount === 1 ? "" : "s"}, median {usd(w.medianTopUp)} · {w.returnCount} return{w.returnCount === 1 ? "" : "s"}
-            {Number(w.openExposure) > 0 ? ` · ${usd(w.openExposure)} still out there` : ""}
-          </p>
-        ))}
+      <section className="card card-hero">
+        {sent === 0n ? (
+          <>
+            <h2 className="title-l">Nothing has left the treasury yet.</h2>
+            <p className="lead" style={{ marginTop: 8 }}>Once you top up, Shield watches what your trading wallet sends back and turns it into your loss rule's evidence.</p>
+          </>
+        ) : (
+          <>
+            <h2 className="title-l">
+              You sent <span className="num">{usd(sent)}</span> to {tradingLabel}. <span className={`num ${returned >= sent ? "c-protect" : "c-blocked"}`}>{usd(returned)}</span> came back.
+            </h2>
+            <div style={{ marginTop: 20 }}>
+              <div className="capital" style={{ height: 18 }} role="img" aria-label={`Came back ${usd(returned)}, still out ${usd(open)}, lost ${usd(lost)}`}>
+                {returned > 0n && <i style={{ flexBasis: w(returned), background: "var(--protect)" }} />}
+                {open > 0n && <i style={{ flexBasis: w(open), background: "var(--bankroll-2)" }} />}
+                {lost > 0n && <i style={{ flexBasis: w(lost), background: "var(--blocked)" }} />}
+              </div>
+              <div className="legend">
+                <span><i style={{ background: "var(--protect)" }} />Came back <b>{usd(returned)}</b></span>
+                {open > 0n && <span><i style={{ background: "var(--bankroll-2)" }} />Still out <b>{usd(open)}</b></span>}
+                {lost > 0n && <span><i style={{ background: "var(--blocked)" }} />Realised loss <b>{usd(lost)}</b></span>}
+                {gained > 0n && <span><i style={{ background: "var(--protect)" }} />Realised gain <b>{usd(gained)}</b></span>}
+              </div>
+            </div>
+            {loss24 > 0n && (
+              <p className="dim" style={{ marginTop: 16 }}>
+                <b className="c-blocked num">{usd(loss24)}</b> of that was lost in the last 24 hours{vault ? `, against your ${usd(vault.lossTriggerUsdc)} trigger` : ""}.
+              </p>
+            )}
+          </>
+        )}
       </section>
 
-      <div className="grid-2" style={{ marginTop: 16 }}>
-        <section className="card">
-          <p className="eyebrow">Last 24 hours</p>
-          <div className="list" style={{ marginTop: 8 }}>
-            <div className="list-row"><span className="dim">Realised loss</span><b className="num" style={{ color: Number(p.windows.h24.realisedLoss) > 0 ? "var(--blocked)" : undefined }}>{usd(p.windows.h24.realisedLoss)}</b></div>
-            <div className="list-row"><span className="dim">Realised gain</span><b className="num">{usd(p.windows.h24.realisedGain)}</b></div>
-            <div className="list-row"><span className="dim">Losing sessions</span><b className="num">{p.windows.h24.lossSessions}</b></div>
-            <div className="list-row"><span className="dim">Sent out</span><b className="num">{usd(p.windows.h24.sent)}</b></div>
-          </div>
-        </section>
-        <section className="card">
-          <p className="eyebrow">Patterns (7 days)</p>
-          <div className="list" style={{ marginTop: 8 }}>
-            <div className="list-row"><span className="dim">Loss streak</span><b className="num">{p.lossStreak}</b></div>
-            <div className="list-row"><span className="dim">Reloads within 3h of a loss</span><b className="num">{p.reloadsAfterLoss7d}</b></div>
-            <div className="list-row"><span className="dim">Realised loss</span><b className="num">{usd(p.windows.d7.realisedLoss)}</b></div>
-            <div className="list-row"><span className="dim">Median top-up (30d)</span><b className="num">{usd(p.medianTopUp30d)}</b></div>
-          </div>
-        </section>
-      </div>
-
-      <section className="card" style={{ marginTop: 16 }}>
-        <div className="row-between">
-          <p className="eyebrow">Shield monitor</p>
-          <Pill tone={a.triggered ? "blocked" : "protect"}>{a.triggered ? "Rule met" : "Below trigger"}</Pill>
+      <section className="section">
+        <div className="section-head">
+          <h2>What Shield noticed</h2>
+          <Pill tone={a.triggered ? "blocked" : "protect"}>{a.triggered ? "Loss rule met" : "Below trigger"}</Pill>
         </div>
-        <p style={{ marginTop: 8, fontWeight: 500 }}>{a.headline}</p>
-        {a.lines.length > 0 && (
-          <ul className="small dim" style={{ margin: "8px 0 0", paddingLeft: 18 }}>
-            {a.lines.map((l, i) => <li key={i}>{l}</li>)}
-          </ul>
-        )}
+        <div className="notice-list">
+          <div className="notice">
+            <Dot tone={a.triggered ? "blocked" : "protect"} />
+            <span>{a.headline}</span>
+          </div>
+          {p.lossStreak >= 2 && (
+            <div className="notice">
+              <Dot tone="pending" />
+              <span>{p.lossStreak} losing sessions in a row.</span>
+            </div>
+          )}
+          <div className="notice">
+            <Dot tone={p.reloadsAfterLoss7d > 0 ? "blocked" : "protect"} />
+            <span>{p.reloadsAfterLoss7d > 0 ? `You reloaded within 3 hours of a loss ${p.reloadsAfterLoss7d} time${p.reloadsAfterLoss7d === 1 ? "" : "s"} this week.` : "No reloads within 3 hours of a loss this week."}</span>
+          </div>
+          {Number(p.medianTopUp30d) > 0 && (
+            <div className="notice">
+              <Dot tone="neutral" />
+              <span>Your typical top-up is {usd(p.medianTopUp30d)}. {usd(p.velocity24h)} went to trading in the last 24 hours.</span>
+            </div>
+          )}
+        </div>
         {server.verdicts.length > 0 && (
-          <div className="list" style={{ marginTop: 12 }}>
+          <div className="list list-tight" style={{ marginTop: 16 }}>
             {server.verdicts.slice(0, 5).map((v) => (
               <div key={v.verdict.nonce} className="list-row">
-                <div>
-                  <div className="small"><b>Verdict #{v.verdict.nonce}</b> · {usd(v.verdict.realizedLossUsdc)} attested · {v.source === "cre" ? "Chainlink CRE" : "Shield monitor"}</div>
-                  <div className="tiny muted">{ago(v.issuedAt, now)}{v.signature ? <> · <ExplorerLink sig={v.signature} /></> : v.error ? ` · ${v.error}` : ""}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div className="small"><b>Verdict #{v.verdict.nonce}</b> · {usd(v.verdict.realizedLossUsdc)} attested · {v.source === "cre" ? "Chainlink CRE enclave" : "Shield monitor"}</div>
+                  <div className="tiny muted">{ago(v.issuedAt, now)}{v.signature ? <> · <ExplorerLink sig={v.signature} /></> : v.error ? ` · ${v.error}` : ""}{vault ? ` · paused top-ups for ${hoursLabel(vault.lossCooldownSecs)}` : ""}</div>
                 </div>
                 <button className="btn btn-ghost btn-sm" onClick={() => void openEvidence(v.verdict.evidenceHash)}>Evidence</button>
               </div>
             ))}
           </div>
         )}
-        {vault && vault.lastVerdictNonce > 0n && (
-          <p className="tiny muted" style={{ marginTop: 10 }}>The vault stores the hash of the evidence behind each verdict, so every pause can be traced to specific transactions.</p>
-        )}
       </section>
 
-      {realised.length > 0 && (
-        <section className="card" style={{ marginTop: 16 }}>
-          <p className="eyebrow">Sessions</p>
-          <div className="bar-chart" style={{ marginTop: 12 }}>
-            {[...realised].reverse().slice(-16).map((s, i) => (
-              <div key={i} title={`${usd(s.net, { sign: true })} · ${dateTime(s.lastActivityAt)}`}>
-                <i className={Number(s.net) < 0 ? "loss" : "gain"} style={{ height: `${Math.max(4, (Math.abs(Number(s.net)) / maxAbs) * 100)}%` }} />
-              </div>
-            ))}
+      {sessions.length > 0 && (
+        <section className="section">
+          <div className="section-head">
+            <h2>Trading sessions</h2>
+            <span className="tiny muted">A session ends when money comes back</span>
           </div>
-          <div className="list" style={{ marginTop: 12 }}>
+          <div className="list">
             {sessions.slice(0, 8).map((s, i) => (
               <div key={i} className="list-row">
-                <div>
-                  <div className="small">
-                    <b>{labelOf(s.wallet)}</b> · sent {usd(s.sent)}, {s.realised ? `${usd(s.returned)} came back` : "nothing back yet"}
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 600 }}>
+                    {labelOf(s.wallet)} · {dayLabel(s.openedAt, now)} {timeOnly(s.openedAt)}{s.realised && s.lastActivityAt !== s.openedAt ? ` → ${timeOnly(s.lastActivityAt)}` : ""}
                   </div>
-                  <div className="tiny muted">{ago(s.lastActivityAt, now)} · {s.topUps} top-up{s.topUps === 1 ? "" : "s"}{s.signatures[0] ? <> · <ExplorerLink sig={s.signatures[s.signatures.length - 1]} /></> : null}</div>
+                  <div className="small dim">
+                    Sent {usd(s.sent)} in {s.topUps} top-up{s.topUps === 1 ? "" : "s"} · {s.realised ? `${usd(s.returned)} came back` : "nothing back yet"}
+                  </div>
+                  <div className="tiny muted">{s.signatures.length > 0 && <ExplorerLink sig={s.signatures[s.signatures.length - 1]} />}</div>
                 </div>
-                {s.realised ? <b className="num" style={{ color: s.isLoss ? "var(--blocked)" : "var(--protect)" }}>{usd(s.net, { sign: true })}</b> : <Pill tone="neutral">Open</Pill>}
+                {s.realised ? <b className={`num ${s.isLoss ? "c-blocked" : "c-protect"}`} style={{ fontSize: 17, whiteSpace: "nowrap" }}>{usd(s.net, { sign: true })}</b> : <Pill tone="bankroll">Open</Pill>}
               </div>
             ))}
           </div>
         </section>
       )}
 
-      <section className="card" style={{ marginTop: 16 }}>
-        <p className="eyebrow">Capital flows</p>
+      <section className="section">
+        <div className="section-head">
+          <h2>Every flow</h2>
+          {p.timeline.length > 8 && <button className="btn btn-ghost btn-sm" onClick={() => setShowAllFlows((v) => !v)}>{showAllFlows ? "Show fewer" : `Show all ${p.timeline.length}`}</button>}
+        </div>
         {p.timeline.length === 0 ? (
-          <p className="small muted" style={{ marginTop: 8 }}>No flows indexed yet.</p>
+          <p className="small muted">No flows indexed yet.</p>
         ) : (
-          <div className="timeline" style={{ marginTop: 10 }}>
-            {p.timeline.slice(0, 30).map((f) => (
+          <div className="timeline">
+            {flows.map((f) => (
               <div key={`${f.signature}-${f.kind}-${f.amount}`} className={`tl-item ${f.outbound ? "out" : "in"}`}>
                 <div className="row-between">
-                  <div>
+                  <div style={{ minWidth: 0 }}>
                     <div className="small"><b>{KIND_LABEL[f.kind] ?? f.kind}</b> · {f.outbound ? "to" : "from"} {labelOf(f.counterparty)}</div>
                     <div className="tiny muted">{dateTime(f.blockTime)} · <ExplorerLink sig={f.signature} /></div>
                   </div>
-                  <b className="num">{f.outbound ? "−" : "+"}{usd(f.amount)}</b>
+                  <b className="num" style={{ whiteSpace: "nowrap" }}>{f.outbound ? "−" : "+"}{usd(f.amount)}</b>
                 </div>
               </div>
             ))}
           </div>
         )}
       </section>
+
+      <p className="tiny muted" style={{ marginTop: 32 }}>
+        {server.source.mode === "substreams" ? `Live from The Graph Substreams · ${server.source.endpoint}` : "Indexed from Solana RPC. The Graph Substreams package streams the same flows when a Graph Market key is configured."}
+      </p>
 
       <Sheet open={!!evidence} onClose={() => setEvidence(null)} title="Evidence behind the verdict">
         {evidence && (
@@ -192,11 +214,11 @@ export function Behaviour() {
             <div className="divider" />
             {evidence.sessions.map((s, i) => (
               <div key={i}>
-                <div><b>{labelOf(s.wallet)}</b> · sent {usd(s.sent)}, {usd(s.returned)} back · <span style={{ color: Number(s.net) < 0 ? "var(--blocked)" : "var(--protect)" }}>{usd(s.net, { sign: true })}</span></div>
-                <div className="tiny muted">{s.signatures.map((sig) => <span key={sig} style={{ marginRight: 8 }}><ExplorerLink sig={sig} /></span>)}</div>
+                <div><b>{labelOf(s.wallet)}</b> · sent {usd(s.sent)}, {usd(s.returned)} back · <span className={Number(s.net) < 0 ? "c-blocked" : "c-protect"}>{usd(s.net, { sign: true })}</span></div>
+                <div className="tiny muted" style={{ marginTop: 2 }}>{s.signatures.map((sig) => <span key={sig} style={{ marginRight: 8 }}><ExplorerLink sig={sig} /></span>)}</div>
               </div>
             ))}
-            <p className="tiny muted" style={{ marginTop: 8 }}>Hash of this bundle is stored in your vault with the verdict. Evaluated {dateTime(evidence.asOf)}.</p>
+            <p className="tiny muted" style={{ marginTop: 8 }}>The hash of this bundle is stored in your vault with the verdict. Evaluated {dateTime(evidence.asOf)}.</p>
           </div>
         )}
       </Sheet>
