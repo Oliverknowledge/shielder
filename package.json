@@ -21,11 +21,15 @@
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.4.0",
     "@solana/spl-token": "^0.4.15",
+    "@solana/wallet-adapter-base": "^0.9.27",
+    "@solana/wallet-adapter-react": "^0.15.39",
     "@solana/web3.js": "^1.98.4",
     "@substreams/core": "0.16.0",
     "borsh": "^2.0.0",
+    "motion": "^13.2.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.3",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
@@ -33,6 +37,7 @@
     "@types/bun": "latest",
     "@types/chai": "^4.3.16",
     "@types/mocha": "^10.0.7",
+    "@types/node": "^26.4.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",

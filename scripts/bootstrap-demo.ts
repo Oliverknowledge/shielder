@@ -85,7 +85,7 @@ async function main() {
       protectedFloor: usdcToRaw(6_000),
       topUpThresholdBps: 2_000, // top-ups >= 20% of the balance pause 30 minutes
       emergencyCap: usdcToRaw(200),
-      velocityThreshold: usdcToRaw(1_600), // 24h top-up limit
+      velocityThreshold: usdcToRaw(2_000), // 24h top-up limit
       lossTriggerUsdc: usdcToRaw(1_000),
       lossCooldownSecs: 18n * 3600n,
     };

@@ -374,6 +374,8 @@ Bun.serve({
         rpcUrl: RPC_URL,
         programId: SHIELD_PROGRAM_ID.toBase58(),
         source: substreamsStatus,
+        substreamsEndpoint: SUBSTREAMS_ENDPOINT,
+        spkg: SUBSTREAMS_SPKG,
         monitor: { enabled: MONITOR_ENABLED, verifier: verifierKeypair?.publicKey.toBase58() ?? null },
         demo: DEMO_ENABLED,
         vaults: [...views.keys()],
@@ -404,6 +406,7 @@ Bun.serve({
         return json({ assessment: viewPayload(view).assessment, verdict: record });
       }
       if (sub === "activity") return json(store.vault(key).events.slice(-500).reverse());
+      if (sub === "flows") return json({ vault: key, source: substreamsStatus.mode, flows: store.vault(key).flows });
       if (sub === "profile") return json(view.profile);
       return json(viewPayload(view));
     }

@@ -74,6 +74,12 @@ const usd = (raw: bigint) => {
   const n = Number(raw) / 1_000_000;
   return `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 };
+const agoLabel = (secs: number) => {
+  if (secs < 90) return "just now";
+  if (secs < 3600) return `${Math.round(secs / 60)} min ago`;
+  if (secs < 86400) return `${Math.round(secs / 3600)}h ago`;
+  return `${Math.round(secs / 86400)}d ago`;
+};
 const hours = (secs: bigint) => {
   const h = Number(secs) / 3600;
   return h >= 48 ? `${Math.round(h / 24)} days` : `${Math.round(h)}h`;
@@ -97,11 +103,11 @@ export function assess(profile: BehaviourProfile, policy: PolicyView, now: numbe
   const lines: string[] = [];
   const sessionsInWindow = profile.sessions.filter((s) => s.realised && s.lastActivityAt >= now - 86400);
   for (const s of sessionsInWindow.slice(-3)) {
-    const ago = Math.max(1, Math.round((now - s.lastActivityAt) / 3600));
+    const ago = agoLabel(now - s.lastActivityAt);
     lines.push(
       s.net < 0n
-        ? `Sent ${usd(s.sent)}, ${usd(s.returned)} came back: ${usd(-s.net)} lost, ${ago}h ago.`
-        : `Sent ${usd(s.sent)}, ${usd(s.returned)} came back: ${usd(s.net)} gained, ${ago}h ago.`
+        ? `Sent ${usd(s.sent)}, ${usd(s.returned)} came back: ${usd(-s.net)} lost, ${ago}.`
+        : `Sent ${usd(s.sent)}, ${usd(s.returned)} came back: ${usd(s.net)} gained, ${ago}.`
     );
   }
   if (profile.lossStreak >= 2) lines.push(`${profile.lossStreak} losing sessions in a row.`);
