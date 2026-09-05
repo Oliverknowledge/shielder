@@ -23,6 +23,7 @@ import {
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import * as borsh from "borsh";
 import { sha256 } from "@noble/hashes/sha2.js";
+import { RISK_VERDICT_SCHEMA, encodeVerdictMessage } from "./verdict";
 
 export const SHIELD_PROGRAM_ID = new PublicKey("4Z46Kz8ygX5Efw22ABbQ2LTf329N3nD2J81Z3CAY5Hyx");
 
@@ -140,19 +141,7 @@ export const LOOSEN_PARAMS_SCHEMA: borsh.Schema = {
   },
 };
 
-export const RISK_VERDICT_SCHEMA: borsh.Schema = {
-  struct: {
-    vault: pubkey,
-    programId: pubkey,
-    nonce: u64,
-    issuedAt: i64,
-    expiry: i64,
-    reasonCode: u8,
-    realizedLossUsdc: u64,
-    evidenceHash: bytes(32),
-    signature: bytes(64),
-  },
-};
+export { RISK_VERDICT_SCHEMA } from "./verdict";
 
 const VAULT_SCHEMA: borsh.Schema = {
   struct: {
@@ -632,7 +621,7 @@ export function executeTopUpIx(p: {
 /** Serialize the verdict with the signature zeroed: the exact bytes the
  * program reconstructs and the verifier must have signed. */
 export function verdictMessage(v: Omit<RiskVerdict, "signature">): Uint8Array {
-  return borsh.serialize(RISK_VERDICT_SCHEMA, {
+  return encodeVerdictMessage({
     vault: v.vault.toBytes(),
     programId: v.programId.toBytes(),
     nonce: v.nonce,
@@ -641,7 +630,6 @@ export function verdictMessage(v: Omit<RiskVerdict, "signature">): Uint8Array {
     reasonCode: v.reasonCode,
     realizedLossUsdc: v.realizedLossUsdc,
     evidenceHash: v.evidenceHash,
-    signature: new Uint8Array(64),
   });
 }
 

@@ -28,7 +28,10 @@ case "${1:-}" in
     pkill -f solana-test-validator || true
     sleep 1
     echo "==> starting solana-test-validator with the program preloaded"
+    # --limit-ledger-size: the default keeps only ~10k shreds, which prunes
+    # transaction history within minutes and breaks the RPC fallback indexer.
     nohup solana-test-validator --reset --quiet --ledger /tmp/shield-test-ledger \
+      --limit-ledger-size 200000000 \
       --bpf-program "$PROGRAM_ID" "$SO" > /tmp/shield-validator.log 2>&1 &
     for i in $(seq 1 30); do
       if solana cluster-version --url http://127.0.0.1:8899 >/dev/null 2>&1; then break; fi

@@ -1,0 +1,371 @@
+syntax = "proto3";
+
+package shield.v1;
+
+// =====================================================================
+// Decoded Shield vault program instructions — one message per instruction,
+// args and named accounts decoded into typed fields (Anchor layout, see
+// programs/shield-vault/src/lib.rs). Amounts are raw USDC (6 decimals).
+// =====================================================================
+
+message InitializeVault {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string authority = 4;
+  string vault = 5;
+  string usdc_mint = 6;
+  string vault_token_account = 7;
+  string risk_verifier = 8;
+  uint64 protected_floor = 9;
+  uint32 top_up_threshold_bps = 10;
+  uint64 emergency_cap = 11;
+  uint64 velocity_threshold = 12;
+  uint64 loss_trigger_usdc = 13;
+  int64 loss_cooldown_secs = 14;
+}
+
+message Deposit {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string depositor = 4;
+  string vault = 5;
+  string vault_token_account = 6;
+  string source_token_account = 7;
+  uint64 amount = 8;
+}
+
+message RegisterOwner {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string authority = 4;
+  string vault = 5;
+  string owner = 6;
+  uint32 kind = 7; // 0 = execution, 1 = cold
+  string label = 8;
+}
+
+message RemoveRegistration {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string authority = 4;
+  string vault = 5;
+  string registry_entry = 6;
+}
+
+message Tighten {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string authority = 4;
+  string vault = 5;
+  optional uint64 new_protected_floor = 6;
+  optional uint32 new_top_up_threshold_bps = 7;
+  optional uint64 new_emergency_cap = 8;
+  optional uint64 new_velocity_threshold = 9;
+  optional uint64 new_loss_trigger_usdc = 10;
+  optional int64 new_loss_cooldown_secs = 11;
+  optional int64 new_top_up_cooldown_secs = 12;
+  optional int64 new_loosen_cooldown_secs = 13;
+  optional int64 new_full_exit_cooldown_secs = 14;
+  optional int64 pause_top_ups_until = 15;
+  optional string set_risk_verifier = 16;
+}
+
+message ProposeLoosen {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string authority = 4;
+  string vault = 5;
+  string proposal = 6;
+  optional uint64 new_protected_floor = 7;
+  optional uint32 new_top_up_threshold_bps = 8;
+  optional uint64 new_emergency_cap = 9;
+  optional uint64 new_velocity_threshold = 10;
+  optional uint64 new_loss_trigger_usdc = 11;
+  optional int64 new_loss_cooldown_secs = 12;
+  optional int64 new_top_up_cooldown_secs = 13;
+  optional int64 new_loosen_cooldown_secs = 14;
+  optional int64 new_full_exit_cooldown_secs = 15;
+  optional string new_risk_verifier = 16;
+  optional string register_owner = 17;
+  uint32 register_kind = 18;
+  string register_label = 19;
+}
+
+message ExecuteRuleChange {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string authority = 4;
+  string vault = 5;
+  string proposal = 6;
+  optional string registered_owner = 7; // set for execute_rule_change_with_registration
+}
+
+message CancelProposal {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string authority = 4;
+  string vault = 5;
+  string proposal = 6;
+}
+
+message InstantTopUp {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string authority = 4;
+  string vault = 5;
+  string vault_token_account = 6;
+  string registry_entry = 7;
+  string destination_token_account = 8;
+  uint64 amount = 9;
+}
+
+message ProposeTopUp {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string authority = 4;
+  string vault = 5;
+  string proposal = 6;
+  string destination_owner = 7;
+  uint64 amount = 8;
+}
+
+message ExecuteTopUp {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string authority = 4;
+  string vault = 5;
+  string proposal = 6;
+  string registry_entry = 7;
+  string destination_token_account = 8;
+}
+
+message ApplyRiskVerdict {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string relayer = 4;
+  string vault = 5;
+  uint64 nonce = 6;
+  int64 issued_at = 7;
+  int64 expiry = 8;
+  uint32 reason_code = 9;
+  uint64 realized_loss_usdc = 10;
+  string evidence_hash = 11; // hex
+}
+
+message InstantColdTransfer {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string authority = 4;
+  string vault = 5;
+  string registry_entry = 6;
+  string destination_token_account = 7;
+  uint64 amount = 8;
+}
+
+message ProposeColdTransferAboveCap {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string authority = 4;
+  string vault = 5;
+  string proposal = 6;
+  string destination_owner = 7;
+  uint64 amount = 8;
+}
+
+message ProposeUninstallVault {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string authority = 4;
+  string vault = 5;
+  string proposal = 6;
+  string destination_owner = 7;
+}
+
+message ExecuteFullExit {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string authority = 4;
+  string vault = 5;
+  string proposal = 6;
+  string registry_entry = 7;
+  string destination_token_account = 8;
+}
+
+message ShieldInstructions {
+  repeated InitializeVault initialize_vaults = 1;
+  repeated Deposit deposits = 2;
+  repeated RegisterOwner register_owners = 3;
+  repeated RemoveRegistration remove_registrations = 4;
+  repeated Tighten tightens = 5;
+  repeated ProposeLoosen propose_loosens = 6;
+  repeated ExecuteRuleChange execute_rule_changes = 7;
+  repeated CancelProposal cancel_proposals = 8;
+  repeated InstantTopUp instant_top_ups = 9;
+  repeated ProposeTopUp propose_top_ups = 10;
+  repeated ExecuteTopUp execute_top_ups = 11;
+  repeated ApplyRiskVerdict apply_risk_verdicts = 12;
+  repeated InstantColdTransfer instant_cold_transfers = 13;
+  repeated ProposeColdTransferAboveCap propose_cold_transfers_above_cap = 14;
+  repeated ProposeUninstallVault propose_uninstall_vaults = 15;
+  repeated ExecuteFullExit execute_full_exits = 16;
+}
+
+// =====================================================================
+// Decoded Shield program events (Anchor `emit!`, "Program data:" logs) —
+// one message per event, layouts from programs/shield-vault/src/events.rs.
+// =====================================================================
+
+message VaultInitializedEvent {
+  uint64 slot = 1; string signature = 2; int64 block_time = 3;
+  string vault = 4; string authority = 5; string usdc_mint = 6;
+  uint64 protected_floor = 7; uint64 velocity_threshold = 8;
+}
+message DepositedEvent {
+  uint64 slot = 1; string signature = 2; int64 block_time = 3;
+  string vault = 4; string depositor = 5; uint64 amount = 6; uint64 new_balance = 7;
+}
+message RegistrationChangedEvent {
+  uint64 slot = 1; string signature = 2; int64 block_time = 3;
+  string vault = 4; string owner = 5; uint32 kind = 6; bool active = 7; string label = 8;
+}
+message PolicyTightenedEvent {
+  uint64 slot = 1; string signature = 2; int64 block_time = 3;
+  string vault = 4; uint64 config_version = 5; int64 cooldown_until = 6;
+  uint64 protected_floor = 7; uint64 velocity_threshold = 8; uint32 top_up_threshold_bps = 9;
+  uint64 loss_trigger_usdc = 10; int64 loss_cooldown_secs = 11;
+}
+message LoosenProposedEvent {
+  uint64 slot = 1; string signature = 2; int64 block_time = 3;
+  string vault = 4; uint64 nonce = 5; int64 execute_after = 6;
+}
+message LoosenExecutedEvent {
+  uint64 slot = 1; string signature = 2; int64 block_time = 3;
+  string vault = 4; uint64 nonce = 5;
+}
+message ProposalCancelledEvent {
+  uint64 slot = 1; string signature = 2; int64 block_time = 3;
+  string vault = 4; uint32 category = 5; uint64 nonce = 6;
+}
+message TopUpExecutedEvent {
+  uint64 slot = 1; string signature = 2; int64 block_time = 3;
+  string vault = 4; string destination_owner = 5; uint64 amount = 6; bool instant = 7;
+  uint64 nonce = 8; uint64 velocity_after = 9; uint64 balance_after = 10;
+}
+message TopUpProposedEvent {
+  uint64 slot = 1; string signature = 2; int64 block_time = 3;
+  string vault = 4; string destination_owner = 5; uint64 amount = 6; uint64 nonce = 7; int64 execute_after = 8;
+}
+message ColdTransferExecutedEvent {
+  uint64 slot = 1; string signature = 2; int64 block_time = 3;
+  string vault = 4; string destination_owner = 5; uint64 amount = 6; bool instant = 7;
+}
+message FullExitProposedEvent {
+  uint64 slot = 1; string signature = 2; int64 block_time = 3;
+  string vault = 4; string destination_owner = 5; uint64 nonce = 6; int64 execute_after = 7; bool uninstall = 8; uint64 amount = 9;
+}
+message FullExitExecutedEvent {
+  uint64 slot = 1; string signature = 2; int64 block_time = 3;
+  string vault = 4; string destination_owner = 5; uint64 amount = 6;
+}
+message RiskVerdictAppliedEvent {
+  uint64 slot = 1; string signature = 2; int64 block_time = 3;
+  string vault = 4; uint64 nonce = 5; uint32 reason_code = 6; uint64 realized_loss_usdc = 7;
+  int64 cooldown_until = 8; bool extended = 9; string evidence_hash = 10;
+}
+
+message ShieldEvents {
+  repeated VaultInitializedEvent vault_initialized = 1;
+  repeated DepositedEvent deposited = 2;
+  repeated RegistrationChangedEvent registration_changed = 3;
+  repeated PolicyTightenedEvent policy_tightened = 4;
+  repeated LoosenProposedEvent loosen_proposed = 5;
+  repeated LoosenExecutedEvent loosen_executed = 6;
+  repeated ProposalCancelledEvent proposal_cancelled = 7;
+  repeated TopUpExecutedEvent top_up_executed = 8;
+  repeated TopUpProposedEvent top_up_proposed = 9;
+  repeated ColdTransferExecutedEvent cold_transfer_executed = 10;
+  repeated FullExitProposedEvent full_exit_proposed = 11;
+  repeated FullExitExecutedEvent full_exit_executed = 12;
+  repeated RiskVerdictAppliedEvent risk_verdict_applied = 13;
+}
+
+// =====================================================================
+// Capital flows: every USDC movement across a vault's boundary, with the
+// counterparty classified against the vault's own on-chain registry.
+// Outflows come from Shield events; inflows are SPL Token transfers into
+// a known vault token account (so returns from a trading venue that never
+// calls Shield's `deposit` are still seen).
+// =====================================================================
+
+enum FlowKind {
+  FLOW_KIND_UNSPECIFIED = 0;
+  TOP_UP_INSTANT = 1;      // vault -> execution wallet, instant path
+  TOP_UP_GATED = 2;        // vault -> execution wallet, after the pause
+  COLD_TRANSFER = 3;       // vault -> cold wallet (capped instant)
+  FULL_EXIT = 4;           // vault -> cold wallet (delayed exit)
+  RETURN = 5;              // execution wallet -> vault (money coming back)
+  DEPOSIT = 6;             // anything else -> vault
+}
+
+message VaultFlow {
+  uint64 slot = 1;
+  string signature = 2;
+  int64 block_time = 3;
+  string vault = 4;
+  FlowKind kind = 5;
+  bool outbound = 6;
+  string counterparty = 7; // owner pubkey (execution / cold wallet / depositor)
+  uint64 amount = 8;
+  bool counterparty_is_execution = 9;
+}
+
+message VaultFlows {
+  repeated VaultFlow flows = 1;
+}
+
+// =====================================================================
+// Per-vault running behavioural totals (what the store keeps across the
+// whole history). Windowed metrics (24h velocity, 7-day realized loss,
+// loss streak, reload-after-loss) are derived by consumers from VaultFlows.
+// =====================================================================
+
+message ExecutionWalletTotals {
+  string owner = 1;
+  uint64 sent = 2;          // total USDC sent from the vault to this wallet
+  uint64 returned = 3;      // total USDC that came back from this wallet
+  int64 net_realized_flow = 4; // returned - sent
+  uint64 top_up_count = 5;
+  uint64 return_count = 6;
+}
+
+message BehavioralProfile {
+  string vault = 1;
+  uint64 total_sent_to_execution = 2;
+  uint64 total_returned_from_execution = 3;
+  int64 net_realized_flow = 4;
+  uint64 total_deposited = 5;
+  uint64 total_exited = 6;
+  repeated ExecutionWalletTotals execution_wallets = 7;
+  uint64 last_updated_slot = 8;
+  int64 last_updated_at = 9;
+}
+
+message BehavioralProfiles {
+  repeated BehavioralProfile profiles = 1;
+}

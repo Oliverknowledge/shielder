@@ -30,3 +30,4 @@ app/dist/
 
 # Local demo state and generated demo keys (never commit)
 .shield/
+substreams/*.spkg

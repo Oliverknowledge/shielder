@@ -1,172 +1,131 @@
 #!/usr/bin/env bun
 /**
- * Shield's standalone recovery CLI — Invariant 10:
- * "Recovery does not depend on Shield existing." With the legitimate
- * authority key and enough time, this file is a complete, self-contained
- * proof that a user can recover their assets even if Graph, CRE, the
- * Shield frontend, the Shield backend, and Shield the company all
- * disappear at once. It imports nothing from a Shield-operated service --
- * only `@solana/web3.js`, `shield-client.ts` (pure instruction-encoding
- * logic, no network calls of its own), and a plain Solana RPC URL the
- * user supplies.
+ * Shield standalone recovery CLI — the proof that recovery does not depend
+ * on Shield existing. It talks to a Solana RPC URL you supply and nothing
+ * else: no Shield server, no Graph, no Chainlink. With the vault authority
+ * key and enough time, every exit path in the program is reachable here.
  *
- * Usage:
- *   bun run client/recovery-cli.ts cancel <keypairPath> <category: rule-change|top-up|full-exit>
- *   bun run client/recovery-cli.ts execute-matured <keypairPath> <category> [destinationTokenAccount]
- *   bun run client/recovery-cli.ts status <authorityPubkey>
+ *   SHIELD_RPC_URL=https://api.devnet.solana.com bun run client/recovery-cli.ts status <authorityPubkey>
+ *   bun run client/recovery-cli.ts cancel <keypair.json> <rule-change|top-up|full-exit>
+ *   bun run client/recovery-cli.ts cold-transfer <keypair.json> <coldOwnerPubkey> <usdc>      # instant, capped
+ *   bun run client/recovery-cli.ts propose-exit <keypair.json> <coldOwnerPubkey>              # whole balance, after the exit delay
+ *   bun run client/recovery-cli.ts execute <keypair.json> <rule-change|top-up|full-exit>      # execute a matured proposal
  */
-
 import { readFileSync } from "node:fs";
 import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import {
-  vaultPda,
-  vaultTokenAccountPda,
-  proposalPda,
   ProposalCategory,
+  SHIELD_PROGRAM_ID,
   cancelProposalIx,
   executeFullExitIx,
-  executeTopUpIx,
   executeRuleChangeIx,
-  fetchProposal,
-  SHIELD_PROGRAM_ID,
+  executeRuleChangeWithRegistrationIx,
+  executeTopUpIx,
+  fetchAllProposals,
+  fetchRegistry,
+  fetchVault,
+  instantColdTransferIx,
+  parseShieldError,
+  proposeUninstallVaultIx,
+  rawToUsdc,
+  usdcToRaw,
+  vaultPda,
+  OwnerType,
 } from "./shield-client";
 
 const RPC_URL = process.env.SHIELD_RPC_URL ?? "http://127.0.0.1:8899";
+const connection = new Connection(RPC_URL, "confirmed");
+const fmt = (raw: bigint) => `$${rawToUsdc(raw).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+const when = (ts: bigint) => new Date(Number(ts) * 1000).toISOString();
 
-function loadKeypair(path: string): Keypair {
-  const raw = JSON.parse(readFileSync(path, "utf-8"));
-  return Keypair.fromSecretKey(Uint8Array.from(raw));
-}
+const loadKeypair = (p: string) => Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(p, "utf-8"))));
+const parseCategory = (s: string) => {
+  const c = { "rule-change": ProposalCategory.RuleChange, "top-up": ProposalCategory.TopUp, "full-exit": ProposalCategory.FullExit }[s];
+  if (c === undefined) throw new Error(`unknown category "${s}"`);
+  return c;
+};
 
-function parseCategory(s: string): ProposalCategory {
-  switch (s) {
-    case "rule-change":
-      return ProposalCategory.RuleChange;
-    case "top-up":
-      return ProposalCategory.TopUp;
-    case "full-exit":
-      return ProposalCategory.FullExit;
-    default:
-      throw new Error(`unknown category "${s}" — expected rule-change | top-up | full-exit`);
+async function send(label: string, ixs: Parameters<Transaction["add"]>, signers: Keypair[]) {
+  try {
+    const sig = await sendAndConfirmTransaction(connection, new Transaction().add(...ixs), signers, { commitment: "confirmed" });
+    console.log(`${label}: ${sig}`);
+  } catch (e) {
+    const name = parseShieldError(e);
+    console.log(`${label} REJECTED${name ? `: ${name}` : ""}`);
+    if (!name) console.log(e instanceof Error ? e.message.slice(0, 400) : String(e));
+    process.exitCode = 1;
   }
 }
 
-async function cmdStatus(connection: Connection, authority: PublicKey) {
+async function status(authority: PublicKey) {
   const [vault] = vaultPda(authority);
   const info = await connection.getAccountInfo(vault);
-  if (!info) {
-    console.log(`No vault found for ${authority.toBase58()} on ${RPC_URL}`);
-    return;
+  if (!info) return console.log(`No vault for ${authority.toBase58()} on ${RPC_URL}`);
+  console.log(`Vault ${vault.toBase58()} — owner ${info.owner.equals(SHIELD_PROGRAM_ID) ? "OK (Shield program)" : "MISMATCH, do not trust"}`);
+  const v = (await fetchVault(connection, vault))!;
+  console.log(`  floor ${fmt(v.protectedFloor)} | daily ${fmt(v.velocityThreshold)} | cap ${fmt(v.emergencyCap)} | exit delay ${Number(v.fullExitCooldownSecs) / 86400}d | cooldown until ${v.cooldownUntil > 0n ? when(v.cooldownUntil) : "-"}`);
+  for (const r of await fetchRegistry(connection, vault)) console.log(`  ${r.kind === OwnerType.Cold ? "cold     " : "execution"} ${r.owner.toBase58()} "${r.label}"${r.active ? "" : " (removed)"}`);
+  for (const p of await fetchAllProposals(connection, vault)) {
+    console.log(`  pending ${["rule-change", "top-up", "full-exit"][p.category]} #${p.nonce} executes after ${when(p.executeAfter)} expires ${when(p.expiry)} ${p.action.kind}`);
   }
-  console.log(`Vault: ${vault.toBase58()} (owner check: ${info.owner.equals(SHIELD_PROGRAM_ID) ? "OK, owned by Shield program" : "MISMATCH — do not trust this account"})`);
-
-  for (const [name, category] of [
-    ["rule-change", ProposalCategory.RuleChange],
-    ["top-up", ProposalCategory.TopUp],
-    ["full-exit", ProposalCategory.FullExit],
-  ] as const) {
-    const [proposal] = proposalPda(vault, category);
-    const pInfo = await connection.getAccountInfo(proposal);
-    console.log(`  ${name} proposal (${proposal.toBase58()}): ${pInfo ? `PENDING, ${pInfo.data.length} bytes` : "none"}`);
-  }
-}
-
-async function cmdCancel(connection: Connection, authorityKp: Keypair, category: ProposalCategory) {
-  const [vault] = vaultPda(authorityKp.publicKey);
-  const [proposal] = proposalPda(vault, category);
-  const ix = cancelProposalIx({ authority: authorityKp.publicKey, vault, proposal });
-  const tx = new Transaction().add(ix);
-  const sig = await sendAndConfirmTransaction(connection, tx, [authorityKp]);
-  console.log(`Cancelled. Signature: ${sig}`);
-}
-
-async function cmdExecuteMatured(
-  connection: Connection,
-  authorityKp: Keypair,
-  category: ProposalCategory,
-  destinationTokenAccount?: PublicKey
-) {
-  const [vault] = vaultPda(authorityKp.publicKey);
-  const [vaultTokenAccount] = vaultTokenAccountPda(vault);
-
-  if (category === ProposalCategory.FullExit) {
-    if (!destinationTokenAccount) throw new Error("full-exit execution requires a destination token account");
-    const ix = executeFullExitIx({
-      executor: authorityKp.publicKey,
-      vault,
-      vaultTokenAccount,
-      destinationTokenAccount,
-    });
-    const tx = new Transaction().add(ix);
-    const sig = await sendAndConfirmTransaction(connection, tx, [authorityKp]);
-    console.log(`Full exit executed. Signature: ${sig}`);
-    return;
-  }
-
-  if (category === ProposalCategory.TopUp) {
-    if (!destinationTokenAccount) throw new Error("top-up execution requires a destination token account");
-    // The destination OWNER is read directly off the pending proposal --
-    // this is the fix that makes standalone recovery actually standalone
-    // (Invariant 10): earlier, this command required the caller to
-    // already know the destination owner out-of-band, which defeats the
-    // point of a recovery tool. Now it only needs a destination token
-    // account (any correctly-owned SPL account works; the program itself
-    // verifies ownership against the registry).
-    const [proposal] = proposalPda(vault, ProposalCategory.TopUp);
-    const decoded = await fetchProposal(connection, proposal);
-    if (!decoded || decoded.action.kind !== "topUp") throw new Error("no pending top-up proposal found");
-    const ix = executeTopUpIx({
-      executor: authorityKp.publicKey,
-      vault,
-      vaultTokenAccount,
-      destinationOwner: decoded.action.destinationOwner,
-      destinationTokenAccount,
-    });
-    const tx = new Transaction().add(ix);
-    const sig = await sendAndConfirmTransaction(connection, tx, [authorityKp]);
-    console.log(`Top-up executed. Signature: ${sig}`);
-    return;
-  }
-
-  // rule-change
-  const ix = executeRuleChangeIx({
-    executor: authorityKp.publicKey,
-    vault,
-    registryEntryOwnerHint: authorityKp.publicKey, // unused unless the proposal registers a cold owner
-  });
-  const tx = new Transaction().add(ix);
-  const sig = await sendAndConfirmTransaction(connection, tx, [authorityKp]);
-  console.log(`Rule change executed. Signature: ${sig}`);
 }
 
 async function main() {
   const [, , cmd, ...args] = process.argv;
-  const connection = new Connection(RPC_URL, "confirmed");
-
   switch (cmd) {
     case "status":
-      await cmdStatus(connection, new PublicKey(args[0]));
-      break;
-    case "cancel":
-      await cmdCancel(connection, loadKeypair(args[0]), parseCategory(args[1]));
-      break;
-    case "execute-matured":
-      await cmdExecuteMatured(
-        connection,
-        loadKeypair(args[0]),
-        parseCategory(args[1]),
-        args[2] ? new PublicKey(args[2]) : undefined
-      );
-      break;
+      return status(new PublicKey(args[0]));
+    case "cancel": {
+      const kp = loadKeypair(args[0]);
+      const [vault] = vaultPda(kp.publicKey);
+      return send("cancelled", [cancelProposalIx({ authority: kp.publicKey, vault, category: parseCategory(args[1]) })], [kp]);
+    }
+    case "cold-transfer": {
+      const kp = loadKeypair(args[0]);
+      const [vault] = vaultPda(kp.publicKey);
+      const owner = new PublicKey(args[1]);
+      const v = (await fetchVault(connection, vault))!;
+      const ata = getAssociatedTokenAddressSync(v.usdcMint, owner);
+      return send("cold transfer", [
+        createAssociatedTokenAccountIdempotentInstruction(kp.publicKey, ata, owner, v.usdcMint),
+        instantColdTransferIx({ authority: kp.publicKey, vault, destinationOwner: owner, destinationTokenAccount: ata, amount: usdcToRaw(Number(args[2])) }),
+      ], [kp]);
+    }
+    case "propose-exit": {
+      const kp = loadKeypair(args[0]);
+      const [vault] = vaultPda(kp.publicKey);
+      return send("exit proposed", [proposeUninstallVaultIx({ authority: kp.publicKey, vault, destinationOwner: new PublicKey(args[1]) })], [kp]);
+    }
+    case "execute": {
+      const kp = loadKeypair(args[0]);
+      const [vault] = vaultPda(kp.publicKey);
+      const category = parseCategory(args[1]);
+      const v = (await fetchVault(connection, vault))!;
+      const proposals = await fetchAllProposals(connection, vault);
+      const p = proposals.find((x) => x.category === category);
+      if (!p) return console.log("no pending proposal in that category");
+      if (p.action.kind === "loosen") {
+        const owner = p.action.params.registerOwner;
+        return owner
+          ? send("rule change executed", [executeRuleChangeWithRegistrationIx({ authority: kp.publicKey, vault, owner })], [kp])
+          : send("rule change executed", [executeRuleChangeIx({ authority: kp.publicKey, vault })], [kp]);
+      }
+      const owner = p.action.destinationOwner;
+      const ata = getAssociatedTokenAddressSync(v.usdcMint, owner);
+      const create = createAssociatedTokenAccountIdempotentInstruction(kp.publicKey, ata, owner, v.usdcMint);
+      if (p.action.kind === "topUp") {
+        return send("top-up executed", [create, executeTopUpIx({ authority: kp.publicKey, vault, destinationOwner: owner, destinationTokenAccount: ata })], [kp]);
+      }
+      return send("exit executed", [create, executeFullExitIx({ authority: kp.publicKey, vault, destinationOwner: owner, destinationTokenAccount: ata })], [kp]);
+    }
     default:
-      console.log(
-        `Usage:\n  bun run client/recovery-cli.ts status <authorityPubkey>\n  bun run client/recovery-cli.ts cancel <keypairPath> <rule-change|top-up|full-exit>\n  bun run client/recovery-cli.ts execute-matured <keypairPath> <category> [destinationTokenAccount]`
-      );
+      console.log(readFileSync(new URL(import.meta.url).pathname, "utf-8").split("*/")[0].split("\n").filter((l) => l.includes("recovery-cli.ts")).join("\n"));
       process.exit(1);
   }
 }
 
-main().catch((err) => {
-  console.error(err);
+main().catch((e) => {
+  console.error(e);
   process.exit(1);
 });

@@ -1,20 +1,24 @@
 [workspace]
 
 [package]
-name = "shield_behavioral_memory"
-version = "0.1.0"
+name = "shield-behavioral-memory"
+version = "0.2.0"
 edition = "2021"
-description = "Shield's Substreams-for-Solana behavioral-memory pipeline"
+description = "Substreams for the Shield vault program on Solana: typed instruction + event decoding, capital-flow classification, and per-vault behavioural totals"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [dependencies]
-substreams = "0.5"
-substreams-solana = "0.10"
-prost = "0.11"
-bs58 = "0.5"
-sha2 = "0.10"
+substreams = "0.7"
+substreams-solana = "0.15"
+prost = "0.13"
+prost-types = "0.13"
+base64 = "0.22"
+hex = "0.4"
+
+[build-dependencies]
+prost-build = "0.13"
 
 [profile.release]
 lto = true

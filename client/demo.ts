@@ -1,175 +1,257 @@
 #!/usr/bin/env bun
 /**
- * Shield's primary demo sequence (docs/designs/shield-treasury-vault.md,
- * Success Criteria). Run against a local validator or devnet with the
- * vault program deployed. This is the thin demo client the design doc's
- * Constraints section calls a required fourth surface -- read-only
- * queries plus the three demo actions, no polish beyond legibility.
+ * Shield demo CLI — every action the app exposes, from the terminal, against
+ * the real program. Reads the state file scripts/bootstrap-demo.ts wrote.
  *
- * Usage:
- *   bun run client/demo.ts scoreboard <authorityPubkey>
- *   bun run client/demo.ts top-up <keypairPath> <executionOwnerPubkey> <amountUsdc>
- *   bun run client/demo.ts raise-limit <keypairPath> <newThresholdBps>
- *   bun run client/demo.ts remove-shield <keypairPath> <coldDestinationOwnerPubkey>
+ *   bun run client/demo.ts scoreboard
+ *   bun run client/demo.ts top-up <usdc>              # instant if allowed, else explains why not
+ *   bun run client/demo.ts schedule-top-up <usdc>     # gated path (proposal)
+ *   bun run client/demo.ts execute-top-up
+ *   bun run client/demo.ts pause <hours>              # self-pause (instant tighten)
+ *   bun run client/demo.ts tighten floor=<usdc> daily=<usdc> trigger=<usdc> cooldown=<hours>
+ *   bun run client/demo.ts loosen floor=<usdc> daily=<usdc> trigger=<usdc> cooldown=<hours>
+ *   bun run client/demo.ts cancel <rule-change|top-up|full-exit>
+ *   bun run client/demo.ts cold <usdc>                # capped instant transfer to the cold wallet
+ *   bun run client/demo.ts exit                       # propose leaving Shield (7d)
+ *   bun run client/demo.ts return <usdc>              # DEMO: the execution wallet sends money back
+ *   bun run client/demo.ts evaluate                   # ask the monitor to evaluate now
  */
-
 import { readFileSync } from "node:fs";
+import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
+import { createTransferInstruction, getAssociatedTokenAddressSync, getAccount } from "@solana/spl-token";
 import {
-  Connection,
-  Keypair,
-  PublicKey,
-  Transaction,
-  sendAndConfirmTransaction,
-} from "@solana/web3.js";
-import {
+  ProposalCategory,
+  cancelProposalIx,
+  evaluateTopUp,
+  executeTopUpIx,
+  fetchAllProposals,
+  fetchRegistry,
   fetchVault,
+  instantColdTransferIx,
+  instantTopUpIx,
+  parseShieldError,
+  proposeLoosenIx,
+  proposeTopUpIx,
+  proposeUninstallVaultIx,
+  rawToUsdc,
+  tightenIx,
+  usdcToRaw,
   vaultPda,
   vaultTokenAccountPda,
-  proposalPda,
-  ProposalCategory,
-  instantTopUpIx,
-  proposeTopUpIx,
-  proposeLoosenIx,
-  proposeUninstallVaultIx,
+  OwnerType,
+  COOLDOWN_REASON,
 } from "./shield-client";
 
 const RPC_URL = process.env.SHIELD_RPC_URL ?? "http://127.0.0.1:8899";
+const STATE_DIR = process.env.SHIELD_STATE_DIR ?? ".shield";
+const API = process.env.SHIELD_API ?? "http://localhost:8787";
+const network = RPC_URL.includes("devnet") ? "devnet" : RPC_URL.includes("mainnet") ? "mainnet-beta" : "localnet";
+
+const fmt = (raw: bigint) => `$${rawToUsdc(raw).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+const when = (ts: bigint) => new Date(Number(ts) * 1000).toLocaleString();
+const countdown = (until: bigint) => {
+  const s = Number(until) - Math.floor(Date.now() / 1000);
+  if (s <= 0) return "now";
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return `${h}h ${m}m`;
+};
 
 function loadKeypair(path: string): Keypair {
-  const raw = JSON.parse(readFileSync(path, "utf-8"));
-  return Keypair.fromSecretKey(Uint8Array.from(raw));
+  return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(path, "utf-8"))));
 }
 
-async function cmdScoreboard(connection: Connection, authority: PublicKey) {
-  const [vault] = vaultPda(authority);
-  const state = await fetchVault(connection, vault);
-  if (!state) {
-    console.log(`No Shield vault found for authority ${authority.toBase58()}`);
-    return;
+const state = JSON.parse(readFileSync(`${STATE_DIR}/demo-state.${network}.json`, "utf-8")) as Record<string, string>;
+const authority = loadKeypair(process.env.SHIELD_AUTHORITY_KEYPAIR ?? `${process.env.HOME}/.config/solana/id.json`);
+const connection = new Connection(RPC_URL, "confirmed");
+const [vault] = vaultPda(authority.publicKey);
+const [vaultAta] = vaultTokenAccountPda(vault);
+const execution = new PublicKey(state.executionWallet);
+const cold = new PublicKey(state.coldWallet);
+
+async function send(label: string, ixs: Parameters<Transaction["add"]>, signers: Keypair[] = [authority]) {
+  try {
+    const sig = await sendAndConfirmTransaction(connection, new Transaction().add(...ixs), signers, { commitment: "confirmed" });
+    console.log(`✅ ${label}: ${sig}`);
+    return sig;
+  } catch (e) {
+    const name = parseShieldError(e);
+    console.log(`❌ ${label} rejected on-chain${name ? `: ${name}` : ""}`);
+    if (!name) console.log(`   ${e instanceof Error ? e.message.slice(0, 300) : String(e)}`);
+    return null;
   }
+}
 
-  // The real scoreboard reads top-up/return totals, realized P&L, and
-  // loss streaks from the Graph subgraph (substreams/), not from the
-  // vault account itself -- the vault only knows its own enforcement
-  // state, not the full behavioral history. This prints what the vault
-  // itself knows; wire in a subgraph query against
-  // UserBehavioralProfile(id: "<vault>") for the full scoreboard.
-  const usdc = (raw: bigint) => (Number(raw) / 1_000_000).toFixed(2);
-
-  console.log(`\nShield Vault: ${vault.toBase58()}`);
-  console.log(`  Top-up threshold:     ${(state.topUpThresholdBps / 100).toFixed(2)}% of vault balance`);
-  console.log(`  Emergency cap:        $${usdc(state.emergencyCap)}`);
-  console.log(`  Velocity threshold:   $${usdc(state.velocityThreshold)} / 24h`);
-  console.log(`  Rolling velocity now: $${usdc(state.velocityBuckets.reduce((a, b) => a + b, 0n))}`);
-  const cooldownArmed = state.behavioralCooldownUntil > BigInt(Math.floor(Date.now() / 1000));
-  console.log(
-    `  Behavioral cooldown:  ${cooldownArmed ? `ARMED until ${new Date(Number(state.behavioralCooldownUntil) * 1000).toISOString()}` : "not armed"}`
-  );
-  console.log(`  Config version:       ${state.configVersion}`);
+async function scoreboard() {
+  const v = await fetchVault(connection, vault);
+  if (!v) throw new Error("no vault for this authority");
+  const bal = (await getAccount(connection, vaultAta)).amount;
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  const registry = await fetchRegistry(connection, vault);
+  const proposals = await fetchAllProposals(connection, vault);
+  console.log(`\nShield vault ${vault.toBase58()} (${network})`);
+  console.log(`  Protected balance      ${fmt(bal)}  (floor ${fmt(v.protectedFloor)})`);
+  console.log(`  Daily top-up limit     ${fmt(v.velocityThreshold)} / 24h`);
+  console.log(`  Large top-up pause     >= ${(v.topUpThresholdBps / 100).toFixed(0)}% of balance waits ${Number(v.topUpCooldownSecs) / 60} min`);
+  console.log(`  Loss rule              >= ${fmt(v.lossTriggerUsdc)} realised in 24h -> pause ${Number(v.lossCooldownSecs) / 3600}h`);
+  console.log(`  Emergency cap (cold)   ${fmt(v.emergencyCap)} instant`);
+  console.log(`  Rule-change delay      ${Number(v.loosenCooldownSecs) / 3600}h   Exit delay ${Number(v.fullExitCooldownSecs) / 86400}d`);
+  const reason = v.cooldownReason === COOLDOWN_REASON.SELF_PAUSE ? "self-pause" : v.cooldownReason === COOLDOWN_REASON.RISK_VERDICT ? "loss rule" : "";
+  console.log(`  Cooldown               ${v.cooldownUntil > now ? `ACTIVE (${reason}) until ${when(v.cooldownUntil)} — ${countdown(v.cooldownUntil)} left` : "none"}`);
+  console.log(`  Config version         ${v.configVersion}   verdicts applied ${v.lastVerdictNonce}`);
+  console.log(`  Destinations`);
+  for (const r of registry) console.log(`    ${r.kind === OwnerType.Cold ? "cold     " : "execution"} ${r.owner.toBase58()} "${r.label}" ${r.active ? "" : "(removed)"}`);
+  for (const p of proposals) {
+    const cat = ["rule change", "top-up", "full exit"][p.category];
+    console.log(`  Pending ${cat} #${p.nonce}: executes ${when(p.executeAfter)} (${countdown(p.executeAfter)}) — ${JSON.stringify(p.action, (_k, x) => (typeof x === "bigint" ? x.toString() : x instanceof PublicKey ? x.toBase58() : x))}`);
+  }
+  try {
+    const res = await fetch(`${API}/api/vault/${vault.toBase58()}`);
+    if (res.ok) {
+      const j = (await res.json()) as { profile: { totals: Record<string, string>; windows: { h24: Record<string, string> }; lossStreak: number }; assessment: { headline: string; lines: string[] }; source: { mode: string } };
+      const t = j.profile.totals;
+      console.log(`\n  Behaviour (source: ${j.source.mode})`);
+      console.log(`    Sent to trading wallets ${fmt(BigInt(t.sent))}, came back ${fmt(BigInt(t.returned))}, net ${fmt(BigInt(t.net))}`);
+      console.log(`    Realised loss (24h)     ${fmt(BigInt(j.profile.windows.h24.realisedLoss))}   loss streak ${j.profile.lossStreak}`);
+      console.log(`    ${j.assessment.headline}`);
+      for (const l of j.assessment.lines) console.log(`      - ${l}`);
+    }
+  } catch {
+    console.log(`\n  (server at ${API} not reachable; behavioural data unavailable)`);
+  }
   console.log("");
 }
 
-async function cmdTopUp(connection: Connection, authorityKp: Keypair, executionOwner: PublicKey, amountUsdc: number) {
-  const [vault] = vaultPda(authorityKp.publicKey);
-  const [vaultTokenAccount] = vaultTokenAccountPda(vault);
-  const amountRaw = BigInt(Math.round(amountUsdc * 1_000_000));
+async function topUp(amountUsdc: number) {
+  const v = (await fetchVault(connection, vault))!;
+  const bal = (await getAccount(connection, vaultAta)).amount;
+  const amount = usdcToRaw(amountUsdc);
+  const d = evaluateTopUp(v, bal, amount, BigInt(Math.floor(Date.now() / 1000)));
+  console.log(`Top-up ${fmt(amount)} to ${execution.toBase58()}: expected path = ${d.path}${d.reason ? ` (${d.reason})` : ""}`);
+  const ata = getAssociatedTokenAddressSync(v.usdcMint, execution);
+  await send("instant top-up", [instantTopUpIx({ authority: authority.publicKey, vault, destinationOwner: execution, destinationTokenAccount: ata, amount })]);
+}
 
-  const state = await fetchVault(connection, vault);
-  if (!state) throw new Error("vault not found");
+async function scheduleTopUp(amountUsdc: number) {
+  await send("top-up proposed (gated path)", [proposeTopUpIx({ authority: authority.publicKey, vault, destinationOwner: execution, amount: usdcToRaw(amountUsdc) })]);
+}
 
-  // Mirrors the vault's own row-4 threshold logic client-side purely to
-  // decide WHICH instruction to send -- the vault re-checks everything
-  // itself, so this is a UX nicety, not a trust boundary.
-  console.log(`Attempting $${amountUsdc.toFixed(2)} top-up to ${executionOwner.toBase58()}...`);
+async function executeTopUp() {
+  const v = (await fetchVault(connection, vault))!;
+  const ata = getAssociatedTokenAddressSync(v.usdcMint, execution);
+  await send("execute top-up", [executeTopUpIx({ authority: authority.publicKey, vault, destinationOwner: execution, destinationTokenAccount: ata })]);
+}
 
-  try {
-    const [destAta] = await import("@solana/spl-token").then((m) => [
-      m.getAssociatedTokenAddressSync(state.usdcMint, executionOwner),
-    ]);
-    const ix = instantTopUpIx({
-      authority: authorityKp.publicKey,
-      vault,
-      vaultTokenAccount,
-      destinationOwner: executionOwner,
-      destinationTokenAccount: destAta,
-      amount: amountRaw,
-    });
-    const tx = new Transaction().add(ix);
-    const sig = await sendAndConfirmTransaction(connection, tx, [authorityKp]);
-    console.log(`✅ Instant top-up succeeded: ${sig}`);
-  } catch (err) {
-    console.log(`❌ Instant top-up rejected on-chain (expected if above threshold/velocity/cooldown):`);
-    console.log(`   ${err instanceof Error ? err.message : String(err)}`);
-    console.log(`   Falling back to the gated path: propose_top_up (30m+ cooldown, CRE-extendable)...`);
-    const proposeIx = proposeTopUpIx({
-      authority: authorityKp.publicKey,
-      vault,
-      destinationOwner: executionOwner,
-      amount: amountRaw,
-    });
-    const tx = new Transaction().add(proposeIx);
-    const sig = await sendAndConfirmTransaction(connection, tx, [authorityKp]);
-    const [proposal] = proposalPda(vault, ProposalCategory.TopUp);
-    console.log(`✅ Top-up PROPOSED (queued): ${sig}`);
-    console.log(`   Proposal account: ${proposal.toBase58()} — check execute_after onchain to see the exact unlock time.`);
+function parseKv(args: string[]) {
+  const out: Record<string, number> = {};
+  for (const a of args) {
+    const [k, val] = a.split("=");
+    if (k && val !== undefined) out[k] = Number(val);
   }
+  return out;
 }
 
-async function cmdRaiseLimit(connection: Connection, authorityKp: Keypair, newThresholdBps: number) {
-  const [vault] = vaultPda(authorityKp.publicKey);
-  console.log(`Attempting to raise top-up threshold to ${(newThresholdBps / 100).toFixed(2)}%...`);
-  const ix = proposeLoosenIx({ authority: authorityKp.publicKey, vault, newTopUpThresholdBps: newThresholdBps });
-  const tx = new Transaction().add(ix);
-  const sig = await sendAndConfirmTransaction(connection, tx, [authorityKp]);
-  const [proposal] = proposalPda(vault, ProposalCategory.RuleChange);
-  console.log(`✅ Limit raise QUEUED (24h delay), not applied instantly: ${sig}`);
-  console.log(`   Proposal account: ${proposal.toBase58()}`);
+async function tighten(args: string[]) {
+  const kv = parseKv(args);
+  await send("tighten (instant)", [
+    tightenIx({
+      authority: authority.publicKey,
+      vault,
+      newProtectedFloor: kv.floor !== undefined ? usdcToRaw(kv.floor) : undefined,
+      newVelocityThreshold: kv.daily !== undefined ? usdcToRaw(kv.daily) : undefined,
+      newLossTriggerUsdc: kv.trigger !== undefined ? usdcToRaw(kv.trigger) : undefined,
+      newLossCooldownSecs: kv.cooldown !== undefined ? BigInt(Math.round(kv.cooldown * 3600)) : undefined,
+      newEmergencyCap: kv.cap !== undefined ? usdcToRaw(kv.cap) : undefined,
+    }),
+  ]);
 }
 
-async function cmdRemoveShield(connection: Connection, authorityKp: Keypair, coldDestination: PublicKey) {
-  const [vault] = vaultPda(authorityKp.publicKey);
-  console.log(`Attempting to remove Shield entirely (full exit to ${coldDestination.toBase58()})...`);
-  const ix = proposeUninstallVaultIx({ authority: authorityKp.publicKey, vault, destinationOwner: coldDestination });
-  const tx = new Transaction().add(ix);
-  const sig = await sendAndConfirmTransaction(connection, tx, [authorityKp]);
-  const [proposal] = proposalPda(vault, ProposalCategory.FullExit);
-  console.log(`✅ Full Shield removal QUEUED (7-day delay), not instant: ${sig}`);
-  console.log(`   Proposal account: ${proposal.toBase58()}`);
-  console.log(`   De-risking (selling / reducing exposure) remains available instantly the entire time this is pending.`);
+async function loosen(args: string[]) {
+  const kv = parseKv(args);
+  await send("loosen proposed (24h)", [
+    proposeLoosenIx({
+      authority: authority.publicKey,
+      vault,
+      newProtectedFloor: kv.floor !== undefined ? usdcToRaw(kv.floor) : undefined,
+      newVelocityThreshold: kv.daily !== undefined ? usdcToRaw(kv.daily) : undefined,
+      newLossTriggerUsdc: kv.trigger !== undefined ? usdcToRaw(kv.trigger) : undefined,
+      newLossCooldownSecs: kv.cooldown !== undefined ? BigInt(Math.round(kv.cooldown * 3600)) : undefined,
+      newEmergencyCap: kv.cap !== undefined ? usdcToRaw(kv.cap) : undefined,
+    }),
+  ]);
+}
+
+async function pause(hoursN: number) {
+  const until = BigInt(Math.floor(Date.now() / 1000) + Math.round(hoursN * 3600));
+  await send(`pause top-ups for ${hoursN}h (instant)`, [tightenIx({ authority: authority.publicKey, vault, pauseTopUpsUntil: until })]);
+}
+
+async function cancel(cat: string) {
+  const category = { "rule-change": ProposalCategory.RuleChange, "top-up": ProposalCategory.TopUp, "full-exit": ProposalCategory.FullExit }[cat];
+  if (category === undefined) throw new Error("category must be rule-change | top-up | full-exit");
+  await send(`cancel ${cat}`, [cancelProposalIx({ authority: authority.publicKey, vault, category })]);
+}
+
+async function coldTransfer(amountUsdc: number) {
+  const v = (await fetchVault(connection, vault))!;
+  const ata = getAssociatedTokenAddressSync(v.usdcMint, cold);
+  await send("cold transfer (instant, capped)", [
+    instantColdTransferIx({ authority: authority.publicKey, vault, destinationOwner: cold, destinationTokenAccount: ata, amount: usdcToRaw(amountUsdc) }),
+  ]);
+}
+
+async function exitShield() {
+  await send("leave Shield proposed (7d)", [proposeUninstallVaultIx({ authority: authority.publicKey, vault, destinationOwner: cold })]);
+}
+
+async function demoReturn(amountUsdc: number) {
+  // The execution wallet stand-in sends money back: a plain SPL transfer,
+  // exactly what a real trading venue would do (it never calls Shield).
+  const exec = loadKeypair(`${STATE_DIR}/execution-wallet.json`);
+  const v = (await fetchVault(connection, vault))!;
+  const from = getAssociatedTokenAddressSync(v.usdcMint, exec.publicKey);
+  const bal = await connection.getBalance(exec.publicKey);
+  if (bal < 0.005e9) {
+    try {
+      const s = await connection.requestAirdrop(exec.publicKey, 1e9);
+      await connection.confirmTransaction(s, "confirmed");
+    } catch {
+      console.log("(airdrop for the execution wallet failed; fund it with a little SOL for fees)");
+    }
+  }
+  await send(`execution wallet returns ${fmt(usdcToRaw(amountUsdc))} to the vault`, [createTransferInstruction(from, vaultAta, exec.publicKey, usdcToRaw(amountUsdc))], [exec]);
+}
+
+async function evaluate() {
+  const res = await fetch(`${API}/api/vault/${vault.toBase58()}/evaluate`, { method: "POST" });
+  const j = (await res.json()) as { assessment: { headline: string; lines: string[]; triggered: boolean; actionable: boolean }; verdict: { relayed: boolean; signature: string | null; error: string | null } | null };
+  console.log(j.assessment.headline);
+  for (const l of j.assessment.lines) console.log(`  - ${l}`);
+  if (j.verdict) console.log(j.verdict.relayed ? `✅ verdict relayed on-chain: ${j.verdict.signature}` : `verdict not relayed: ${j.verdict.error}`);
+  else console.log(j.assessment.triggered ? "(rule met, but nothing new to act on)" : "(rule not met; no verdict)");
 }
 
 async function main() {
   const [, , cmd, ...args] = process.argv;
-  const connection = new Connection(RPC_URL, "confirmed");
-
   switch (cmd) {
-    case "scoreboard":
-      await cmdScoreboard(connection, new PublicKey(args[0]));
-      break;
-    case "top-up":
-      await cmdTopUp(connection, loadKeypair(args[0]), new PublicKey(args[1]), Number(args[2]));
-      break;
-    case "raise-limit":
-      await cmdRaiseLimit(connection, loadKeypair(args[0]), Number(args[1]));
-      break;
-    case "remove-shield":
-      await cmdRemoveShield(connection, loadKeypair(args[0]), new PublicKey(args[1]));
-      break;
+    case "scoreboard": return scoreboard();
+    case "top-up": return topUp(Number(args[0]));
+    case "schedule-top-up": return scheduleTopUp(Number(args[0]));
+    case "execute-top-up": return executeTopUp();
+    case "pause": return pause(Number(args[0]));
+    case "tighten": return tighten(args);
+    case "loosen": return loosen(args);
+    case "cancel": return cancel(args[0]);
+    case "cold": return coldTransfer(Number(args[0]));
+    case "exit": return exitShield();
+    case "return": return demoReturn(Number(args[0]));
+    case "evaluate": return evaluate();
     default:
-      console.log(__doc());
+      console.log(readFileSync(new URL(import.meta.url).pathname, "utf-8").split("*/")[0].split("\n").filter((l) => l.includes("bun run")).join("\n"));
       process.exit(1);
   }
 }
 
-function __doc() {
-  return `Usage:
-  bun run client/demo.ts scoreboard <authorityPubkey>
-  bun run client/demo.ts top-up <keypairPath> <executionOwnerPubkey> <amountUsdc>
-  bun run client/demo.ts raise-limit <keypairPath> <newThresholdBps>
-  bun run client/demo.ts remove-shield <keypairPath> <coldDestinationOwnerPubkey>`;
-}
-
-main().catch((err) => {
-  console.error(err);
+main().catch((e) => {
+  console.error(e);
   process.exit(1);
 });
