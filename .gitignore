@@ -27,3 +27,6 @@ app/dist/
 # Misc
 .DS_Store
 *.log
+
+# Local demo state and generated demo keys (never commit)
+.shield/

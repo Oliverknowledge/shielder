@@ -24,6 +24,7 @@
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
+    "@solana/kit": "^8.2.0",
     "@types/bun": "latest",
     "@types/chai": "^4.3.16",
     "@types/mocha": "^10.0.7",
@@ -31,6 +32,7 @@
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
     "chai": "^4.4.1",
+    "litesvm": "^1.4.1",
     "mocha": "^10.7.0",
     "ts-mocha": "^10.0.0",
     "typescript": "^5.5.4",
