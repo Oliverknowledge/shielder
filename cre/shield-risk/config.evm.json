@@ -1,0 +1,8 @@
+{
+  "shieldApiUrl": "http://localhost:8788",
+  "programId": "0x0000000000000000000000000000000000000000",
+  "chain": "evm",
+  "chainId": 999,
+  "secretId": "SHIELD_EVM_VERIFIER_KEY",
+  "deliver": true
+}

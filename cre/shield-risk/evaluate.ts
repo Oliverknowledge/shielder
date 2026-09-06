@@ -7,12 +7,16 @@
 import { deriveProfile, type Flow, type FlowKind } from "../../server/behaviour";
 import { assess, buildUnsignedVerdict, signVerdict, type PolicyView } from "../../server/policy";
 import { toHex, verdictToJson } from "../../client/verdict";
+import { evmAddressOf, evmVerdictToJson, signEvmVerdict } from "./evm-verdict";
 
 export interface EnclaveConfig {
   shieldApiUrl: string;
   programId: string;
   secretId: string;
   deliver: boolean;
+  /** "solana" (default) or "evm" (ShieldVault.sol: EIP-712 verdict signed with a secp256k1 key held only in the enclave). */
+  chain?: "solana" | "evm";
+  chainId?: number;
 }
 
 export interface EnclaveIO {
@@ -79,13 +83,14 @@ export function base64Encode(bytes: Uint8Array): string {
 }
 
 export function evaluateVault(io: EnclaveIO, config: EnclaveConfig, vault: string): EvaluationResult {
-  if (!vault) throw new Error("trigger payload must include { vault: <base58> }");
+  if (!vault) throw new Error("trigger payload must include { vault: <address> }");
+  const isEvm = config.chain === "evm";
 
-  // 1. The signing seed: fetched inside the enclave, used below, never returned or logged.
-  const seed = base64Decode(io.getSecret(config.secretId));
-  if (seed.length !== 32) throw new Error("verifier seed must be 32 bytes");
+  const secret = io.getSecret(config.secretId);
+  const seed = isEvm ? new Uint8Array(0) : base64Decode(secret);
+  if (!isEvm && seed.length !== 32) throw new Error("verifier seed must be 32 bytes");
+  if (isEvm && !/^0x[0-9a-fA-F]{64}$/.test(secret.trim())) throw new Error("EVM verifier secret must be a 0x-prefixed 32-byte private key");
 
-  // 2. Raw inputs: the user's on-chain policy and their capital flows.
   const viewRes = io.get(`${config.shieldApiUrl}/api/vault/${vault}`);
   if (viewRes.status < 200 || viewRes.status >= 300) throw new Error(`vault view request failed: ${viewRes.status}`);
   const view = JSON.parse(viewRes.body) as VaultView;
@@ -130,10 +135,19 @@ export function evaluateVault(io: EnclaveIO, config: EnclaveConfig, vault: strin
   if (!a.actionable) return summary;
 
   // 4. Sign inside the enclave.
-  const unsigned = buildUnsignedVerdict(a, policy, policy.lastVerdictNonce + 1n, now);
-  const { verdict, verifier } = signVerdict(unsigned, seed);
-  const verdictJson = verdictToJson(verdict, verifier);
-  if (view.state.riskVerifier && view.state.riskVerifier !== verdictJson.verifier) {
+  let verdictJson: { nonce: string; verifier: string; evidenceHash: string } & Record<string, unknown>;
+  if (isEvm) {
+    const key = secret.trim();
+    const verifierAddr = evmAddressOf(key);
+    const ev = { vault, nonce: policy.lastVerdictNonce + 1n, issuedAt: BigInt(now), expiry: BigInt(now + 15 * 60), reasonCode: a.reasonCode, realizedLossUsdc: a.realizedLossUsdc, evidenceHash: `0x${toHex(a.evidenceHash)}` };
+    const signature = signEvmVerdict(BigInt(config.chainId ?? 0), config.programId, ev, key);
+    verdictJson = evmVerdictToJson(ev, signature, verifierAddr);
+  } else {
+    const unsigned = buildUnsignedVerdict(a, policy, policy.lastVerdictNonce + 1n, now);
+    const { verdict, verifier } = signVerdict(unsigned, seed);
+    verdictJson = verdictToJson(verdict, verifier) as unknown as typeof verdictJson;
+  }
+  if (view.state.riskVerifier && view.state.riskVerifier.toLowerCase() !== verdictJson.verifier.toLowerCase()) {
     io.log(`Enclave key ${verdictJson.verifier} is not the verifier this vault pinned (${view.state.riskVerifier}); the vault would reject it.`);
   }
 

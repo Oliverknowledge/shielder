@@ -1,9 +1,14 @@
 # Hackathon strategy — ETHGlobal ETHOnline 2026
 
-Researched from the official pages on 2026-09-05 (Cloudflare blocks headless
-browsers on ethglobal.com; pages were fetched with a desktop user agent and
-quoted verbatim). Everything below is what the pages said that day; the
-"unknowns" section lists what could not be confirmed.
+Researched from the official pages on 2026-09-05 and re-verified verbatim on
+2026-09-06 (Cloudflare blocks headless browsers on ethglobal.com; pages were
+fetched with a desktop user agent). Everything below is what the pages said;
+the "unknowns" section lists what could not be confirmed.
+
+**2026-09-06 change:** the product is Hyperliquid-first (see
+`ARCHITECTURE_DECISION.md`). We now select **three** partners: The Graph,
+Privy, Chainlink. Hyperliquid itself is not a sponsor of this event (0
+matches on the prizes page), which is fine: it is the venue, not a prize.
 
 ## Rules that bind us
 
@@ -20,19 +25,25 @@ quoted verbatim). Everything below is what the pages said that day; the
 | Version control | "Submissions with large single commits or missing histories may be disqualified" | info/details |
 | Judging criteria | Technicality, Originality, Practicality, Usability (UI/UX/DX), WOW factor | info/details |
 
-## Selected partner prizes (2 of 3 allowed)
+## Selected partner prizes (3 of 3 allowed)
 
-We deliberately select **two** partners. A third (Ledger) fit on paper but
-would have been sponsor theatre without hardware in the loop; see below.
+"If a partner has multiple tracks, you can be eligible for all of them while
+only counting as 1 Partner Prize" (info/details).
 
 ### 1. The Graph — "Best AI Tooling or AI Use Case with The Graph (From Scratch)" ($5,000: 2,500 / 1,500 / 1,000)
 
 Also eligible, and claimed as the secondary Graph track: "Best Use of
-Composable or Standardized Graph Products" ($5,000), because the package
-composes the standardised Solana block source with a reusable, published
-Substreams module set (typed instruction/event decoding + flow classification
-+ per-vault totals) that any Shield-like vault could reuse. Both count as one
-partner selection.
+Composable or Standardized Graph Products" ($5,000). Requirement quoted
+2026-09-06: "Either compose two or more of The Graph's products, or build
+meaningfully on a standardized schema"; "Authoring or extending a
+Standardized Subgraph, or contributing a reusable composable Substreams
+module, is in scope"; "The best submissions show the leverage of standards:
+… one pipeline reused across chains." Shield ships the same five-module
+pipeline shape on two chains: `substreams/` (Solana devnet, composed on the
+standard `sf.solana.type.v1.Block` source) and `substreams-evm/` (HyperEVM,
+composed on The Graph's foundational `ethereum-common` package: its
+`index_events` block index filters both maps by `evt_addr`). Both count as
+one partner selection.
 
 Why it is structural: the loss rule is *"if $X did not come back from your
 trading wallet within 24h, pause top-ups"*. The only way to know what came
@@ -52,7 +63,35 @@ Requirements checklist (quoted from the prize page):
 
 Evidence judges can inspect: `substreams/substreams.yaml`, `substreams/src/lib.rs`, `substreams info shield-behavioral-memory-v0.2.0.spkg`, the server's `/api/health` (`source.mode: "substreams"` once keyed), the Behaviour screen's source label.
 
-### 2. Chainlink — "Best Confidential Workflow" ($2,000: up to 2 × $1,000)
+### 2. Privy — "Best financial flow" ($2,500)
+
+Requirements (quoted 2026-09-06 from /prizes/privy): "Integrate Privy as a
+core part of the product"; "Create or use at least one Privy wallet";
+"Complete at least one functional financial flow using a generally available
+Privy feature"; "Eligible flows include transfers, bridging, stablecoin
+conversions, swaps, self-service Earn vaults, onramps, or other supported
+wallet actions"; "Provide a working demo and access to the project's source
+code"; "Clearly explain how Privy improves the user experience"; "Features
+requiring commercial or guided onboarding may be mocked, but they do not
+count as the required functional Privy integration."
+
+Why it is structural: the user signs in with email or a passkey, gets a
+self-custodial embedded EVM wallet on HyperEVM, that wallet is the vault's
+sole authority, and it signs the two value-moving actions Hyperliquid
+reserves for the master key (the agent approval that makes trading
+prompt-free, and the Core→EVM return of capital). The financial flow is
+"deposit into the vault → governed top-up straight into the Hyperliquid
+account → trade → return", all from one Privy wallet.
+
+Checklist:
+- [x] Privy as core: `app/src/lib/privy.tsx` wraps the app in `PrivyProvider` (email / passkey / wallet, embedded wallet created on login, HyperEVM chain), `evm-engine.ts` signs every vault transaction through the embedded wallet's EIP-1193 provider.
+- [x] Privy wallet used: the embedded wallet is the vault authority and the Hyperliquid master account.
+- [ ] Functional flow demonstrated: needs a Privy app ID (`HUMAN_ACTIONS.md` #1). Without it the app uses a pasted demo key on the same code path.
+- [x] Explanation: `docs/SPONSOR_INTEGRATIONS.md`.
+
+Not selected: "Best B2B financial product" (no organisation use case).
+
+### 3. Chainlink — "Best Confidential Workflow" ($2,000: up to 2 × $1,000)
 
 Why it is structural: a commitment device is only credible if the operator
 cannot cave. The verdict that pauses top-ups is signed by a key that exists
@@ -79,7 +118,6 @@ Not selected: "Best Chainlink-Powered Upgrade" is Continuity-only; the
 | Sponsor | Fit | Why not |
 |---|---|---|
 | Ledger (AI Agents × Ledger, $3,500) | 4/5 on paper: "systems that ask for a human before anything irreversible" | Must be "built on the Ledger Agent Stack, in particular… Key Ring CLI". No device in this environment; a hardware signer we cannot run would be theatre. The original design cut it for v1; revisit post-hackathon (Key Ring holding the verifier seed is the natural fit). |
-| Privy ($5,000) | 3/5 | "Best financial flow" could wrap the execution wallet in a Privy policy, but it duplicates the vault's own enforcement and needs app credentials; not load-bearing. |
 | World ($7,000) | 2/5 | Selfie Check as an abuse signal is peripheral; AgentKit is Continuity-only and World Chain/Base only. |
 | Arc (Circle) ($10,000) | 2/5 | Requires an EVM port to Arc; would abandon the Solana-native user (see `ARCHITECTURE_DECISION.md`). |
 | Hedera, 1inch, ENS, Uniswap | 1/5 | Different chains and different products (x402 services, Aqua LP strategies, ENSv2, Uniswap stack). |

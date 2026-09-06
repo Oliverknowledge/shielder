@@ -146,3 +146,91 @@ would make the Solana path first-class.
 
 **Remaining human step:** `export CRE_API_KEY=…` (or `cre login`), then the
 one-line simulate command in `cre/README.md`; capture the terminal output.
+
+
+---
+
+# 2026-09-06 additions: the Hyperliquid-first stack
+
+The sections above describe the Solana (v0) stack, which still runs unchanged.
+This section is what changed for the Hyperliquid-first build; where a claim
+is credential-gated it says so.
+
+## Privy — Best financial flow
+
+**Exact track:** Privy, "Best financial flow" ($2,500).
+
+**Files:** `app/src/lib/privy.tsx` (PrivyProvider: email / passkey / wallet
+login, embedded Ethereum wallet created on login, HyperEVM as default chain;
+a bridge that hands the embedded wallet's EIP-1193 provider to the engine),
+`app/src/lib/evm-engine.ts` (every vault transaction is signed by that
+wallet: activate, deposit, top-up, tighten, propose, cancel, cold transfer,
+exit), `app/src/pages/Welcome.tsx` (sign-in), `app/src/pages/Trade.tsx`
+(agent-key trading; the master approval is user-signed by the same wallet).
+
+**Why it matters to the user:** no seed phrase ceremony, one identity across
+the vault and the venue, and ordinary trading without prompts once an agent
+key is approved. Adding capital is the only thing that ever asks for a
+deliberate signature, which is exactly the friction the product wants.
+
+**Why it is load-bearing:** the embedded wallet is the vault's sole authority
+and the Hyperliquid master account. Remove it and the user is back to
+managing an EOA by hand.
+
+**The financial flow:** deposit USDC into the vault → governed top-up
+delivered by the vault into the user's Hyperliquid perps account
+(`CoreDepositWallet.depositFor`) → trade via an agent key → withdraw
+Core→EVM and return USDC to the vault. All signatures by the Privy wallet.
+
+**Verification:** set `VITE_PRIVY_APP_ID` (HUMAN_ACTIONS.md #1), open the
+app, sign in with email, complete the setup wizard, top up, watch the
+Hyperliquid account. Without an app ID the identical code path runs with a
+pasted demo key (Anvil dev key) and was verified end to end on Anvil.
+
+**Remaining blocker:** a Privy app ID (5 minutes, dashboard.privy.io).
+
+## The Graph — HyperEVM package (composable track evidence)
+
+**Files:** `substreams-evm/` (`substreams.yaml`, `src/lib.rs`, proto). Imports
+The Graph's foundational `ethereum-common@v0.3.3` package and uses its
+`index_events` block index as the `blockFilter` for both maps (`evt_addr:` of
+the vault contract and of native USDC), so blocks with nothing relevant are
+skipped before any decoding. Module shape is identical to the Solana package:
+typed events → registry store → capital flows (incl. USDC returns) → totals →
+profiles. Network: `hyper-evm` (Pinax on The Graph Market:
+`hyperevm.substreams.pinax.network:443`).
+
+**Standards leverage:** the same five modules run on Solana devnet and HyperEVM.
+The behaviour engine (`server/behaviour.ts`), the policy (`server/policy.ts`)
+and the CRE workflow consume `map_vault_flows` from either without change.
+
+**Remaining blocker:** a Graph Market key and a HyperEVM mainnet deployment
+of the vault (HUMAN_ACTIONS.md #2–#3). Testnet HyperEVM is not indexed by
+The Graph.
+
+## Chainlink CRE — EIP-712 verdicts
+
+**Files:** `cre/shield-risk/evm-verdict.ts` (dependency-light EIP-712 hashing
++ secp256k1 signing that runs in the enclave's JS runtime; verified against
+`ShieldVault.hashVerdict` and `ecrecover`), `cre/shield-risk/evaluate.ts`
+(`chain: "evm"` path), `cre/shield-risk/config.evm.json`, secret
+`SHIELD_EVM_VERIFIER_KEY` in `cre/secrets.yaml`.
+
+**Evidence produced this sprint:** `bun run cre/shield-risk/dryrun.ts --evm
+0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc` against the Anvil server with the
+server monitor disabled: the enclave function derived a $1,420 realised loss,
+signed verdict #1, the relayer landed it
+(`0x94d38cc9bd0e27468d9857a0db19de2755f24abfb2bb5afd29624db6da9e66ac` on the
+local chain) and the vault's cooldown armed (`cooldownReason = 2`).
+
+**Remaining blocker:** `cre workflow simulate` needs a Chainlink account
+(HUMAN_ACTIONS.md #4); the dry-run exercises the same function.
+
+## Hyperliquid (venue, not a sponsor)
+
+`server/hyperliquid.ts` reads any account's public history (ledger updates +
+fills) from the official info API and derives sessions, reloads after loss,
+typical and largest losing sessions, and a single data-backed insight used in
+onboarding and on the Behaviour screen. `app/src/lib/hyperliquid.ts` +
+`Trade.tsx` show live prices (real on every build) and place orders with an
+approved agent key (real Hyperliquid networks only; the local demo says so).

@@ -10,14 +10,24 @@
 import { readFileSync, existsSync } from "node:fs";
 import { evaluateVault, type EnclaveIO } from "./evaluate";
 
-const vault = process.argv[2] ?? JSON.parse(readFileSync(".shield/demo-state.localnet.json", "utf-8")).vault;
+const evm = process.argv.includes("--evm");
+const positional = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const vault = positional[0] ?? (evm ? JSON.parse(readFileSync(".shield/demo-state.evm.json", "utf-8")).authority : JSON.parse(readFileSync(".shield/demo-state.localnet.json", "utf-8")).vault);
 const deliver = !process.argv.includes("--no-deliver");
-const config = JSON.parse(readFileSync(new URL("./config.staging.json", import.meta.url), "utf-8")) as {
+const config = JSON.parse(readFileSync(new URL(evm ? "./config.evm.json" : "./config.staging.json", import.meta.url), "utf-8")) as {
   shieldApiUrl: string;
   programId: string;
   secretId: string;
   deliver: boolean;
+  chain?: "solana" | "evm";
+  chainId?: number;
 };
+if (evm) {
+  // point at the local Anvil deployment written by scripts/anvil-demo.ts
+  const st = JSON.parse(readFileSync(".shield/demo-state.evm.json", "utf-8")) as { vault: string; chainId: number };
+  config.programId = st.vault;
+  config.chainId = st.chainId;
+}
 
 // cre/.env → secrets (mirrors what the CLI simulator does)
 const envPath = new URL("../.env", import.meta.url).pathname;

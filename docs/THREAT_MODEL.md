@@ -154,3 +154,68 @@ add/remove; registration rules and the scam-address case; cold transfers,
 above-cap routing, full exit, substitution and stale exit; authorization on
 every mutating instruction. Seven behaviour-engine tests cover sessions,
 realised loss, streaks and reloads.
+
+
+---
+
+## 2026-09-06: ShieldVault.sol (HyperEVM / EVM)
+
+The invariants above hold unchanged for the Solidity port; this section
+records what is different on EVM and what was tested.
+
+### Differences that matter
+
+- **One contract, many vaults.** Vaults are keyed by the authority's address.
+  There is no owner, admin, pauser or upgrade path in the contract; the only
+  privileged party over a vault is its authority.
+- **Release paths.** Five, as before. Execution destinations registered with
+  `ROUTE_HYPERCORE` are paid via `CoreDepositWallet.depositFor(destination,
+  amount, PERPS)`; the vault approves exactly `amount` and the call credits
+  the destination's HyperCore account. `ROUTE_EVM` destinations and cold
+  wallets receive a plain ERC-20 transfer. State is updated before external
+  calls and every outbound function is `nonReentrant`.
+- **Verdicts.** EIP-712 (`RiskVerdict`, domain `ShieldVault/1/chainId/contract`)
+  recovered with `ecrecover`; high-s signatures and v ∉ {27, 28} are rejected.
+  Binding is the authority address in the struct; a verdict for vault A cannot
+  be replayed on vault B, and the domain pins the chain and the contract.
+- **Registry enumeration.** `getRegistryOwners` exists so clients need no log
+  scans; it is append-only.
+- **Reconfirmation.** `executeRuleChange` is the only way a weakening applies,
+  and only between `executeAfter` and `expiry` with an unchanged
+  `configVersion`; nothing applies by itself when the timer ends.
+
+### What Privy does and does not protect
+
+- Privy's embedded wallet is the authority. Privy's TEE-enforced policies can
+  additionally deny `HyperliquidTransaction:Withdraw` to non-vault
+  destinations and deny key export; we treat those as **defence in depth on
+  the trading side**, never as enforcement of the vault's rules.
+- Privy documents that a user can always export their key unless the wallet
+  is owned by a 2-of-2 quorum with the app. Shield does not co-own keys.
+  Exporting the key does not weaken any vault rule: the rules bind the key.
+
+### Attacks tested (contracts/test/ShieldVault.t.sol, 41 tests)
+
+Direct calls by a stranger; raw transfer path (none exists); unregistered
+and cold destinations for top-ups; floor breach; structuring below the daily
+limit; check order (cooldown → floor → velocity → threshold); gated top-up
+maturity and cancellation refunds; self-pause monotonicity and the 30-day cap;
+verdict below trigger, replayed (same and lower nonce), wrong signer,
+tampered, expired, from the future, without a monitor; verdict cannot shorten
+a cooldown and never bumps `configVersion`; instant tighten superseding a
+pending loosen; loosen maturity, expiry and delay floors; adding a destination
+waits and then works; removing the monitor waits; one proposal per category;
+cold transfer within cap during a cooldown, above cap, and sharing velocity;
+full exit maturity and destination swap after registration removal; exit to
+an execution wallet refused; anyone may deposit, nobody may withdraw.
+
+### Accepted limitations (EVM)
+
+- `depositFor` on testnet credits only addresses that exist on Hyperliquid
+  mainnet (Circle's rule); the contract cannot detect a silently failed
+  credit. On mainnet the credit is immediate.
+- The verdict is one enclave signature; a DON-signed report through the CRE
+  EVM forwarder is the production upgrade.
+- Anvil demos use mocks of USDC and the CoreDepositWallet with the documented
+  interfaces plus two demo-only functions (`withdrawToEvm`, `settleLoss`)
+  that stand in for HyperCore behaviour.

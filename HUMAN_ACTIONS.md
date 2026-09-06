@@ -1,73 +1,104 @@
 # Human actions
 
-Everything else is done and verified on a local validator. These five need
-an account, funds, or a camera that only you have. Total time: about 40
-minutes plus recording.
+Everything else is built and verified locally. These need an account, funds
+or a camera that only you have. Do them in this order; the first three are
+the ones that turn the Hyperliquid-first build from "runs on Anvil" into
+"runs on HyperEVM with real sponsor evidence". Time: about an hour plus the
+recording.
 
-## 1. Put ~4 SOL on the deploy key and deploy to devnet (10 min)
+## 1. Privy app ID (5 min) → real sign-in and embedded wallet
 
-Why: the public faucet rate-limited this key at 0 SOL; a 474 KB program
-needs ~3.3 SOL of rent.
+Why: the app's email/passkey sign-in and the self-custodial embedded wallet
+come from Privy. Without an app ID the app falls back to a pasted demo key.
 
-- Key: `HFt8yKqfAMiXYMLVTWZBCA22tQJW2TnMU1UidBVpJned` (`~/.config/solana/id.json`)
-- Faucet: https://faucet.solana.com (GitHub login, 5 SOL/8h) or `solana airdrop 2 --url devnet` until it works.
-- Then, from the repo root:
+- https://dashboard.privy.io → New app → copy the **App ID**.
+- In the app settings: enable **Ethereum embedded wallets** (create on login),
+  login methods email / passkey / wallet, and add `http://localhost:5174`
+  (and your deploy URL) to allowed origins.
+- Add to `app/.env.local`:
 
-```bash
-scripts/deploy.sh devnet        # deploys 4Z46Kz8ygX5Efw22ABbQ2LTf329N3nD2J81Z3CAY5Hyx
-scripts/deploy.sh finalize      # burns the upgrade authority (irreversible; required by the threat model)
-SHIELD_RPC_URL=https://api.devnet.solana.com bun run scripts/bootstrap-demo.ts
-SHIELD_RPC_URL=https://api.devnet.solana.com bun run server/index.ts &
-VITE_SHIELD_RPC_URL=https://api.devnet.solana.com bun run dev:app
+```
+VITE_PRIVY_APP_ID=<app id>
 ```
 
-Expected: `solana program show` prints `Authority: none`; the app's pill
-reads `devnet`; explorer links open on `?cluster=devnet`.
+Expected: the welcome screen shows "Continue with email, passkey or wallet";
+after login the account chip shows your email and an `0x…` embedded wallet.
 
-## 2. The Graph Market key → live Substreams (5 min)
+## 2. A Hyperliquid-active address + HYPE for gas (15 min) → HyperEVM
 
-Why: The Graph's prize requires live data from a Graph provider; the
-endpoint refuses unauthenticated streams.
+Why: HyperEVM testnet only serves addresses that have deposited on
+Hyperliquid mainnet, and HyperEVM mainnet is the only HyperEVM The Graph
+indexes. Gas is ~0.1 gwei, so a deployment costs a fraction of a cent.
 
-- Sign up (free, no card): https://thegraph.market/auth/signup → API key.
-- `substreams auth` (or paste the JWT), then:
+Pick one:
+
+**A. HyperEVM testnet (chain 998, free, but needs a mainnet-active address).**
+- From an address that has deposited on Hyperliquid mainnet, claim testnet USDC at
+  https://app.hyperliquid-testnet.xyz/drip (1,000 USDC, once).
+- Get testnet HYPE for gas from the QuickNode HyperEVM faucet (no account needed).
+- Move some USDC HyperCore → EVM (Hyperliquid testnet app: "Transfer to EVM").
+
+**B. HyperEVM mainnet (chain 999, tiny real funds, The Graph-indexed).**
+- Send ~$1 of HYPE and ~$50 USDC to the deploy key on HyperEVM. Real money:
+  keep the demo amounts small.
+
+Then, with `EVM_DEPLOYER_KEY` in your shell (never committed):
 
 ```bash
-export SUBSTREAMS_API_TOKEN=<jwt>
-SUBSTREAMS_START_SLOT=<slot of the vault's first devnet tx> bun run server/index.ts
-curl -s localhost:8787/api/health | jq .source     # expect "mode": "substreams", "connected": true
-cd substreams && substreams run shield-behavioral-memory-v0.2.0.spkg map_vault_flows -e devnet.sol.streamingfast.io:443 -s <slot> -t +500 -o jsonl
+cd contracts && forge install foundry-rs/forge-std --no-git && cd ..
+# USDC on HyperEVM testnet: 0x2B3370eE501B4a559b57D449569354196457D8Ab; CoreDepositWallet testnet: 0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206
+# (mainnet: CoreDepositWallet 0x6B9E773128f453f5c2C60935Ee2DE2CBc5390A24; USDC per Circle's HyperEVM listing)
+cd contracts && forge create src/ShieldVault.sol:ShieldVault --rpc-url https://rpc.hyperliquid-testnet.xyz/evm --private-key $EVM_DEPLOYER_KEY --constructor-args <USDC> <CoreDepositWallet> --broadcast && cd ..
 ```
+
+Write the printed contract address into `.shield/demo-state.evm.json`
+(`vault`, `usdc`, `coreDeposit: null`, `rpcUrl`, `chainId`, `authority`) or
+export `SHIELD_VAULT_ADDRESS`, `USDC_ADDRESS`, `EVM_RPC_URL`, `EVM_CHAIN_ID`,
+then:
+
+```bash
+SHIELD_EVM_VERIFIER_KEY=<fresh key> SHIELD_EVM_RELAYER_KEY=<funded key> bun run server:evm
+VITE_SHIELD_CHAIN=evm VITE_SHIELD_RPC_URL=https://rpc.hyperliquid-testnet.xyz/evm VITE_EVM_CHAIN_ID=998 bun run --cwd app vite
+```
+
+Expected: the setup wizard creates your vault with one transaction, a
+top-up lands in your Hyperliquid perps account within a block (visible on
+app.hyperliquid-testnet.xyz), and the Trade screen shows your real account.
+
+## 3. The Graph Market key (5 min) → live Substreams
+
+Why: both Graph prizes require live data from a Graph provider.
+
+- https://thegraph.market → sign up → API key → `substreams auth`.
+- Solana (v0 stack, devnet): `SUBSTREAMS_API_TOKEN=<jwt> bun run server` and
+  `cd substreams && substreams run shield-behavioral-memory-v0.2.0.spkg map_vault_flows -e devnet.sol.streamingfast.io:443 -s <slot> -t +500`.
+- HyperEVM mainnet: `cd substreams-evm && substreams run substreams.yaml map_vault_flows -e hyperevm.substreams.pinax.network:443 -s <deploy block> -t +200 -p map_shield_events="evt_addr:<vault>" -p map_vault_flows="evt_addr:<vault> || evt_addr:<usdc>"`.
 
 Keep the terminal output for the submission.
 
-## 3. Chainlink API key → CRE simulation (5 min)
+## 4. Chainlink API key (5 min) → CRE simulation evidence
 
-Why: every `cre` command, including `simulate`, needs an account.
-
-- https://app.chain.link → Account Settings → API key (or `cre login`).
+- https://app.chain.link → Account → API key (or `cre login`).
 
 ```bash
 export CRE_API_KEY=<key>
-bun run scripts/print-verifier-seed.ts >> cre/.env     # once
-VAULT=$(jq -r .vault .shield/demo-state.devnet.json)
-bun run client/demo.ts top-up 1500 && bun run client/demo.ts return 80   # fresh loss evidence
-cre workflow simulate cre/shield-risk --target staging-settings --non-interactive \
-  --trigger-index 0 --http-payload "{\"vault\":\"$VAULT\"}" -R cre -e cre/.env
+echo "SHIELD_EVM_VERIFIER_KEY=<the verifier key the vault pins>" >> cre/.env
+cre workflow simulate cre/shield-risk --target staging-settings --non-interactive --trigger-index 0 --http-payload '{"vault":"<authority address>"}' -R cre -e cre/.env
 ```
 
 Expected: the TEE banner, `[USER LOG] Enclave evaluation … triggered=true actionable=true`,
-`Verdict #N relayed on-chain: <sig>`. Keep the output. (Run the server with
-`SHIELD_MONITOR=0` first so the enclave is the only signer.)
+`Verdict #N relayed on-chain: 0x…`. Run the server with `SHIELD_MONITOR=0` so the
+enclave is the only signer. (The identical function already runs locally:
+`bun run cre/shield-risk/dryrun.ts --evm <authority>`.)
 
-## 4. Record the demo video (2–4 min, 720p+, no AI voice)
+## 5. Solana devnet (optional, 10 min) → the v0 stack live
 
-Follow `docs/DEMO_SCRIPT.md` (2-minute table). Screen-record at 1280 wide;
-speak the lines. Upload with the submission.
+`HFt8yKqfAMiXYMLVTWZBCA22tQJW2TnMU1UidBVpJned` needs ~4 SOL from
+https://faucet.solana.com, then `scripts/deploy.sh devnet`, `scripts/deploy.sh finalize`
+(irreversible), `SHIELD_RPC_URL=https://api.devnet.solana.com bun run scripts/bootstrap-demo.ts`.
 
-## 5. Submit on ETHGlobal before Sunday Sept 13, 12:00 pm EDT
+## 6. Record the video (2–4 min, 720p+, no AI voice) and submit
 
-- Track: Start Fresh, "Finalist and Partner Prizes".
-- Partner prizes: **The Graph** (AI Use Case, From Scratch; also Composable) and **Chainlink** (Best Confidential Workflow).
-- Paste from `docs/SUBMISSION.md`; feedback text is in `docs/SPONSOR_INTEGRATIONS.md`.
-- Make the repo public and push: `git push origin office-hours` (or merge to main first).
+Follow `docs/DEMO_SCRIPT.md`. Submit on ETHGlobal before **Sunday Sept 13,
+12:00 pm EDT** with partner prizes **The Graph**, **Privy**, **Chainlink**,
+pasting from `docs/SUBMISSION.md`. Push: `git push origin office-hours`.

@@ -7,7 +7,7 @@
     "test": "bun test tests/ server/",
     "typecheck": "bun run typecheck:app && bun run typecheck:node",
     "typecheck:app": "tsc -p app/tsconfig.json --noEmit",
-    "typecheck:node": "tsc --noEmit --strict --skipLibCheck --target es2022 --module esnext --moduleResolution bundler --types bun-types,node --lib es2022,dom client/shield-client.ts client/verdict.ts client/views.ts client/evm.ts client/solana-adapter.ts client/demo.ts client/recovery-cli.ts server/index.ts server/behaviour.ts server/policy.ts server/rpc-source.ts server/substreams-source.ts server/store.ts server/hyperliquid.ts server/evm-index.ts client/evm-demo.ts scripts/anvil-demo.ts scripts/bootstrap-demo.ts scripts/print-verifier-seed.ts cre/shield-risk/evaluate.ts cre/shield-risk/dryrun.ts tests/harness.ts tests/shield-vault.test.ts",
+    "typecheck:node": "tsc --noEmit --strict --skipLibCheck --target es2022 --module esnext --moduleResolution bundler --types bun-types,node --lib es2022,dom client/shield-client.ts client/verdict.ts client/views.ts client/evm.ts client/solana-adapter.ts client/demo.ts client/recovery-cli.ts server/index.ts server/behaviour.ts server/policy.ts server/rpc-source.ts server/substreams-source.ts server/store.ts server/hyperliquid.ts server/evm-index.ts client/evm-demo.ts scripts/anvil-demo.ts scripts/bootstrap-demo.ts scripts/print-verifier-seed.ts cre/shield-risk/evaluate.ts cre/shield-risk/evm-verdict.ts cre/shield-risk/dryrun.ts tests/harness.ts tests/shield-vault.test.ts",
     "lint": "bun run typecheck",
     "build": "bun run build:program && bun run build:app",
     "build:program": "cargo build-sbf --manifest-path programs/shield-vault/Cargo.toml",
