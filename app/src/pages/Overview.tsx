@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { useShield, API_URL, NETWORK } from "../lib/shield";
@@ -9,6 +9,10 @@ import { useAction } from "../lib/actions";
 import { getJson } from "../lib/api";
 import { describeLoosen } from "../lib/rules";
 import { describeEvents } from "../lib/events";
+import { GetMeSafe } from "../components/Safety";
+import { usePrefs } from "../lib/prefs";
+import { useAttempts } from "../lib/attempts";
+import { executeRuleChangeIx, executeRuleChangeWithRegistrationIx } from "../../../client/shield-client";
 
 export function Overview() {
   const { vault, balance, proposals, wallets, server, serverLoading, serverError, now, vaultAddress, signer, walletUsdc, health, refresh } = useShield();
@@ -17,6 +21,15 @@ export function Overview() {
   const [depositOpen, setDepositOpen] = useState(false);
   const [depositAmount, setDepositAmount] = useState("");
   const [faucetBusy, setFaucetBusy] = useState(false);
+  const [safeOpen, setSafeOpen] = useState(false);
+  const [prefs, setPrefs] = usePrefs(signer?.publicKey.toBase58() ?? null);
+  const attempts = useAttempts(vaultAddress?.toBase58() ?? null);
+  const [sessionStart] = useState(() => prefs.lastSeenAt);
+  useEffect(() => {
+    // remember this visit so the next one can say "last night"
+    if (signer) setPrefs({ lastSeenAt: now });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signer?.publicKey.toBase58()]);
   if (!vault || !vaultAddress || !signer) return null;
 
   const deposit = async () => {
@@ -62,11 +75,15 @@ export function Overview() {
   const lossToday = h24 && Number(h24.realisedLoss) > 0 ? h24.realisedLoss : null;
   const labelOf = (owner: string) => wallets.find((w) => w.owner === owner)?.label ?? `${owner.slice(0, 4)}…`;
 
+  const approaching = !cooldownActive && vault.velocityThreshold > 0n && remainingToday * 4n <= vault.velocityThreshold;
   const status: { tone: Tone; label: string } = cooldownActive
-    ? { tone: "blocked", label: byRule ? "Loss cooldown" : "Paused by you" }
-    : pending.length
-      ? { tone: "pending", label: "Change pending" }
-      : { tone: "protect", label: "Protected" };
+    ? { tone: "blocked", label: byRule ? "Loss cooldown active" : "Paused by you" }
+    : approaching
+      ? { tone: "pending", label: remainingToday === 0n ? "Daily limit reached" : "Approaching your limit" }
+      : { tone: "protect", label: "Within your plan" };
+  const matured = proposals.filter((p) => p.category !== ProposalCategory.TopUp && Number(p.executeAfter) <= now && p.configVersionAtCreation === vault.configVersion);
+  const blockedSinceLastVisit = attempts.filter((a) => a.ts > sessionStart && a.ts < now - 600);
+  const lastNight = blockedSinceLastVisit.length > 0 ? blockedSinceLastVisit[0] : null;
 
   const refill = (() => {
     if (cooldownActive) {
@@ -142,19 +159,64 @@ export function Overview() {
         </div>
 
         <div className="row wrap" style={{ marginTop: 16, gap: 8 }}>
-          <Link to="/top-up" className="btn">Top up</Link>
-          <button className="btn btn-secondary" onClick={() => setDepositOpen(true)}>Deposit</button>
+          <Link to="/top-up" className="btn">Add funds</Link>
+          <button className="btn btn-secondary" onClick={() => setSafeOpen(true)}><Icon name="protection" size={16} /> Get me safe</button>
+          <button className="btn btn-ghost" onClick={() => setDepositOpen(true)}>Deposit</button>
         </div>
       </section>
 
-      {(pending.length > 0 || (topUpPending && cooldownActive)) && (
+      {(matured.length > 0 || lastNight) && (
+        <section className="morning" style={{ marginTop: 16 }}>
+          <p className="eyebrow">{lastNight ? "Since you were last here" : "Waiting for your decision"}</p>
+          {lastNight && (
+            <>
+              <h2 className="title-l" style={{ marginTop: 8 }}>Shield held the line.</h2>
+              <div className="stat-grid" style={{ marginTop: 14 }}>
+                <div className="stat"><div className="k">Blocked top-up{blockedSinceLastVisit.length === 1 ? "" : "s"}</div><div className="v">{usd(blockedSinceLastVisit.reduce((a, b) => a + BigInt(b.amount), 0n))}</div></div>
+                <div className="stat"><div className="k">Stayed protected</div><div className="v">{usd(balance)}</div></div>
+                {h24 && <div className="stat"><div className="k">Net flow, last 24h</div><div className="v">{usd(BigInt(h24.returned) - BigInt(h24.sent), { sign: true })}</div></div>}
+                <div className="stat"><div className="k">Attempts</div><div className="v">{blockedSinceLastVisit.length}</div></div>
+              </div>
+            </>
+          )}
+          {matured.map((p) => {
+            const lines = p.action.kind === "loosen" ? describeLoosen(p.action.params, vault) : [];
+            const what = lines.map((l) => `${l.name.toLowerCase()}${l.from ? ` from ${l.from}` : ""} to ${l.to}`).join(", ") || (p.action.kind === "uninstallVault" ? "leave Shield" : "make a change");
+            const apply = () => {
+              if (p.action.kind === "loosen") {
+                const owner = p.action.params.registerOwner;
+                const ix = owner ? executeRuleChangeWithRegistrationIx({ authority: signer.publicKey, vault: vaultAddress, owner }) : executeRuleChangeIx({ authority: signer.publicKey, vault: vaultAddress });
+                void run("Change applied", [ix]).catch(() => null);
+              }
+            };
+            return (
+              <div key={p.address.toBase58()} style={{ marginTop: lastNight ? 22 : 8 }}>
+                <p className="lead" style={{ color: "var(--paper)" }}>
+                  On {clockTime(Number(p.createdAt), now)} you asked to {what}. <b>Still want to?</b>
+                </p>
+                <p className="small" style={{ opacity: 0.7, marginTop: 6 }}>Nothing changed by itself. Your current protection stays until you choose.</p>
+                <div className="row wrap" style={{ marginTop: 14, gap: 8 }}>
+                  <button className="btn btn-protect" disabled={!!busy} onClick={() => void run("Kept your protection", [cancelProposalIx({ authority: signer.publicKey, vault: vaultAddress, category: p.category })]).catch(() => null)}>Keep my protection</button>
+                  {p.action.kind === "loosen" ? (
+                    <button className="btn btn-secondary" disabled={!!busy} onClick={apply}>Change it</button>
+                  ) : (
+                    <Link to="/protection" className="btn btn-secondary">Review in Protection</Link>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </section>
+      )}
+
+      {pending.filter((p) => !matured.includes(p)).length > 0 && (
         <section className="section">
           <div className="section-head">
             <h2>Pending changes</h2>
             <span className="tiny muted hide-m">Current protection stays active until a change completes</span>
           </div>
           <div className="list">
-            {pending.map((p) => (
+            {pending.filter((p) => !matured.includes(p)).map((p) => (
               <PendingRow key={p.address.toBase58()} p={p} now={now} vault={vault} busy={!!busy} onCancel={() => void run("Cancelled", [cancelProposalIx({ authority: signer.publicKey, vault: vaultAddress, category: p.category })]).catch(() => null)} />
             ))}
           </div>
@@ -216,6 +278,8 @@ export function Overview() {
           </div>
         </section>
       </div>
+
+      <GetMeSafe open={safeOpen} onClose={() => setSafeOpen(false)} context="home" />
 
       <Sheet open={depositOpen} onClose={() => setDepositOpen(false)} title="Deposit into the treasury">
         <div className="stack">

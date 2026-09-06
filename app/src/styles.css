@@ -402,3 +402,45 @@ textarea.input { min-height: 84px; resize: vertical; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+
+/* ---------------- hold-to-confirm ---------------- */
+.hold { position: relative; overflow: hidden; width: 100%; min-height: 60px; border-radius: 999px; border: 0; background: var(--ink); color: var(--paper); font-weight: 600; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 12px; user-select: none; -webkit-user-select: none; touch-action: none; transition: transform 120ms var(--ease); }
+.hold:active, .hold.holding { transform: scale(0.99); }
+.hold:disabled { opacity: 0.4; cursor: not-allowed; }
+.hold-fill { position: absolute; inset: 0; background: var(--protect); transform-origin: left center; }
+.hold-label, .hold-hint { position: relative; }
+.hold-hint { font-size: 12px; font-weight: 500; opacity: 0.7; }
+.hold-protect { background: #185c40; }
+
+/* ---------------- reset (90 seconds) ---------------- */
+.reset-screen { position: fixed; inset: 0; z-index: 45; background: var(--paper); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+.reset-ring { position: relative; width: 168px; height: 168px; margin: 8px auto 0; }
+.reset-ring svg { transform: rotate(-90deg); }
+.reset-ring .t { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 44px; font-weight: 600; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.reset-facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 24px; margin-top: 26px; text-align: left; width: min(420px, 100%); }
+.reset-facts .k { font-size: 12.5px; color: var(--ink-3); }
+.reset-facts .v { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.reset-actions { display: flex; flex-direction: column; gap: 10px; width: min(420px, 100%); margin-top: 28px; }
+
+/* ---------------- big blocked ---------------- */
+.not-tonight { font-size: clamp(40px, 9vw, 64px); line-height: 0.98; letter-spacing: -0.04em; font-weight: 700; }
+.fact-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.fact-grid > div { padding: 12px 14px; border-radius: var(--r-m); background: var(--paper); border: 1px solid var(--line); min-width: 0; }
+.fact-grid .k { font-size: 12px; color: var(--ink-3); }
+.fact-grid .v { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; margin-top: 2px; white-space: nowrap; }
+.quote-box { border-left: 3px solid var(--ink); padding: 8px 14px; font-family: var(--serif); font-size: 21px; line-height: 1.3; color: var(--ink); }
+.status-plan { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+.trouble { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border: 1px solid var(--line-2); border-radius: var(--r-l); background: var(--surface); cursor: pointer; text-align: left; transition: border-color 120ms, background 120ms; width: 100%; }
+.trouble:hover { border-color: var(--ink); }
+.trouble.on { border-color: var(--ink); background: var(--paper-2); }
+.trouble .box { width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid var(--line-2); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; color: var(--paper); }
+.trouble.on .box { background: var(--ink); border-color: var(--ink); }
+.trouble .t { font-weight: 600; }
+.trouble .b { font-size: 13px; color: var(--ink-2); margin-top: 2px; }
+.morning { border-radius: var(--r-xl); padding: 24px 26px; background: var(--ink); color: var(--paper); }
+.morning .eyebrow { color: rgba(247,246,242,0.6); }
+.morning .stat .k { color: rgba(247,246,242,0.6); }
+.morning .stat .v { color: var(--paper); }
+.morning .btn-secondary { background: transparent; color: var(--paper); border-color: rgba(247,246,242,0.35); }
+.morning .btn-secondary:hover { background: rgba(247,246,242,0.1); }
+.morning .btn-protect { background: var(--protect-2); color: var(--ink); }

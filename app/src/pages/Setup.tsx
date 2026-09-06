@@ -7,10 +7,11 @@ import { useShield, API_URL, NETWORK } from "../lib/shield";
 import { useAction } from "../lib/actions";
 import { CapitalBar, Dot, Field, Icon, MoneyInput, Stepper, useToast } from "../components/ui";
 import { usd, hoursLabel, short } from "../lib/format";
+import { TROUBLES, usePrefs, type Trouble } from "../lib/prefs";
 import { depositIx, initializeVaultIx, registerOwnerIx, usdcToRaw, vaultPda, OwnerType } from "../../../client/shield-client";
 import { getJson } from "../lib/api";
 
-const STEPS = ["Wallets", "Protection", "Review", "Activate"];
+const STEPS = ["You", "Wallets", "Protection", "Review", "Activate"];
 
 interface Draft {
   executionAddress: string;
@@ -57,6 +58,20 @@ export function Setup() {
   const [activated, setActivated] = useState(false);
   const [deposited, setDeposited] = useState(false);
   const [faucetBusy, setFaucetBusy] = useState(false);
+  const [prefs, setPrefs] = usePrefs(signer?.publicKey.toBase58() ?? null);
+  const toggleTrouble = (k: Trouble) => {
+    const has = prefs.troubles.includes(k);
+    const troubles = has ? prefs.troubles.filter((t) => t !== k) : [...prefs.troubles, k];
+    setPrefs({ troubles });
+    // Personalise the proposed mandate from what the user says gets them into trouble.
+    const dep = n(draft.deposit) || 10000;
+    const patch: Partial<Draft> = {};
+    if (troubles.includes("chasing")) { patch.lossTrigger = String(Math.round(dep * 0.075)); patch.lossCooldownHours = 24; }
+    if (troubles.includes("reloads") || troubles.includes("allin")) patch.daily = String(Math.round(dep * 0.15));
+    if (troubles.includes("savings")) patch.floor = String(Math.round(dep * 0.8));
+    if (troubles.includes("rushed")) patch.thresholdPct = 10;
+    if (Object.keys(patch).length) set(patch);
+  };
 
   useEffect(() => {
     if (health?.executionWallet && !draft.executionAddress) setDraft((d) => ({ ...d, executionAddress: health.executionWallet! }));
@@ -66,8 +81,8 @@ export function Setup() {
   const n = (s: string) => Number(s || 0);
 
   const valid = useMemo(() => {
-    if (step === 0) return isPubkey(draft.executionAddress) && (draft.coldAddress === "" || isPubkey(draft.coldAddress));
-    if (step === 1) return n(draft.floor) >= 0 && n(draft.daily) > 0 && n(draft.lossTrigger) > 0 && draft.thresholdPct > 0 && draft.thresholdPct <= 100;
+    if (step === 1) return isPubkey(draft.executionAddress) && (draft.coldAddress === "" || isPubkey(draft.coldAddress));
+    if (step === 2) return n(draft.floor) >= 0 && n(draft.daily) > 0 && n(draft.lossTrigger) > 0 && draft.thresholdPct > 0 && draft.thresholdPct <= 100;
     return true;
   }, [step, draft]);
 
@@ -157,6 +172,36 @@ export function Setup() {
         {step === 0 && (
           <div className="stack">
             <div className="page-head" style={{ marginBottom: 0 }}>
+              <h1>What usually gets you into trouble?</h1>
+              <p>Pick anything that's true. Shield proposes your rules from it. Nothing here is a diagnosis; it's what you already know about yourself when you're calm.</p>
+            </div>
+            <div className="stack-s">
+              {TROUBLES.map((t) => {
+                const on = prefs.troubles.includes(t.key);
+                return (
+                  <button key={t.key} type="button" className={`trouble${on ? " on" : ""}`} onClick={() => toggleTrouble(t.key)} aria-pressed={on}>
+                    <span className="box">{on && <Icon name="check" size={14} />}</span>
+                    <span>
+                      <span className="t">{t.title}</span>
+                      <span className="b" style={{ display: "block" }}>{t.body}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="card stack">
+              <div>
+                <p style={{ fontWeight: 600 }}>What should Shield remind you when it blocks you?</p>
+                <p className="small dim" style={{ marginTop: 2 }}>Past-you will say it, not an app. Something like: "You've already lost what you agreed to lose. Don't add another $1,500."</p>
+              </div>
+              <textarea className="input" rows={3} value={prefs.calmMessage} onChange={(e) => setPrefs({ calmMessage: e.target.value.slice(0, 280) })} placeholder="If you're seeing this…" />
+            </div>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="stack">
+            <div className="page-head" style={{ marginBottom: 0 }}>
               <h1>Where does your money go?</h1>
               <p>Shield can only send to wallets you register now. Your trading wallet gets top-ups under your rules. A cold wallet is where you exit to.</p>
             </div>
@@ -181,11 +226,11 @@ export function Setup() {
           </div>
         )}
 
-        {step === 1 && (
+        {step === 2 && (
           <div className="stack">
             <div className="page-head" style={{ marginBottom: 0 }}>
               <h1>Choose your protection</h1>
-              <p>Set these while you're calm. Tightening any of them later is instant. Loosening waits 24 hours.</p>
+              <p>{prefs.troubles.length ? `Proposed from what you told us${prefs.troubles.includes("chasing") ? ": a tighter loss trigger and a full-day pause" : ""}${prefs.troubles.includes("reloads") || prefs.troubles.includes("allin") ? ", a smaller daily limit" : ""}${prefs.troubles.includes("savings") ? ", a higher floor" : ""}. Edit anything.` : "Set these while you're calm."} Tightening any of them later is instant. Loosening waits 24 hours.</p>
             </div>
             <div className="card stack">
               <Field label="Capital you'll deposit">
@@ -251,7 +296,7 @@ export function Setup() {
           </div>
         )}
 
-        {step === 2 && (
+        {step === 3 && (
           <div className="stack">
             <div className="page-head" style={{ marginBottom: 0 }}>
               <h1>Your rules, in plain English</h1>
@@ -277,7 +322,7 @@ export function Setup() {
           </div>
         )}
 
-        {step === 3 && (
+        {step === 4 && (
           <div className="stack">
             <div className="page-head" style={{ marginBottom: 0 }}>
               <h1>{activated ? "Shield is active" : "Activate Shield"}</h1>
@@ -319,13 +364,13 @@ export function Setup() {
         )}
       </motion.div>
 
-      {step < 3 && (
+      {step < 4 && (
         <div className="row-between" style={{ marginTop: 24 }}>
           <button className="btn btn-ghost" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}>
             Back
           </button>
           <button className="btn" onClick={() => setStep((s) => s + 1)} disabled={!valid || loading}>
-            {step === 2 ? "Looks right" : "Continue"}
+            {step === 3 ? "Looks right" : step === 0 && prefs.troubles.length === 0 ? "Skip" : "Continue"}
           </button>
         </div>
       )}
