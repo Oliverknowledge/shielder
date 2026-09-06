@@ -129,52 +129,59 @@ export function capitalFlows(ledger: LedgerUpdate[], user: string): Array<{ time
   return out;
 }
 
+/** Inactivity that separates two trading sessions. */
+export const SESSION_GAP_MS = 6 * 60 * 60 * 1000;
+
 /**
- * Sessions: a session opens with capital coming in while no session is open,
- * accumulates fills and further deposits ("reloads"), and closes when capital
- * goes out. Realised PnL is the venue's closedPnl over the session's fills.
+ * Sessions: clusters of activity (fills, deposits, withdrawals) separated by
+ * at least SESSION_GAP_MS of inactivity, which is how people actually use a
+ * perps account (capital stays deposited across many sessions). Within a
+ * session: deposits after the first event are reloads; a deposit while the
+ * session's running PnL is negative is a reload after loss; withdrawals are
+ * capital returned. Realised PnL is the venue's own closedPnl minus fees.
  */
 export function deriveSessions(ledger: LedgerUpdate[], fills: Fill[], user: string): HlSession[] {
-  const flows = capitalFlows(ledger, user);
+  type Ev = { time: number; kind: "fill" | "in" | "out"; amount: number; pnl: number; hash: string };
+  const events: Ev[] = [];
+  for (const f of capitalFlows(ledger, user)) events.push({ time: f.time, kind: f.amount > 0 ? "in" : "out", amount: Math.abs(f.amount), pnl: 0, hash: f.hash });
+  for (const f of fills) events.push({ time: f.time, kind: "fill", amount: 0, pnl: Number(f.closedPnl) - Number(f.fee), hash: f.hash });
+  events.sort((a, b) => a.time - b.time);
+
   const sessions: HlSession[] = [];
   let cur: HlSession | null = null;
-  let fi = 0;
-  const applyFillsUntil = (t: number) => {
-    while (fi < fills.length && fills[fi].time <= t) {
-      const f = fills[fi++];
-      if (!cur) continue;
-      const pnl = Number(f.closedPnl) - Number(f.fee);
-      cur.realisedPnl += pnl;
-      cur.fills += 1;
-      if (cur.realisedPnl < 0 && cur.firstLossAt === null) cur.firstLossAt = f.time;
-      if (f.hash && cur.hashes.length < 12) cur.hashes.push(f.hash);
-    }
-  };
-  for (const flow of flows) {
-    applyFillsUntil(flow.time);
-    if (flow.amount > 0) {
-      if (!cur) {
-        cur = { openedAt: flow.time, closedAt: null, deployed: flow.amount, returned: 0, realisedPnl: 0, fills: 0, reloads: 0, reloadsAfterLoss: 0, firstLossAt: null, firstReloadAfterLossAt: null, hashes: [flow.hash] };
-      } else {
-        cur.deployed += flow.amount;
-        cur.reloads += 1;
-        if (cur.realisedPnl < 0) {
-          cur.reloadsAfterLoss += 1;
-          if (cur.firstReloadAfterLossAt === null) cur.firstReloadAfterLossAt = flow.time;
-        }
-        if (cur.hashes.length < 12) cur.hashes.push(flow.hash);
-      }
-    } else if (cur) {
-      cur.returned += -flow.amount;
-      cur.closedAt = flow.time;
-      if (cur.hashes.length < 12) cur.hashes.push(flow.hash);
+  let last = 0;
+  for (const e of events) {
+    if (cur && e.time - last > SESSION_GAP_MS) {
+      cur.closedAt = last;
       sessions.push(cur);
       cur = null;
     }
+    if (!cur) {
+      cur = { openedAt: e.time, closedAt: null, deployed: 0, returned: 0, realisedPnl: 0, fills: 0, reloads: 0, reloadsAfterLoss: 0, firstLossAt: null, firstReloadAfterLossAt: null, hashes: [] };
+      if (e.kind === "in") cur.deployed += e.amount;
+    } else if (e.kind === "in") {
+      cur.deployed += e.amount;
+      cur.reloads += 1;
+      if (cur.realisedPnl < 0) {
+        cur.reloadsAfterLoss += 1;
+        if (cur.firstReloadAfterLossAt === null) cur.firstReloadAfterLossAt = e.time;
+      }
+    }
+    if (e.kind === "out") cur.returned += e.amount;
+    if (e.kind === "fill") {
+      cur.realisedPnl += e.pnl;
+      cur.fills += 1;
+      if (cur.realisedPnl < 0 && cur.firstLossAt === null) cur.firstLossAt = e.time;
+    }
+    if (e.hash && cur.hashes.length < 12 && !cur.hashes.includes(e.hash)) cur.hashes.push(e.hash);
+    last = e.time;
   }
-  applyFillsUntil(Number.MAX_SAFE_INTEGER);
-  if (cur) sessions.push(cur);
-  return sessions;
+  if (cur) {
+    // still open if the last activity was recent; otherwise closed at its last event
+    if (Date.now() - last > SESSION_GAP_MS) cur.closedAt = last;
+    sessions.push(cur);
+  }
+  return sessions.filter((s) => s.fills > 0 || s.deployed > 0);
 }
 
 export function summarise(address: string, network: HlNetwork, sessions: HlSession[], now = Date.now()): HlProfile {
@@ -188,7 +195,7 @@ export function summarise(address: string, network: HlNetwork, sessions: HlSessi
   const reloadDelays = sessions.filter((s) => s.firstLossAt && s.firstReloadAfterLossAt).map((s) => (s.firstReloadAfterLossAt! - s.firstLossAt!) / 60000);
   const sessionsWithReloadAfterLoss = sessions.filter((s) => s.reloadsAfterLoss > 0).length;
   const sessionsWithTwoPlusReloads = sessions.filter((s) => s.reloads >= 2).length;
-  const typical = median(sessions.map((s) => s.deployed));
+  const typical = median(sessions.filter((s) => s.deployed > 0).map((s) => s.deployed));
   const largest = losing[0] ? { pnl: losing[0].realisedPnl, deployed: losing[0].deployed, openedAt: losing[0].openedAt } : null;
 
   let insight: string | null = null;
@@ -197,8 +204,10 @@ export function summarise(address: string, network: HlNetwork, sessions: HlSessi
       insight = `${worstWithReload} of your ${worstN.length} largest losing sessions involved another reload.`;
     } else if (sessionsWithReloadAfterLoss > 0) {
       insight = `You added more money while already down in ${sessionsWithReloadAfterLoss} of your ${sessions.length} sessions.`;
-    } else if (typical !== null && largest) {
+    } else if (largest && sessions.filter((s) => s.deployed > 0).length >= 3 && typical !== null) {
       insight = `Your typical session deploys ${usd(typical)}. Your largest losing session cost ${usd(largest.pnl)}.`;
+    } else if (largest) {
+      insight = `Your largest losing session cost ${usd(largest.pnl)}, out of ${usd(deposited)} you've deposited in total.`;
     } else if (typical !== null) {
       insight = `Your typical session deploys ${usd(typical)} across ${sessions.length} sessions.`;
     }

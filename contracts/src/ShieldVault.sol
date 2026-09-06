@@ -210,6 +210,7 @@ contract ShieldVault {
 
     mapping(address => Vault) internal vaults;
     mapping(address => mapping(address => RegistryEntry)) internal registry;
+    mapping(address => address[]) internal registryOwners; // enumeration for clients
     mapping(address => mapping(uint8 => Proposal)) internal proposals;
 
     uint256 private _lock = 1;
@@ -266,6 +267,10 @@ contract ShieldVault {
 
     function getRegistryEntry(address authority, address owner) external view returns (RegistryEntry memory) {
         return registry[authority][owner];
+    }
+
+    function getRegistryOwners(address authority) external view returns (address[] memory) {
+        return registryOwners[authority];
     }
 
     function getProposal(address authority, uint8 category) external view returns (Proposal memory) {
@@ -650,6 +655,7 @@ contract ShieldVault {
             e.active = true;
             e.registeredAt = uint64(block.timestamp);
             e.label = label;
+            registryOwners[authority].push(owner);
         }
         emit RegistrationChanged(authority, owner, kind, route, true, label);
     }

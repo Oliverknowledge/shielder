@@ -9,7 +9,7 @@ import { CapitalBar, Dot, Field, Icon, MoneyInput, Stepper, useToast } from "../
 import { usd, hoursLabel, short } from "../lib/format";
 import { TROUBLES, usePrefs, type Trouble } from "../lib/prefs";
 import { depositIx, initializeVaultIx, registerOwnerIx, usdcToRaw, vaultPda, OwnerType } from "../../../client/shield-client";
-import { getJson } from "../lib/api";
+import { getJson, type HlProfileJson } from "../lib/api";
 
 const STEPS = ["You", "Wallets", "Protection", "Review", "Activate"];
 
@@ -59,6 +59,25 @@ export function Setup() {
   const [deposited, setDeposited] = useState(false);
   const [faucetBusy, setFaucetBusy] = useState(false);
   const [prefs, setPrefs] = usePrefs(signer?.publicKey.toBase58() ?? null);
+  const [hlAddress, setHlAddress] = useState("");
+  const [hlBusy, setHlBusy] = useState(false);
+  const [hlProfile, setHlProfile] = useState<HlProfileJson | null>(null);
+  const [hlError, setHlError] = useState<string | null>(null);
+  const analyseHl = async () => {
+    const addr = hlAddress.trim();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) { setHlError("That doesn't look like a Hyperliquid (EVM) address."); return; }
+    setHlBusy(true); setHlError(null);
+    try {
+      const p = await getJson<HlProfileJson>(`${API_URL}/api/hyperliquid/${addr}?network=mainnet`);
+      setHlProfile(p);
+      setPrefs({ hyperliquidAddress: addr });
+      // let the data pre-tick the troubles it supports
+      const add = p.suggestions.map((x) => x.key).filter((k) => !prefs.troubles.includes(k));
+      add.forEach((k) => toggleTrouble(k));
+    } catch (e) {
+      setHlError(e instanceof Error ? e.message : String(e));
+    } finally { setHlBusy(false); }
+  };
   const toggleTrouble = (k: Trouble) => {
     const has = prefs.troubles.includes(k);
     const troubles = has ? prefs.troubles.filter((t) => t !== k) : [...prefs.troubles, k];
@@ -172,8 +191,37 @@ export function Setup() {
         {step === 0 && (
           <div className="stack">
             <div className="page-head" style={{ marginBottom: 0 }}>
-              <h1>What usually gets you into trouble?</h1>
-              <p>Pick anything that's true. Shield proposes your rules from it. Nothing here is a diagnosis; it's what you already know about yourself when you're calm.</p>
+              <h1>Let Shield learn how you actually trade</h1>
+              <p>Paste your Hyperliquid address and Shield reads your real history from the venue: sessions, reloads, what came back. Nothing is uploaded anywhere but the public API you already trade on.</p>
+            </div>
+            <div className="card stack">
+              <Field label="Hyperliquid address" hint="Your account (master) address. Mainnet history, read-only.">
+                <div className="row" style={{ gap: 8 }}>
+                  <input className="input mono" value={hlAddress} onChange={(e) => setHlAddress(e.target.value.trim())} placeholder="0x…" />
+                  <button className="btn btn-secondary" disabled={hlBusy || !hlAddress} onClick={() => void analyseHl()}>{hlBusy ? "Reading…" : "Analyse"}</button>
+                </div>
+              </Field>
+              {hlError && <p className="tiny c-blocked">{hlError}</p>}
+              {hlProfile && (
+                <div className="stack-s">
+                  {hlProfile.insight ? (
+                    <div className="quote-box">{hlProfile.insight}</div>
+                  ) : (
+                    <p className="small dim">{hlProfile.totals.sessions === 0 ? "No deposits or trades found for this address on mainnet yet." : "Not enough closed sessions to say anything you'd trust yet."}</p>
+                  )}
+                  <div className="stat-grid">
+                    <div className="stat"><div className="k">Sessions</div><div className="v">{hlProfile.totals.sessions}</div></div>
+                    <div className="stat"><div className="k">Typical session</div><div className="v">{hlProfile.typicalSessionSize === null ? "—" : usd(hlProfile.typicalSessionSize)}</div></div>
+                    <div className="stat"><div className="k">Largest losing session</div><div className="v c-blocked">{hlProfile.largestLosingSession ? usd(Math.abs(hlProfile.largestLosingSession.pnl)) : "—"}</div></div>
+                    <div className="stat"><div className="k">Reloads after a loss</div><div className="v">{hlProfile.sessionsWithReloadAfterLoss}</div></div>
+                  </div>
+                  {hlProfile.suggestions.length > 0 && <p className="small dim">Shield pre-selected the patterns below that your history supports. Untick anything you disagree with.</p>}
+                </div>
+              )}
+            </div>
+            <div>
+              <h2 className="title">What usually gets you into trouble?</h2>
+              <p className="dim" style={{ marginTop: 4 }}>Pick anything that's true. Shield proposes your rules from it. Nothing here is a diagnosis; it's what you already know about yourself when you're calm.</p>
             </div>
             <div className="stack-s">
               {TROUBLES.map((t) => {

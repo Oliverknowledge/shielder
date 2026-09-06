@@ -161,3 +161,34 @@ export async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   }
   return (await res.json()) as T;
 }
+
+export interface HlSessionJson {
+  openedAt: number;
+  closedAt: number | null;
+  deployed: number;
+  returned: number;
+  realisedPnl: number;
+  fills: number;
+  reloads: number;
+  reloadsAfterLoss: number;
+  firstLossAt: number | null;
+  firstReloadAfterLossAt: number | null;
+  hashes: string[];
+}
+
+export interface HlProfileJson {
+  address: string;
+  network: "mainnet" | "testnet";
+  asOf: number;
+  sessions: HlSessionJson[];
+  totals: { deposited: number; withdrawn: number; realisedPnl: number; fills: number; sessions: number };
+  typicalSessionSize: number | null;
+  largestLosingSession: { pnl: number; deployed: number; openedAt: number } | null;
+  sessionsWithReloadAfterLoss: number;
+  sessionsWithTwoPlusReloads: number;
+  medianMinutesToReloadAfterLoss: number | null;
+  worstSessionsWithReload: { worst: number; withReload: number };
+  insight: string | null;
+  suggestions: Array<{ key: "chasing" | "reloads" | "savings"; text: string }>;
+  source: "hyperliquid-info-api";
+}

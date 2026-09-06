@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useShield, API_URL } from "../lib/shield";
 import { Dot, ExplorerLink, Pill, Sheet, Skeleton, useToast } from "../components/ui";
 import { usd, ago, dateTime, short, timeOnly, dayLabel, hoursLabel } from "../lib/format";
 import { OwnerType } from "../../../client/shield-client";
-import { getJson, type EvidenceJson } from "../lib/api";
+import { getJson, type EvidenceJson, type HlProfileJson } from "../lib/api";
+import { usePrefs } from "../lib/prefs";
 
 const KIND_LABEL: Record<string, string> = {
   TOP_UP_INSTANT: "Top-up",
@@ -15,8 +16,16 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 export function Behaviour() {
-  const { server, serverError, serverLoading, wallets, vault, now } = useShield();
+  const { server, serverError, serverLoading, wallets, vault, now, signer } = useShield();
   const toast = useToast();
+  const [prefs] = usePrefs(signer?.publicKey.toBase58() ?? null);
+  const [hl, setHl] = useState<HlProfileJson | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!prefs.hyperliquidAddress) { setHl(null); return; }
+    getJson<HlProfileJson>(`${API_URL}/api/hyperliquid/${prefs.hyperliquidAddress}?network=mainnet`).then((p) => { if (!cancelled) setHl(p); }).catch(() => null);
+    return () => { cancelled = true; };
+  }, [prefs.hyperliquidAddress]);
   const [evidence, setEvidence] = useState<EvidenceJson | null>(null);
   const [showAllFlows, setShowAllFlows] = useState(false);
   const labelOf = (owner: string) => wallets.find((w) => w.owner === owner)?.label ?? short(owner);
@@ -107,6 +116,25 @@ export function Behaviour() {
           </>
         )}
       </section>
+
+      {hl && hl.totals.sessions > 0 && (
+        <section className="section">
+          <div className="section-head">
+            <h2>Your pattern on Hyperliquid</h2>
+            <span className="tiny muted">{short(hl.address, 6)} · mainnet · read from the venue</span>
+          </div>
+          {hl.insight && <div className="quote-box" style={{ marginBottom: 14 }}>{hl.insight}</div>}
+          <div className="stat-grid">
+            <div className="stat"><div className="k">Typical session</div><div className="v">{hl.typicalSessionSize === null ? "—" : usd(hl.typicalSessionSize)} deployed</div></div>
+            <div className="stat"><div className="k">Largest losing session</div><div className="v c-blocked">{hl.largestLosingSession ? usd(Math.abs(hl.largestLosingSession.pnl)) : "—"}</div></div>
+            <div className="stat"><div className="k">Reload after first loss</div><div className="v">{hl.medianMinutesToReloadAfterLoss === null ? "never" : `${Math.round(hl.medianMinutesToReloadAfterLoss)} min`}</div></div>
+            <div className="stat"><div className="k">Sessions with 2+ reloads</div><div className="v">{hl.sessionsWithTwoPlusReloads}</div></div>
+          </div>
+          {hl.worstSessionsWithReload.worst >= 2 && (
+            <p className="dim" style={{ marginTop: 12 }}>{hl.worstSessionsWithReload.withReload} of your {hl.worstSessionsWithReload.worst} worst sessions involved a second reload.</p>
+          )}
+        </section>
+      )}
 
       <section className="section">
         <div className="section-head">
