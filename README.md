@@ -34,6 +34,14 @@ The app is chain-agnostic (`client/views.ts`, `app/src/lib/engine.ts`);
 every screen, including the landing page, the "Not tonight" block, Get me
 safe, the 90-second reset and the morning-after reconfirmation, runs on both.
 
+**Shield is not a trading venue.** There is no order entry, no market list and
+no leverage control anywhere in the app: the user trades on Hyperliquid, and
+the primary action on Home is "Open Hyperliquid ↗". Shield is the control layer
+around the capital they decided to keep out of that account — it holds the
+protected balance, releases bankroll under rules they set while calm, and shows
+the venue's own account data next to it (read from Hyperliquid's info API,
+never inferred from HyperEVM).
+
 ## Run the Hyperliquid-first stack locally (3 minutes)
 
 Prerequisites: Bun ≥ 1.2, Foundry (`curl -L https://foundry.paradigm.xyz | bash && foundryup`).
@@ -52,18 +60,46 @@ key (`0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`,
 a public dev key). Then the hero sequence from a second terminal:
 
 ```bash
-bun run demo:evm top-up 1500   # instant: lands in Axiom's Hyperliquid account (mock on Anvil)
-bun run demo:evm loss 1420     # DEMO: the venue settles a loss against that account
-bun run demo:evm return 80     # Axiom withdraws Core→EVM and sends $80 back: a $1,420 realised loss
+bun run demo:evm top-up 1500   # instant: released into the venue account (mock CoreDepositWallet on Anvil)
+bun run demo:evm loss 1420     # DEMO (Anvil only): the venue settles a loss against that account
+bun run demo:evm return 80     # DEMO (Anvil only): $80 comes back Core→EVM: a $1,420 realised loss
                                # …within one poll the monitor signs an EIP-712 verdict and the vault arms an 18h cooldown
 bun run demo:evm top-up 500    # ❌ rejected on-chain: CooldownActive → the app shows NOT TONIGHT
 bun run demo:evm loosen daily=3000   # weakening change: review in 24h, nothing changes by itself
 bun run demo:evm scoreboard
 ```
 
-With a Privy app ID and a Hyperliquid-active address the same app runs on
-HyperEVM with real sign-in, a real embedded wallet and real trades:
-`HUMAN_ACTIONS.md` #1–#2.
+## Run against the live HyperEVM testnet deployment
+
+`ShieldVault.sol` is deployed on HyperEVM testnet (chain 998) at
+[`0xcdB6d631A00857584e70a21d800f51C5776302Fe`](https://rpc.hyperliquid-testnet.xyz/evm),
+deploy tx `0x67ffb6531f406758758adb98fb81008f1888e6793b9a39fb79bde9ee6df66ebc`
+(block 63561837), constructed over Circle's test USDC
+`0x2B3370eE501B4a559b57D449569354196457D8Ab` and CoreDepositWallet
+`0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206`. `.env.example` carries the
+matching config.
+
+```bash
+cp .env.example .env                    # already points at chain 998
+SHIELD_PORT=8788 bun run server:evm &   # indexer + monitor + relayer + API on :8788
+bun run dev:app:hyperevm                # http://localhost:5174
+```
+
+Welcome → "Continue with a demo key (hyperevm-testnet)" → paste the vault
+authority's key. Overview reads the live contract: floor $6,000, daily limit
+$2,000, loss rule $1,000 → 18h, the Hyperliquid account (HyperCore route)
+and a safe wallet registered. The vault holds $0 until someone drips testnet USDC into it, which
+needs a Hyperliquid-mainnet-active address (`HUMAN_ACTIONS.md` #2b).
+
+Redeploying needs two HyperEVM specifics, both handled by the scripts: the
+~5.4M-gas deployment does not fit in a small block, so `bun run
+hyperevm:big-blocks on|off` toggles the deploy key's block type, and the public
+RPC caps `eth_getLogs` at 50 blocks and meters requests, so the indexer paces
+itself there. `bun run bootstrap:hyperevm` initializes a vault and its
+destinations against an already-deployed contract.
+
+With a Privy app ID the same app runs with real sign-in and a real embedded
+wallet: `HUMAN_ACTIONS.md` #1.
 
 ## Run the Solana stack locally
 
@@ -89,14 +125,14 @@ bun run cre/shield-risk/dryrun.ts --evm <authority>   # the enclave function, lo
 
 | Claim | Status |
 |---|---|
-| ShieldVault.sol enforces every rule in `docs/THREAT_MODEL.md`; no owner/admin/upgrade | Verified: 41 Foundry tests + the live Anvil sequence above |
-| The vault funds the user's Hyperliquid account directly (`depositFor`) | Verified against a mock of Circle's CoreDepositWallet with the documented interface; HyperEVM testnet/mainnet needs a Hyperliquid-active address (`HUMAN_ACTIONS.md` #2) |
-| App: landing, onboarding (real Hyperliquid history insight), Home, Trade (live Hyperliquid prices), NOT TONIGHT, Get me safe, reset, Protection, Behaviour, Activity, mobile | Verified in a headless browser on both builds; production build passes |
-| EVM server indexes logs, derives behaviour, signs and relays EIP-712 verdicts | Verified live on Anvil (verdict #1 relayed, cooldown armed, next top-up rejected) |
+| ShieldVault.sol enforces every rule in `docs/THREAT_MODEL.md`; no owner/admin/upgrade | Verified: 41 Foundry tests + the live Anvil sequence above. Deployed to HyperEVM testnet; bytecode, `usdc()`, `coreDeposit()` and the EIP-712 domain separator read back correctly on chain 998 |
+| The vault funds the user's Hyperliquid account directly (`depositFor`) | Verified against a mock of Circle's CoreDepositWallet on Anvil. On HyperEVM testnet the deployed vault holds Circle's real CoreDepositWallet, confirmed by reading `coreDeposit()` back; moving money through it needs testnet USDC (`HUMAN_ACTIONS.md` #2b) |
+| App: landing, onboarding (real Hyperliquid history insight), Home, NOT TONIGHT, See what happened, 90-second reset, Get me safe, Protection, Behaviour, Activity, mobile | Verified in a headless browser on both builds at 320–1280 px; production build passes |
+| EVM server indexes logs, derives behaviour, signs and relays EIP-712 verdicts | Verified live on Anvil (verdict #1 relayed, cooldown armed, next top-up rejected). Against the HyperEVM testnet deployment the same server indexes the real vault's events and serves them to the app; relaying a verdict there waits on funded flows (#2b) |
 | CRE confidential workflow signs EVM verdicts the vault accepts | Verified via `dryrun.ts --evm` (source `cre`, relayed on-chain). `cre workflow simulate` needs a Chainlink account (#4) |
 | The Graph: Solana package builds and streams from The Graph Market; EVM package composes `ethereum-common` | Builds verified. Live streaming needs a Graph Market key (#3); HyperEVM indexing is mainnet-only |
-| Privy sign-in + embedded wallet + Hyperliquid agent trading | Code paths built and typechecked; needs a Privy app ID (#1) and a Hyperliquid-active address (#2) to run |
-| Real Hyperliquid orders | Order ticket works with an approved agent key on Hyperliquid testnet/mainnet; the local demo says so instead of faking it |
+| Privy sign-in + embedded wallet | Code paths built and typechecked; needs a Privy app ID (#1) to run. Privy governs the Shield wallet and its signers only: it makes no claim over an external Hyperliquid account |
+| Live Hyperliquid account data | Equity, positions, fills and session PnL are read from Hyperliquid's own info API for the registered account, on every build. Shield has no order entry: trading happens on Hyperliquid |
 
 ## How it fits together
 
@@ -105,7 +141,7 @@ bun run cre/shield-risk/dryrun.ts --evm <authority>   # the enclave function, lo
                                                floor · 24h limit · large-move pause · cooldown · registry · delays
                                                       │ instantTopUp → CoreDepositWallet.depositFor(user)
                                                       ▼
-                                             user's Hyperliquid account ◄── agent key trades, no prompts
+                                             user's Hyperliquid account ◄── the user trades here, on Hyperliquid
                                                       │ returns: Core→EVM, USDC transfer back to the vault
                                                       ▼
    The Graph Substreams (HyperEVM) ──flows──► Shield server: sessions → realised loss → verdict → relay

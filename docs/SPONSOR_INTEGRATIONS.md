@@ -18,7 +18,7 @@ Products" ($5,000).
 | Requirement | Status | Where |
 |---|---|---|
 | "Use The Graph as a load-bearing part of the project… the agent/app uses The Graph (Subgraphs, the Subgraph MCP, or Substreams) as its source of blockchain data." | Done | `substreams/` package (7 modules), consumed by `server/substreams-source.ts` via `@substreams/core` |
-| "Consume live data from a Graph provider, for example… streaming Substreams via The Graph Market. Mocked, local-only, or static datasets do not qualify." | Wired; needs the user's API key | Endpoint `devnet.sol.streamingfast.io:443` (The Graph Market, Solana devnet). `SUBSTREAMS_API_TOKEN` switches `/api/health` `source.mode` from `rpc` to `substreams`. Human action #2 |
+| "Consume live data from a Graph provider, for example… streaming Substreams via The Graph Market. Mocked, local-only, or static datasets do not qualify." | Wired; needs the user's API key | Endpoints `SUBSTREAMS_SOLANA_ENDPOINT=devnet.sol.streamingfast.io:443` and `SUBSTREAMS_HYPEREVM_ENDPOINT=hyperevm.substreams.pinax.network:443` (mainnet), one shared Graph Market JWT `SUBSTREAMS_API_TOKEN` (`server/substreams-config.ts`). The JWT switches `/api/health` `source.mode` from `rpc` to `substreams` on both servers. Human action #2 |
 | "Do meaningful work with the data: reasoning, decisions, automation" | Done | `server/behaviour.ts` (sessions, realised loss, streaks, reload-after-loss), `server/policy.ts` (the user's rule → signed verdict), on-chain `apply_risk_verdict` (cooldown) |
 | "Open-source the code with a clear README… public repository plus a short demo video (two to four minutes)" | Code done; video is a human action | `substreams/README.md`, `README.md` |
 | "Select the pool that matches how you built" | Start Fresh | first commit 2026-09-04 10:50 UTC |
@@ -43,7 +43,7 @@ Products" ($5,000).
 (`substreams publish`) needs the same account.
 
 **How it is used in the product:** the Behaviour screen ("You sent $1,500 to
-Axiom. $80 came back."), the Overview's loss strip and "What happened
+Hyperliquid. $80 came back."), the Overview's loss strip and "What happened
 recently" feed, the top-up blocked card ("You've realised $1,420 in losses in
 the last hour"), and the monitor's verdict all come from flows the pipeline
 classifies. Remove it and none of those exist.
@@ -166,7 +166,7 @@ a bridge that hands the embedded wallet's EIP-1193 provider to the engine),
 `app/src/lib/evm-engine.ts` (every vault transaction is signed by that
 wallet: activate, deposit, top-up, tighten, propose, cancel, cold transfer,
 exit), `app/src/pages/Welcome.tsx` (sign-in), `app/src/pages/Trade.tsx`
-(agent-key trading; the master approval is user-signed by the same wallet).
+(the Shield wallet and the signers Privy governs; Privy makes no claim over an external Hyperliquid account).
 
 **Why it matters to the user:** no seed phrase ceremony, one identity across
 the vault and the venue, and ordinary trading without prompts once an agent
@@ -179,7 +179,7 @@ managing an EOA by hand.
 
 **The financial flow:** deposit USDC into the vault → governed top-up
 delivered by the vault into the user's Hyperliquid perps account
-(`CoreDepositWallet.depositFor`) → trade via an agent key → withdraw
+(`CoreDepositWallet.depositFor`) → the user trades on Hyperliquid → withdraw
 Core→EVM and return USDC to the vault. All signatures by the Privy wallet.
 
 **Verification:** set `VITE_PRIVY_APP_ID` (HUMAN_ACTIONS.md #1), open the
@@ -233,4 +233,4 @@ fills) from the official info API and derives sessions, reloads after loss,
 typical and largest losing sessions, and a single data-backed insight used in
 onboarding and on the Behaviour screen. `app/src/lib/hyperliquid.ts` +
 `Trade.tsx` show live prices (real on every build) and place orders with an
-approved agent key (real Hyperliquid networks only; the local demo says so).
+Hyperliquid's own info API: equity, positions, fills and session PnL for the registered account. Shield has no order entry.

@@ -1,10 +1,13 @@
 # Human actions
 
-Everything else is built and verified locally. These need an account, funds
-or a camera that only you have. Do them in this order; the first three are
-the ones that turn the Hyperliquid-first build from "runs on Anvil" into
-"runs on HyperEVM with real sponsor evidence". Time: about an hour plus the
-recording.
+Everything else is built and verified. These need an account, funds or a
+camera that only you have. Time: about 40 minutes plus the recording.
+
+**Step 2 is done.** `ShieldVault.sol` is live on HyperEVM testnet (chain 998)
+at `0xcdB6d631A00857584e70a21d800f51C5776302Fe`, the vault for
+`0x05a7a130869a793719BB6B341009ea3B70588DCb` is initialized with its two
+destinations, and `.env` points the server and app at it. What is left there is
+the USDC drip (step 2b), which needs a Hyperliquid-mainnet-active address.
 
 ## 1. Privy app ID (5 min) → real sign-in and embedded wallet
 
@@ -15,7 +18,7 @@ come from Privy. Without an app ID the app falls back to a pasted demo key.
 - In the app settings: enable **Ethereum embedded wallets** (create on login),
   login methods email / passkey / wallet, and add `http://localhost:5174`
   (and your deploy URL) to allowed origins.
-- Add to `app/.env.local`:
+- Add to the repo-root `.env` (gitignored; `app/vite.config.mts` reads it via `envDir`):
 
 ```
 VITE_PRIVY_APP_ID=<app id>
@@ -24,55 +27,94 @@ VITE_PRIVY_APP_ID=<app id>
 Expected: the welcome screen shows "Continue with email, passkey or wallet";
 after login the account chip shows your email and an `0x…` embedded wallet.
 
-## 2. A Hyperliquid-active address + HYPE for gas (15 min) → HyperEVM
+## 2. HyperEVM testnet deployment — DONE
 
-Why: HyperEVM testnet only serves addresses that have deposited on
-Hyperliquid mainnet, and HyperEVM mainnet is the only HyperEVM The Graph
-indexes. Gas is ~0.1 gwei, so a deployment costs a fraction of a cent.
+`ShieldVault.sol` is deployed and wired up. For the record:
 
-Pick one:
+| | |
+|---|---|
+| Contract | `0xcdB6d631A00857584e70a21d800f51C5776302Fe` |
+| Deploy tx | `0x67ffb6531f406758758adb98fb81008f1888e6793b9a39fb79bde9ee6df66ebc` (block 63561837, 5,364,724 gas) |
+| Chain | HyperEVM testnet, chain id 998, `https://rpc.hyperliquid-testnet.xyz/evm` |
+| Deployer / authority | `0x05a7a130869a793719BB6B341009ea3B70588DCb` |
+| Constructor args | USDC `0x2B3370eE501B4a559b57D449569354196457D8Ab`, CoreDepositWallet `0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206` |
 
-**A. HyperEVM testnet (chain 998, free, but needs a mainnet-active address).**
-- From an address that has deposited on Hyperliquid mainnet, claim testnet USDC at
-  https://app.hyperliquid-testnet.xyz/drip (1,000 USDC, once).
-- Get testnet HYPE for gas from the QuickNode HyperEVM faucet (no account needed).
-- Move some USDC HyperCore → EVM (Hyperliquid testnet app: "Transfer to EVM").
+Two things about HyperEVM that the deployment turned up, in case you redeploy:
 
-**B. HyperEVM mainnet (chain 999, tiny real funds, The Graph-indexed).**
-- Send ~$1 of HYPE and ~$50 USDC to the deploy key on HyperEVM. Real money:
-  keep the demo amounts small.
+- **Big blocks are required.** ShieldVault costs ~5.4M gas and HyperEVM's small
+  blocks cap out around 2-3M, so the deploy key has to opt into big blocks
+  (~1/min, 30M gas) first and opt back out afterwards so ordinary vault
+  transactions confirm in a second again:
 
-Then, with `EVM_DEPLOYER_KEY` in your shell (never committed):
+  ```bash
+  EVM_DEPLOYER_KEY=0x… bun run hyperevm:big-blocks on
+  cd contracts && forge create src/ShieldVault.sol:ShieldVault \
+    --rpc-url https://rpc.hyperliquid-testnet.xyz/evm --private-key $EVM_DEPLOYER_KEY \
+    --gas-limit 6000000 --legacy --broadcast \
+    --constructor-args 0x2B3370eE501B4a559b57D449569354196457D8Ab 0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206
+  cd .. && EVM_DEPLOYER_KEY=0x… bun run hyperevm:big-blocks off
+  # then: EVM_DEPLOYER_KEY=0x… SHIELD_VAULT_ADDRESS=0x… bun run bootstrap:hyperevm
+  ```
+
+  `evmUserModify` is a Hyperliquid L1 action, so it fails with "User does not
+  exist" until the address has an account on HyperCore. Sending a little native
+  HYPE to `0x2222222222222222222222222222222222222222` on HyperEVM creates one.
+
+- **The public RPC is metered.** `eth_getLogs` is capped at 50 blocks and bursts
+  come back as `rate limited`, so the indexer paces itself there (see the
+  pacing knobs at the bottom of `.env.example`).
+
+Run it:
 
 ```bash
-cd contracts && forge install foundry-rs/forge-std --no-git && cd ..
-# USDC on HyperEVM testnet: 0x2B3370eE501B4a559b57D449569354196457D8Ab; CoreDepositWallet testnet: 0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206
-# (mainnet: CoreDepositWallet 0x6B9E773128f453f5c2C60935Ee2DE2CBc5390A24; USDC per Circle's HyperEVM listing)
-cd contracts && forge create src/ShieldVault.sol:ShieldVault --rpc-url https://rpc.hyperliquid-testnet.xyz/evm --private-key $EVM_DEPLOYER_KEY --constructor-args <USDC> <CoreDepositWallet> --broadcast && cd ..
+SHIELD_PORT=8788 bun run server:evm    # indexer + monitor + relayer + API on :8788
+bun run dev:app:hyperevm               # http://localhost:5174
 ```
 
-Write the printed contract address into `.shield/demo-state.evm.json`
-(`vault`, `usdc`, `coreDeposit: null`, `rpcUrl`, `chainId`, `authority`) or
-export `SHIELD_VAULT_ADDRESS`, `USDC_ADDRESS`, `EVM_RPC_URL`, `EVM_CHAIN_ID`,
-then:
+In the app: Welcome → "Continue with a demo key (hyperevm-testnet)" → paste the
+deploy key. Overview reads the live vault: floor $6,000, daily limit $2,000,
+loss rule $1,000 → 18h, Axiom and Ledger registered.
 
-```bash
-SHIELD_EVM_VERIFIER_KEY=<fresh key> SHIELD_EVM_RELAYER_KEY=<funded key> bun run server:evm
-VITE_SHIELD_CHAIN=evm VITE_SHIELD_RPC_URL=https://rpc.hyperliquid-testnet.xyz/evm VITE_EVM_CHAIN_ID=998 bun run --cwd app vite
-```
+## 2a. Which key opens the funded vault — DONE, but read this
 
-Expected: the setup wizard creates your vault with one transaction, a
-top-up lands in your Hyperliquid perps account within a block (visible on
-app.hyperliquid-testnet.xyz), and the Trade screen shows your real account.
+`ShieldVault.sol` is multi-tenant: one contract, one vault per owner address.
+Signing in with a key that owns no vault, or an empty one, shows a real but
+empty dashboard, which looks like a bug and is not.
+
+| Owner | Balance | Floor | Use it? |
+|---|---|---|---|
+| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | **$600** | $500 | **yes** — key in `.shield/hyperevm-keys.json` under `authority` |
+| `0x05a7a130869a793719BB6B341009ea3B70588DCb` | $0 | $6,000 | no — the floor exceeds anything you can deposit |
+
+`0x05a7…` is your Hyperliquid account and the funder; it holds the gas and is
+the vault's registered trading destination. Its own vault was created earlier
+with a $6,000 floor sized for a $10,000 demo, and lowering a floor waits 24
+hours by design, so a second vault was the only same-day path.
+
+The welcome screen now names the stack's vault under the demo-key box, so a
+mismatch is visible before you sign in.
+
+Live state (2026-09-06):
+
+- Vault holds **$600** USDC on HyperEVM; floor $500, $100/day, $50 loss → 12h.
+- Trading destination is your Hyperliquid account; **$347** equity, read live.
+- A **$100 release ran end to end**: vault $700 → $600, your HyperCore USDC
+  131.844 → 231.844, through Circle's real `CoreDepositWallet.depositFor`.
 
 ## 3. The Graph Market key (5 min) → live Substreams
 
 Why: both Graph prizes require live data from a Graph provider.
 
-- https://thegraph.market → sign up → API key → `substreams auth`.
-- Solana (v0 stack, devnet): `SUBSTREAMS_API_TOKEN=<jwt> bun run server` and
-  `cd substreams && substreams run shield-behavioral-memory-v0.2.0.spkg map_vault_flows -e devnet.sol.streamingfast.io:443 -s <slot> -t +500`.
-- HyperEVM mainnet: `cd substreams-evm && substreams run substreams.yaml map_vault_flows -e hyperevm.substreams.pinax.network:443 -s <deploy block> -t +200 -p map_shield_events="evt_addr:<vault>" -p map_vault_flows="evt_addr:<vault> || evt_addr:<usdc>"`.
+- https://thegraph.market → sign up → API key (a JWT). Put it in `.env` (gitignored) as
+  `SUBSTREAMS_API_TOKEN=<jwt>`. One JWT serves both stacks; the endpoints are separate:
+  `SUBSTREAMS_SOLANA_ENDPOINT=devnet.sol.streamingfast.io:443` and
+  `SUBSTREAMS_HYPEREVM_ENDPOINT=hyperevm.substreams.pinax.network:443` (see `.env.example`).
+- Verify authentication: `bun run substreams:hyperevm` (streams the last 20 HyperEVM
+  mainnet blocks) and `bun run substreams:solana <slot>`. Without the JWT the same
+  commands fail with an authentication error, which is the negative control.
+- Servers: `bun run server` (Solana) switches `/api/health` `source.mode` to `substreams`
+  as soon as the JWT is set; `bun run server:evm` does the same on HyperEVM mainnet
+  (`EVM_CHAIN_ID=999`), since The Graph does not index the HyperEVM testnet or Anvil.
 
 Keep the terminal output for the submission.
 
