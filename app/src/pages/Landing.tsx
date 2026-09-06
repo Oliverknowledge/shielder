@@ -267,11 +267,11 @@ function Product() {
           <p className="l-eyebrow">The moment it matters</p>
           <h2 className="l-h2" style={{ marginTop: 14 }}>Not tonight.</h2>
           <p className="l-lead" style={{ marginTop: 20 }}>
-            When you reach for capital you decided not to risk, Shield doesn't lecture. It shows what happened, what's still protected, and when you can decide again. Every block is enforced on-chain, with the rejection there for anyone to verify.
+            When you reach for capital you decided not to risk, Shield doesn't lecture. It shows what happened, what's still protected, and when you can decide again. The refusal comes from the vault contract itself, so it holds whatever you do next.
           </p>
           <div className="l-insights">
             <div className="l-insight warn"><i /><span>You've realised $1,420 in losses in the last hour. Your 18-hour cooldown is active until 6:02 PM.</span></div>
-            <div className="l-insight"><i /><span>You sent $1,500 to Axiom. $80 came back. Shield remembers the real numbers, from the chain, not your memory of them.</span></div>
+            <div className="l-insight"><i /><span>You sent $1,500 to Hyperliquid. $80 came back. Shield remembers the real numbers, from the chain, not your memory of them.</span></div>
             <div className="l-insight"><i /><span>Yesterday at 22:13 you asked to remove your loss protection. Still want to?</span></div>
           </div>
         </div>
@@ -310,7 +310,7 @@ function Final() {
           </h2>
           <Link to="/welcome" className="btn btn-lg">Open Shield</Link>
           <p className="l-lead" style={{ margin: "26px auto 0", maxWidth: "44ch", fontSize: 15 }}>
-            Self-custodial. Enforced by an immutable on-chain program. Remembered by The Graph. Judged inside a Chainlink confidential enclave that can only ever make you safer.
+            Self-custodial. Enforced by an immutable on-chain contract. Its memory is a Substreams package on The Graph. Its loss verdicts are signed inside a Chainlink confidential enclave that can only ever make you safer.
           </p>
         </div>
       </section>

@@ -47,11 +47,18 @@ const DEMO_ENABLED = (process.env.SHIELD_DEMO ?? (NETWORK === "hyperevm" ? "0" :
 const MONITOR_ENABLED = (process.env.SHIELD_MONITOR ?? "1") === "1";
 const HL_NETWORK: HlNetwork | null = CHAIN_ID === 999 ? "mainnet" : CHAIN_ID === 998 ? "testnet" : null;
 const IS_HYPEREVM = CHAIN_ID === 998 || CHAIN_ID === 999;
-// The public HyperEVM RPC caps eth_getLogs at 50 blocks and meters requests by
-// weight, so a long catch-up bursts straight into "rate limited". There the
-// indexer polls slower, walks a bounded window per poll, spaces the chunk
-// requests out, and backs off when the node pushes back (see `rpc` below).
-const LOG_CHUNK = IS_HYPEREVM ? 50n : 50_000n;
+// The public HyperEVM RPC caps eth_getLogs at under 200 blocks and meters
+// requests by weight, so a long catch-up bursts straight into "rate limited".
+// There the indexer polls slower, walks a bounded window per poll, spaces the
+// chunk requests out, and backs off when the node pushes back (see `rpc` below).
+//
+// Backfilling any real span is impossible at 50 blocks a request. EVM_LOG_INDEX_RPC_URL
+// points the *log reads only* at an endpoint that allows bulk ranges (dRPC's free
+// tier serves 10,000 blocks a call, which covers this contract's whole history in
+// three requests); with EVM_LOG_CHUNK raised to match, a cold index takes seconds
+// instead of an hour. Everything that signs or sends still goes to EVM_RPC_URL, so
+// the canonical endpoint stays the one of record.
+const LOG_CHUNK = BigInt(process.env.EVM_LOG_CHUNK || (IS_HYPEREVM ? 50 : 50_000));
 const POLL_MS = Number(process.env.SHIELD_POLL_MS || (IS_HYPEREVM ? 15000 : 4000));
 const RPC_GAP_MS = Number(process.env.EVM_RPC_GAP_MS || (IS_HYPEREVM ? 500 : 0));
 const MAX_BLOCKS_PER_POLL = BigInt(process.env.EVM_MAX_BLOCKS_PER_POLL || (IS_HYPEREVM ? 100 : 10_000_000));
@@ -66,9 +73,13 @@ const VERIFIER_KEY = (process.env.SHIELD_EVM_VERIFIER_KEY || (IS_ANVIL ? "0x7c85
 const RELAYER_KEY = (process.env.SHIELD_EVM_RELAYER_KEY || (IS_ANVIL ? "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a" : "")) as Hex;
 const EXECUTION_KEY = (process.env.EVM_EXECUTION_KEY || (IS_ANVIL ? "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" : "")) as Hex;
 
+const LOG_RPC_URL = process.env.EVM_LOG_INDEX_RPC_URL || RPC_URL;
+
 const cfg: EvmConfig = { rpcUrl: RPC_URL, chainId: CHAIN_ID, vault: VAULT, usdc: USDC };
 const chain = viemChain(cfg);
 const pub = createPublicClient({ chain, transport: http(RPC_URL) });
+/** Reads historical logs only. Identical to `pub` unless EVM_LOG_INDEX_RPC_URL is set. */
+const logClient = LOG_RPC_URL === RPC_URL ? pub : createPublicClient({ chain, transport: http(LOG_RPC_URL) });
 const verifier = VERIFIER_KEY ? privateKeyToAccount(VERIFIER_KEY) : null;
 const relayer = RELAYER_KEY ? privateKeyToAccount(RELAYER_KEY) : null;
 const execution = EXECUTION_KEY ? privateKeyToAccount(EXECUTION_KEY) : null;
@@ -119,15 +130,22 @@ const policyView = (v: VaultView): PolicyView => ({
 const TRANSFER = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const isRateLimited = (e: unknown) => /rate limit|32005|exceeds defined limit/i.test(e instanceof Error ? e.message : String(e));
+/**
+ * Errors worth trying again. "rate limited" is the public HyperEVM RPC pushing
+ * back; the rest are the transient upstream failures a load-balanced provider
+ * returns while explicitly asking you to retry. Treating those as fatal aborts a
+ * whole backfill and rolls the cursor back to where it started.
+ */
+const isTransient = (e: unknown) =>
+  /rate limit|32005|exceeds defined limit|temporary internal error|please retry|try again|timeout|socket hang up|ECONNRESET|502|503|504/i.test(e instanceof Error ? e.message : String(e));
 
-/** One RPC read, retried with exponential backoff while the node says "rate limited". */
+/** One RPC read, retried with exponential backoff while the node pushes back. */
 async function rpc<T>(fn: () => Promise<T>, attempts = 5): Promise<T> {
   for (let i = 0; ; i++) {
     try {
       return await fn();
     } catch (e) {
-      if (i >= attempts - 1 || !isRateLimited(e)) throw e;
+      if (i >= attempts - 1 || !isTransient(e)) throw e;
       await sleep(500 * 2 ** i);
     }
   }
@@ -183,6 +201,28 @@ const labelOf = (hex: Hex) => {
   return bytes.subarray(0, end === -1 ? bytes.length : end).toString("utf8");
 };
 
+/**
+ * One poll asks for the same address-scoped logs once to discover vaults and
+ * then twice more per vault, even though the requests are byte-identical — the
+ * vault filter happens in memory afterwards. Against an RPC that refuses any
+ * getLogs range over ~200 blocks, that is 2N+1 chunked scans of the same range
+ * where 2 would do, and it is why backfilling a few thousand blocks saturates
+ * the endpoint. The cache lives for one tick and is dropped at the start of the
+ * next, so nothing is ever served stale.
+ */
+let logCache = new Map<string, Promise<unknown[]>>();
+const resetLogCache = () => logCache.clear();
+
+function cachedLogs<T>(tag: string, from: bigint, to: bigint, fetchRange: (a: bigint, b: bigint) => Promise<T[]>): Promise<T[]> {
+  const k = `${tag}:${from}:${to}`;
+  let p = logCache.get(k);
+  if (!p) {
+    p = getLogsChunked(fetchRange, from, to) as Promise<unknown[]>;
+    logCache.set(k, p);
+  }
+  return p as Promise<T[]>;
+}
+
 async function getLogsChunked<T>(fetchRange: (from: bigint, to: bigint) => Promise<T[]>, from: bigint, to: bigint): Promise<T[]> {
   const out: T[] = [];
   let first = true;
@@ -199,7 +239,7 @@ async function getLogsChunked<T>(fetchRange: (from: bigint, to: bigint) => Promi
 async function discoverVaults(head: bigint): Promise<void> {
   const from = BigInt(cursors["__discover"] ?? START_BLOCK.toString());
   if (from > head) return;
-  const logs = await getLogsChunked((a, b) => pub.getLogs({ address: VAULT, event: parseAbiItem("event VaultInitialized(address indexed vault, address indexed authority, address usdc, uint64 protectedFloor, uint64 velocityThreshold)"), fromBlock: a, toBlock: b }), from, head);
+  const logs = await cachedLogs("discover", from, head, (a, b) => logClient.getLogs({ address: VAULT, event: parseAbiItem("event VaultInitialized(address indexed vault, address indexed authority, address usdc, uint64 protectedFloor, uint64 velocityThreshold)"), fromBlock: a, toBlock: b }));
   for (const l of logs) if (l.args.authority) known.add((l.args.authority as string).toLowerCase());
   cursors["__discover"] = (head + 1n).toString();
 }
@@ -209,7 +249,7 @@ async function syncFlows(key: string, authority: Address, registry: RegistryView
   const from = BigInt(cursors[key] ?? START_BLOCK.toString());
   if (from > head) return;
   const execution = new Set(registry.filter((r) => r.kind === OwnerKind.Execution).map((r) => r.owner.toLowerCase()));
-  const rawLogs = await getLogsChunked((a, b) => pub.getLogs({ address: VAULT, fromBlock: a, toBlock: b }), from, head);
+  const rawLogs = await cachedLogs("vault", from, head, (a, b) => logClient.getLogs({ address: VAULT, fromBlock: a, toBlock: b }));
   const parsed = parseEventLogs({ abi: SHIELD_VAULT_ABI, logs: rawLogs, strict: false });
   const mine = parsed.filter((l) => String((l.args as { vault?: string }).vault ?? "").toLowerCase() === key);
   const flows: Flow[] = [];
@@ -236,7 +276,7 @@ async function syncFlows(key: string, authority: Address, registry: RegistryView
     }
   }
   // Returns: plain USDC transfers into the vault contract that are not deposits.
-  const transfers = await getLogsChunked((a, b) => pub.getLogs({ address: USDC, event: TRANSFER, args: { to: VAULT }, fromBlock: a, toBlock: b }), from, head);
+  const transfers = await cachedLogs("usdc", from, head, (a, b) => logClient.getLogs({ address: USDC, event: TRANSFER, args: { to: VAULT }, fromBlock: a, toBlock: b }));
   for (const tr of transfers) {
     if (depositTxs.has(tr.transactionHash)) continue;
     const fromAddr = String(tr.args.from).toLowerCase();
@@ -402,6 +442,7 @@ async function tick() {
   running = true;
   try {
     const head = clampHead(await rpc(() => pub.getBlockNumber()));
+    resetLogCache();
     await discoverVaults(head);
     for (const key of known) {
       try {

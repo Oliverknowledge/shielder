@@ -78,7 +78,13 @@ export function evmEngine(cfg: EvmEngineConfig, demoKey: () => Hex | null, provi
     chain: "evm",
     network,
     vaultKeyFor: (signer) => signer.address.toLowerCase(),
-    explorerUrl: (kind, id) => (cfg.chainId === 999 ? `https://hyperevmscan.io/${kind}/${id}` : cfg.chainId === 998 ? `https://explore-testnet.hyperpc.app/${kind}/${id}` : `#${kind}/${id}`),
+    // Only HyperEVM mainnet has a public explorer that indexes this contract.
+    // The Blockscout instance commonly cited for testnet reports our vault as an
+    // EOA with zero transactions, and the Hyperliquid app's explorer route
+    // renders blank for a tx hash — so linking there hands a judge a dead end and
+    // makes "open it yourself" a broken promise. An empty string means "no
+    // explorer"; ExplorerLink degrades to a copyable hash and says how to verify.
+    explorerUrl: (kind, id) => (cfg.chainId === 999 ? `https://hyperevmscan.io/${kind}/${id}` : ""),
     isValidAddress: (s) => isAddress(s),
     async read(signer): Promise<VaultSnapshot> {
       const authority = signer.address as Address;

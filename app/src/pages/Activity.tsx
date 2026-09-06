@@ -62,7 +62,9 @@ export function Activity() {
       <div className="page-head">
         <p className="eyebrow">Activity</p>
         <h1>Proof of everything Shield did</h1>
-        <p>Every line is a {network === "anvil" ? "local" : chain === "evm" ? "HyperEVM" : "Solana"} transaction you can open. A blocked release never moved money, but the rejection is on-chain too.</p>
+        <p>
+          Every line is a {network === "anvil" ? "local" : chain === "evm" ? "HyperEVM" : "Solana"} transaction, identified by its hash so you can check it against the chain yourself. A blocked release never moved money: the vault refuses it, and Shield checks first so you don't pay gas to be told no.
+        </p>
       </div>
 
       {vault && Number(vault.cooldownUntil) > now && (

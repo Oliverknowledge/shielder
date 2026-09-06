@@ -138,7 +138,7 @@ export function Welcome() {
       </div>
 
       <p className="tiny muted" style={{ marginTop: 20 }}>
-        {CHAIN === "evm" ? "A vault contract on HyperEVM enforces the rules and funds your Hyperliquid account directly." : "A Solana program enforces the rules."} The Graph Substreams remembers what came back. A Chainlink CRE confidential workflow signs the loss verdicts. All of it is code you can read.
+        {CHAIN === "evm" ? "A vault contract on HyperEVM enforces the rules and funds your Hyperliquid account directly." : "A Solana program enforces the rules."} A Substreams package on The Graph is its behavioural memory. A Chainlink CRE confidential workflow signs the loss verdicts. All of it is code you can read.
       </p>
     </main>
   );

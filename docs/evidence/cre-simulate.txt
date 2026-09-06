@@ -1,0 +1,68 @@
+Chainlink CRE Confidential Workflow — cre CLI simulation
+=======================================================
+
+Captured: 2026-09-06T22:59:32Z   cre CLI: Usage:
+Command (run from the repository root):
+
+  cre workflow simulate shield-risk --target evm-settings --non-interactive \
+    --trigger-index 0 --http-payload '{"vault":"0x751D1e26d79FeffE95F8a8662aB7A022780ED023"}' \
+    -R cre -e cre/.env
+
+The workflow is registered with handlerInTee (cre/shield-risk/main.ts:88), so the
+CLI reports the TEE placement below. The evaluation, the secret read and the
+EIP-712 signing all happen inside that handler.
+
+--- verbatim output ------------------------------------------------------------
+Initializing...
+Loading settings...
+Checking RPC connectivity...
+Compiling workflow...
+✓ Workflow compiled
+✓ Simulation limits enabled
+  HTTP: req=120kb resp=250kb timeout=10s | ConfHTTP: req=125kb resp=500kb timeout=1m30s | Consensus obs=25kb | ChainWrite evm_report=50kb evm_gas=10000000 solana_report=265b solana_cu=300000 | WASM binary=100mb compressed=20mb
+  Binary hash: 89437a763e1fdee917d90499caa299a63dd20d225052b96656843e218cfb818e
+  Config hash: dc9d52c77a67888fe3765c74b214f03699fe40fb7121f3e7f7cd24825700c652
+! Secret "SHIELD_VERIFIER_SEED_B64" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_VERIFIER_SEED_B64").
+! Secret "SHIELD_EVM_VERIFIER_KEY" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_EVM_VERIFIER_KEY").
+✓ Parsed JSON input successfully
+✓ Created HTTP trigger payload with 1 fields
+2026-09-06T23:59:36Z [SIMULATION] Simulator Initialized
+
+2026-09-06T23:59:36Z [SIMULATION] Running trigger trigger=http-trigger@1.0.0-alpha
+╭────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Trigger requested TEE Execution your trigger will run in one of the following Tees:                │
+│     - AWS Nitro in us-west-2                                                                       │
+│ The simulator is not a real TEE, and is meant to debug.                                            │
+│ Do not use it for sensitive information.                                                           │
+│ During real execution, user logs for this trigger will not be visible, and will not leave the TEE. │
+│ They are presented in the simulator for debugging only.                                            │
+│                                                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+2026-09-06T23:59:36Z [USER LOG] Enclave evaluation: vault=0x751D1e26d79FeffE95F8a8662aB7A022780ED023 flows=3 realisedLoss24h=3500000 trigger=3000000 lossStreak=1 reloadsAfterLoss=0 triggered=true actionable=false
+
+✓ Workflow Simulation Result:
+{
+  "actionable": false,
+  "error": "",
+  "evidenceHash": "36e935ba6690ef5c1dcc54340474054acb694635763c91c4969f0cdc5976cf0f",
+  "headline": "You realised $3.5 in losses in the last 24 hours. Your rule pauses new capital for 12h.",
+  "lossTriggerUsdc": "3000000",
+  "nonce": "",
+  "realisedLossUsdc": "3500000",
+  "relayed": false,
+  "signature": "",
+  "triggered": true,
+  "vault": "0x751D1e26d79FeffE95F8a8662aB7A022780ED023",
+  "verifier": ""
+}
+
+2026-09-06T23:59:36Z [SIMULATION] Execution finished signal received
+2026-09-06T23:59:36Z [SIMULATION] Skipping WorkflowEngineV2
+
+╭──────────────────────────────────────────────────────╮
+│ Simulation complete! Ready to deploy your workflow?  │
+│                                                      │
+│ Run cre account access to request deployment access. │
+╰──────────────────────────────────────────────────────╯
+--- end ------------------------------------------------------------------------

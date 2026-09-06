@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { hms, duration, usd } from "../lib/format";
-import { explorerUrl } from "../lib/shield";
+import { explorerUrl, RPC_URL } from "../lib/shield";
 
 // ---------------- toasts ----------------
 
@@ -226,11 +226,31 @@ export function Stepper({ step, total }: { step: number; total: number }) {
   );
 }
 
+/**
+ * A transaction hash, linked where an explorer exists and copyable where none
+ * does. HyperEVM testnet has no public explorer that indexes this contract, and
+ * a link that lands on "unable to locate this transaction hash" is worse than no
+ * link: it makes the whole verifiability claim look false.
+ */
 export function ExplorerLink({ sig, children }: { sig: string; children?: ReactNode }) {
+  const href = explorerUrl("tx", sig);
+  const label = children ?? `${sig.slice(0, 8)}…`;
+  if (href) {
+    return (
+      <a className="link tiny mono" href={href} target="_blank" rel="noreferrer">
+        {label}
+      </a>
+    );
+  }
   return (
-    <a className="link tiny mono" href={explorerUrl("tx", sig)} target="_blank" rel="noreferrer">
-      {children ?? `${sig.slice(0, 8)}…`}
-    </a>
+    <button
+      type="button"
+      className="link tiny mono"
+      title={`Copy ${sig}\n\nThis network has no public explorer that indexes Shield. Verify it yourself:\ncast tx ${sig} --rpc-url ${RPC_URL}`}
+      onClick={() => void navigator.clipboard?.writeText(sig)}
+    >
+      {label}
+    </button>
   );
 }
 

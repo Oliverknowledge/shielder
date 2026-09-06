@@ -2,7 +2,7 @@
   "name": "shield",
   "version": "0.1.0",
   "private": true,
-  "description": "Shield: a self-custodial commitment vault on Solana. Trade freely from a bankroll; refill it only by rules you set while calm.",
+  "description": "Shield: a self-custodial commitment vault on HyperEVM. Trade freely on Hyperliquid from a bankroll; refill it only by rules you set while calm.",
   "scripts": {
     "test": "bun test tests/ server/",
     "typecheck": "bun run typecheck:app && bun run typecheck:node",
