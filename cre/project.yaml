@@ -19,3 +19,12 @@ production-settings:
       url: https://api.mainnet-beta.solana.com
     - chain-name: ethereum-mainnet
       url: https://ethereum-rpc.publicnode.com
+
+# EVM-only target. The Shield workflow makes no chain calls from CRE at all —
+# the enclave signs an EIP-712 verdict and Shield's relayer submits it — but
+# the CLI validates every RPC a target declares, so listing solana-devnet made
+# an EVM simulation demand a funded Solana keypair it never uses.
+evm-settings:
+  rpcs:
+    - chain-name: ethereum-testnet-sepolia
+      url: https://ethereum-sepolia-rpc.publicnode.com

@@ -214,7 +214,10 @@ async function syncFlows(key: string, authority: Address, registry: RegistryView
   const mine = parsed.filter((l) => String((l.args as { vault?: string }).vault ?? "").toLowerCase() === key);
   const flows: Flow[] = [];
   const events: Array<{ name: string; data: Record<string, string | number | boolean>; signature: string; slot: number; blockTime: number }> = [];
-  const depositTxs = new Set<string>();
+  // Every vault shares one contract, so a deposit into someone else's vault is
+  // still a USDC transfer into this address. Excluding only *this* vault's
+  // deposits would book another tenant's funding as money coming back to us.
+  const depositTxs = new Set<string>(parsed.filter((l) => l.eventName === "Deposited").map((l) => l.transactionHash));
   for (const l of mine) {
     const t = await blockTime(l.blockNumber);
     const args = l.args as Record<string, unknown>;
@@ -223,7 +226,6 @@ async function syncFlows(key: string, authority: Address, registry: RegistryView
     events.push({ name: l.eventName, data, signature: l.transactionHash, slot: Number(l.blockNumber), blockTime: t });
     const base = { slot: Number(l.blockNumber), signature: l.transactionHash, blockTime: t, vault: key };
     if (l.eventName === "Deposited") {
-      depositTxs.add(l.transactionHash);
       flows.push({ ...base, kind: "DEPOSIT", outbound: false, counterparty: String(args.depositor), amount: args.amount as bigint, counterpartyIsExecution: false });
     } else if (l.eventName === "TopUpExecuted") {
       flows.push({ ...base, kind: args.instant ? "TOP_UP_INSTANT" : "TOP_UP_GATED", outbound: true, counterparty: String(args.destinationOwner), amount: args.amount as bigint, counterpartyIsExecution: true });
@@ -239,6 +241,9 @@ async function syncFlows(key: string, authority: Address, registry: RegistryView
     if (depositTxs.has(tr.transactionHash)) continue;
     const fromAddr = String(tr.args.from).toLowerCase();
     if (!execution.has(fromAddr)) continue; // only money coming back from a registered trading wallet counts as a return
+    // A transfer out of the contract in the same transaction means this was a
+    // release being routed, not capital returning.
+    if (mine.some((l) => l.transactionHash === tr.transactionHash && (l.eventName === "TopUpExecuted" || l.eventName === "ColdTransferExecuted" || l.eventName === "FullExitExecuted"))) continue;
     const t = await blockTime(tr.blockNumber);
     flows.push({ slot: Number(tr.blockNumber), signature: tr.transactionHash, blockTime: t, vault: key, kind: "RETURN", outbound: false, counterparty: getAddress(fromAddr), amount: tr.args.value as bigint, counterpartyIsExecution: true });
   }
@@ -302,7 +307,16 @@ interface EvmVerdictJson {
   verifier: string;
 }
 
-async function relayVerdict(v: EvmVerdictJson, sourceTag: VerdictRecord["source"], headline: string, lines: string[]): Promise<VerdictRecord> {
+/**
+ * Submit a signed verdict.
+ *
+ * `receiptTimeoutMs` bounds how long the caller waits for confirmation. The
+ * confidential workflow delivers over an enclave HTTP call with its own
+ * deadline, and holding that connection open across a chain write on a
+ * rate-limited RPC is what made it time out. The transaction is still
+ * confirmed — just in the background, with the record updated when it lands.
+ */
+async function relayVerdict(v: EvmVerdictJson, sourceTag: VerdictRecord["source"], headline: string, lines: string[], receiptTimeoutMs?: number): Promise<VerdictRecord> {
   const record: VerdictRecord = { verdict: v as never, headline, lines, relayed: false, signature: null, error: null, issuedAt: Number(v.issuedAt), source: sourceTag };
   try {
     if (!relayer) throw new Error("no relayer key");
@@ -310,10 +324,31 @@ async function relayVerdict(v: EvmVerdictJson, sourceTag: VerdictRecord["source"
     const call = evmCalls.applyRiskVerdict(cfg, { vault: getAddress(v.vault), nonce: BigInt(v.nonce), issuedAt: BigInt(v.issuedAt), expiry: BigInt(v.expiry), reasonCode: v.reasonCode, realizedLossUsdc: BigInt(v.realizedLossUsdc), evidenceHash: v.evidenceHash as Hex }, v.signature as Hex);
     await pub.call({ account: relayer.address, to: call.to, data: call.data });
     const hash = await wc.sendTransaction({ account: relayer, chain, to: call.to, data: call.data });
-    const rcpt = await pub.waitForTransactionReceipt({ hash });
-    if (rcpt.status !== "success") throw new Error("reverted");
-    record.relayed = true;
     record.signature = hash;
+    if (receiptTimeoutMs) {
+      try {
+        const rcpt = await pub.waitForTransactionReceipt({ hash, timeout: receiptTimeoutMs });
+        if (rcpt.status !== "success") throw new Error("reverted");
+        record.relayed = true;
+      } catch {
+        // Submitted but not confirmed inside the caller's budget: keep watching.
+        log(`verdict #${v.nonce} submitted, confirming in the background: ${hash}`);
+        void pub
+          .waitForTransactionReceipt({ hash })
+          .then((r) => {
+            record.relayed = r.status === "success";
+            if (!record.relayed) record.error = "reverted";
+            store.touch();
+            log(`verdict #${v.nonce} ${record.relayed ? "confirmed" : "reverted"}: ${hash}`);
+          })
+          .catch(() => null);
+        record.relayed = true; // accepted by the chain's mempool; confirmation follows
+      }
+    } else {
+      const rcpt = await pub.waitForTransactionReceipt({ hash });
+      if (rcpt.status !== "success") throw new Error("reverted");
+      record.relayed = true;
+    }
     log(`verdict #${v.nonce} relayed for ${v.vault.slice(0, 8)}: ${hash}`);
   } catch (e) {
     record.error = e instanceof Error ? e.message.split("\n")[0] : String(e);
@@ -531,10 +566,12 @@ Bun.serve({
       const v = body.verdict ?? body;
       if (!v?.vault || !v?.signature) return json({ error: "expected a signed verdict" }, 400);
       if (body.evidence && v.evidenceHash) store.putEvidence(v.evidenceHash.replace(/^0x/, "").toLowerCase(), body.evidence as never);
-      const record = await relayVerdict(v, "cre", body.headline ?? "Verdict relayed from the confidential workflow", body.lines ?? []);
+      // 20s: well inside the enclave's HTTP deadline. Confirmation continues
+      // in the background, and the caller gets the transaction hash either way.
+      const record = await relayVerdict(v, "cre", body.headline ?? "Verdict relayed from the confidential workflow", body.lines ?? [], 20_000);
       if (record.relayed) {
         store.vault(v.vault.toLowerCase()).lastVerdictLossAt = Math.floor(Date.now() / 1000);
-        await syncVault(getAddress(v.vault));
+        void syncVault(getAddress(v.vault)).catch(() => null);
       }
       store.flush();
       return json(record, record.relayed ? 200 : 502);

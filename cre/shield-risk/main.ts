@@ -39,6 +39,13 @@ export const configSchema = z.object({
   secretId: z.string(),
   /** POST the signed verdict to the relayer (false = evaluate + sign only). */
   deliver: z.boolean(),
+  /** Which vault the verdict is for. Absent means the original Solana build:
+   *  zod strips keys the schema does not declare, so omitting these made the
+   *  enclave read an EVM config as Solana and reject the secp256k1 key as a
+   *  malformed Ed25519 seed. */
+  chain: z.enum(["solana", "evm"]).optional(),
+  /** EIP-712 domain chain id; required when `chain` is "evm". */
+  chainId: z.number().optional(),
 });
 type Config = z.infer<typeof configSchema>;
 
