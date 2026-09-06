@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { describeSubstreams, jwtExpiry, resolveSubstreams } from "./substreams-config";
 
 const jwt = (exp: number) => `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify({ exp })).toString("base64url")}.sig`;
@@ -44,5 +45,40 @@ describe("substreams config", () => {
     expect(opaque).not.toContain("does not look like");
     expect(describeSubstreams(expired)).not.toContain(expired.token);
     expect(resolveSubstreams("solana", {}).tokenSource).toBe("none");
+  });
+});
+
+/**
+ * The manifest has two independent address lists: the block index decides
+ * which blocks arrive, `params` decides which addresses the WASM decodes. They
+ * are edited in different places and nothing in the toolchain relates them, so
+ * repointing one and forgetting the other yields a pipeline that streams the
+ * right blocks and emits nothing — silently, with a clean exit code.
+ */
+describe("substreams-evm manifest", () => {
+  const manifest = readFileSync(new URL("../substreams-evm/substreams.yaml", import.meta.url), "utf8");
+  const addrs = (s: string) => [...s.matchAll(/evt_addr:(0x[0-9a-f]{40})/g)].map((m) => m[1]!).sort();
+
+  const paramFor = (module: string) => {
+    const m = manifest.match(new RegExp(`^\\s{2}${module}:\\s*"([^"]*)"`, "m"));
+    if (!m) throw new Error(`no params entry for ${module}`);
+    return m[1]!;
+  };
+  const filterFor = (module: string) => {
+    const block = manifest.split(`- name: ${module}`)[1];
+    if (!block) throw new Error(`no module block for ${module}`);
+    const m = block.match(/blockFilter:[\s\S]*?string:\s*"([^"]*)"/);
+    if (!m) throw new Error(`no blockFilter query for ${module}`);
+    return m[1]!;
+  };
+
+  for (const module of ["map_shield_events", "map_vault_flows"]) {
+    test(`${module} decodes exactly the addresses its block index selects`, () => {
+      expect(addrs(paramFor(module))).toEqual(addrs(filterFor(module)));
+    });
+  }
+
+  test("every address is lowercase, as the index keys require", () => {
+    expect(manifest).not.toMatch(/evt_addr:0x[0-9a-f]*[A-F]/);
   });
 });

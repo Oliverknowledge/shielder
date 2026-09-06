@@ -2,7 +2,7 @@ specVersion: v0.1.0
 package:
   name: shield_evm_behavioral_memory
   version: v0.1.0
-  url: https://github.com/Oliverknowledge/shiedler
+  url: https://github.com/Oliverknowledge/shielder
   description: ShieldVault.sol (HyperEVM / any EVM) — typed event decoding composed on the ethereum-common foundational block index, USDC-return detection, capital-flow classification across the vault boundary, and per-vault behavioural totals. One pipeline shape reused across chains (see ../substreams for Solana).
 
 imports:
@@ -16,23 +16,35 @@ protobuf:
   importPaths:
     - ./proto
 
+# HyperEVM mainnet was at ~45.22M when this package was cut. Modules that start
+# at block 0 make every stateful run backprocess the entire chain before the
+# first output — `substreams run map_vault_flows` fails outright with
+# "needs to process 45,220,118 blocks". The vault is deployed after this height,
+# so nothing is missed by starting here; move it to the exact deploy block once
+# that is known and the run gets cheaper still.
 binaries:
   default:
     type: wasm/rust-v1
     file: ./target/wasm32-unknown-unknown/release/shield_evm_behavioral_memory.wasm
 
-# Set these to the deployed vault contract and the network's native USDC.
-# The foundational `index_events` block index lets both maps skip every
-# block that has no log from either address.
+# The deployed vault contract and the network's native USDC.
+#
+# These MUST list the same addresses as each module's `blockFilter.query`
+# below. The block index decides which blocks are delivered; `params` decides
+# which addresses the WASM then decodes. Point them at different contracts and
+# the pipeline runs cleanly over the right blocks and emits nothing at all —
+# which is exactly what happened when this file was repointed at HyperEVM and
+# only the filter was updated. `substreams-config.test.ts` now pins the two
+# together so the halves cannot drift apart again.
 params:
-  map_shield_events: "evt_addr:0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0"
-  map_vault_flows: "evt_addr:0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0 || evt_addr:0x2b3370ee501b4a559b57d449569354196457d8ab"
+  map_shield_events: "evt_addr:0xcdb6d631a00857584e70a21d800f51c5776302fe"
+  map_vault_flows: "evt_addr:0xcdb6d631a00857584e70a21d800f51c5776302fe || evt_addr:0x2b3370ee501b4a559b57d449569354196457d8ab"
 
 modules:
   # ---- Stage 1: typed decoding, filtered by the foundational block index ----
   - name: map_shield_events
     kind: map
-    initialBlock: 0
+    initialBlock: &initialBlock 45220000
     inputs:
       - params: string
       - source: sf.ethereum.type.v2.Block
@@ -46,6 +58,7 @@ modules:
   # ---- Stage 2: registry state (which addresses are trading wallets) ----
   - name: store_vault_registry
     kind: store
+    initialBlock: *initialBlock
     updatePolicy: set
     valueType: string
     inputs:
@@ -54,7 +67,7 @@ modules:
   # ---- Stage 3: capital flows across the vault boundary ----
   - name: map_vault_flows
     kind: map
-    initialBlock: 0
+    initialBlock: *initialBlock
     inputs:
       - params: string
       - source: sf.ethereum.type.v2.Block
@@ -70,6 +83,7 @@ modules:
   # ---- Stage 4: running totals and profiles ----
   - name: store_flow_totals
     kind: store
+    initialBlock: *initialBlock
     updatePolicy: add
     valueType: int64
     inputs:
@@ -77,6 +91,7 @@ modules:
 
   - name: map_behavioral_profiles
     kind: map
+    initialBlock: *initialBlock
     inputs:
       - store: store_flow_totals
         mode: deltas

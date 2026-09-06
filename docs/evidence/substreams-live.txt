@@ -1,0 +1,75 @@
+The Graph — live Substreams stream from The Graph Market
+========================================================
+
+Captured: 2026-09-06T22:59:53Z   substreams CLI: substreams version 1.22.0 (Commit be35ad3, Commit Date 2026-08-24T13:58:05Z)
+Provider: hyperevm.substreams.pinax.network:443 (HyperEVM mainnet, chain 999)
+Package:  substreams-evm/shield-evm-behavioral-memory-v0.1.0.spkg (committed)
+
+The package composes The Graph's foundational ethereum-common v0.3.3: its
+index_events module is declared as the blockFilter for both maps, so the
+provider only delivers blocks carrying a log from the vault or from USDC.
+
+### 1. Package composition, as built
+
+Package name: shield_evm_behavioral_memory
+Version: v0.1.0
+Name: map_shield_events
+Initial block: 45220000
+Kind: map
+Input: params: evt_addr:0xcdb6d631a00857584e70a21d800f51c5776302fe
+Input: source: sf.ethereum.type.v2.Block
+Block Filter: (using *ethereum_common:index_events*): `&{evt_addr:0xcdb6d631a00857584e70a21d800f51c5776302fe}`
+Output Type: proto:shield.evm.v1.ShieldEvents
+Name: store_vault_registry
+Initial block: 45220000
+Kind: store
+Input: map: map_shield_events
+Name: map_vault_flows
+Initial block: 45220000
+Kind: map
+Input: params: evt_addr:0xcdb6d631a00857584e70a21d800f51c5776302fe || evt_addr:0x2b3370ee501b4a559b57d449569354196457d8ab
+Input: source: sf.ethereum.type.v2.Block
+Input: map: map_shield_events
+Input: store: store_vault_registry
+Block Filter: (using *ethereum_common:index_events*): `&{evt_addr:0xcdb6d631a00857584e70a21d800f51c5776302fe || evt_addr:0x2b3370ee501b4a559b57d449569354196457d8ab}`
+Output Type: proto:shield.evm.v1.VaultFlows
+Name: store_flow_totals
+Initial block: 45220000
+Kind: store
+Input: map: map_vault_flows
+Name: map_behavioral_profiles
+Initial block: 45220000
+Kind: map
+Input: store: store_flow_totals
+Output Type: proto:shield.evm.v1.BehavioralProfiles
+Name: ethereum_common:all_events
+Initial block: 0
+Kind: map
+Input: source: sf.ethereum.type.v2.Block
+Output Type: proto:sf.substreams.ethereum.v1.Events
+Name: ethereum_common:index_events
+Initial block: 0
+Kind: index
+Input: map: ethereum_common:all_events
+Output Type: proto:sf.substreams.index.v1.Keys
+
+### 2. Live run of the full stateful pipeline (map_vault_flows) at mainnet head
+
+stack=hyperevm endpoint=hyperevm.substreams.pinax.network:443 module=map_vault_flows start=45220600 range=+20 token present (992 chars, exp 2027-10-28T12:39Z)
+TraceID: fd0283cb7dbc0e9671813850d9e86625
+This request will be processed in a single stage
+Blocks to process in requested range: 20 (0 already cached)
+
+📊 Usage Report
+ • Egress Bytes (uncompressed): 7.5 KiB
+ • Processed Blocks: 620 blocks
+ • Received Blocks: 20 blocks
+
+Completed successfully
+
+Note on output: 'Completed successfully' with no flow rows is the honest
+result today. The composition, the auth and the whole five-module graph run
+live against The Graph Market; there are no rows because ShieldVault.sol is
+deployed on HyperEVM *testnet* (998) and The Graph indexes HyperEVM mainnet
+(999) only. The addresses in substreams.yaml move to the mainnet vault the
+moment it is deployed — nothing else about this pipeline changes.
