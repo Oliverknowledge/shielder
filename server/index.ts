@@ -18,6 +18,7 @@
  * and the recovery CLI still works. See docs/THREAT_MODEL.md.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { analyseHyperliquid, type HlNetwork } from "./hyperliquid";
 import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 import {
   createAssociatedTokenAccountIdempotentInstruction,
@@ -384,6 +385,17 @@ Bun.serve({
       });
     }
 
+    // Hyperliquid history (public info API): the onboarding insight and the
+    // "your pattern" section. No credentials; mainnet by default.
+    const hl = path.match(/^\/api\/hyperliquid\/(0x[0-9a-fA-F]{40})$/);
+    if (hl && req.method === "GET") {
+      const network = (url.searchParams.get("network") === "testnet" ? "testnet" : "mainnet") as HlNetwork;
+      try {
+        return json(await analyseHyperliquid(hl[1], network));
+      } catch (e) {
+        return json({ error: e instanceof Error ? e.message : String(e) }, 502);
+      }
+    }
     if (path === "/api/vaults") return json([...views.values()].map((v) => ({ vault: v.key, authority: v.state.authority.toBase58(), balance: v.balance })));
 
     const vaultMatch = path.match(/^\/api\/vault\/([1-9A-HJ-NP-Za-km-z]{32,44})(?:\/(.*))?$/);
