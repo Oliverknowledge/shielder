@@ -156,38 +156,29 @@ The sections above describe the Solana (v0) stack, which still runs unchanged.
 This section is what changed for the Hyperliquid-first build; where a claim
 is credential-gated it says so.
 
-## Privy — Best financial flow
+## Privy — Best financial flow ($2,500): evidence
 
-**Exact track:** Privy, "Best financial flow" ($2,500).
+Proven on HyperEVM testnet (chain 998) on 2026-09-06. Every transaction below
+was signed by a Privy **embedded wallet created from an email address**, with
+no seed phrase and no extension.
 
-**Files:** `app/src/lib/privy.tsx` (PrivyProvider: email / passkey / wallet
-login, embedded Ethereum wallet created on login, HyperEVM as default chain;
-a bridge that hands the embedded wallet's EIP-1193 provider to the engine),
-`app/src/lib/evm-engine.ts` (every vault transaction is signed by that
-wallet: activate, deposit, top-up, tighten, propose, cancel, cold transfer,
-exit), `app/src/pages/Welcome.tsx` (sign-in), `app/src/pages/Trade.tsx`
-(the Shield wallet and the signers Privy governs; Privy makes no claim over an external Hyperliquid account).
+| Requirement | Evidence |
+|---|---|
+| Integrate Privy as a core part of the product | The embedded wallet *is* the vault authority. `ShieldVault._own()` reverts for every other address, so this wallet is the only thing that can move the protected capital — deposit, release, tighten, or exit |
+| Create or use at least one Privy wallet | `0x83144b99D89947703714Ee9aA3A3614985041D2B`, created on login |
+| Complete at least one functional financial flow using a generally available Privy feature | **A $5 release from the vault into a Hyperliquid account**: tx `0x94960d1f937a3e36e1b16e69922a2579e77b584ed25b2ced044da7991fe889be`, block 63581864, `from` = the Privy wallet. USDC left the contract through Circle's `CoreDepositWallet.depositFor` and arrived on HyperCore (211.06 → 216.06 USDC) |
+| Working demo + source | Public repo; the app runs the whole flow |
+| Explain how Privy improves the UX | Without it the only way in is pasting a raw private key. With it: type an email, get a code, and the wallet guarding your protected capital exists — no seed-phrase ceremony for a product whose entire premise is that future-you cannot get at the money |
 
-**Why it matters to the user:** no seed phrase ceremony, one identity across
-the vault and the venue, and ordinary trading without prompts once an agent
-key is approved. Adding capital is the only thing that ever asks for a
-deliberate signature, which is exactly the friction the product wants.
+Supporting transactions, same wallet, same session:
 
-**Why it is load-bearing:** the embedded wallet is the vault's sole authority
-and the Hyperliquid master account. Remove it and the user is back to
-managing an EOA by hand.
+- Registered the Hyperliquid account as the only release destination: `0x80c2a48aeeb2825fc427c2eb6b90821bc5c75fe8db38eddb3db745f55426f8f0`
+- Scheduled a weakening (daily reload $5 → $100), which the contract holds for
+  24 hours and then re-asks: `0xeeea692a9a7c25ada3918ceff2992c3465fff356b560b6c80a5e191cf2224b85`
 
-**The financial flow:** deposit USDC into the vault → governed top-up
-delivered by the vault into the user's Hyperliquid perps account
-(`CoreDepositWallet.depositFor`) → the user trades on Hyperliquid → withdraw
-Core→EVM and return USDC to the vault. All signatures by the Privy wallet.
-
-**Verification:** set `VITE_PRIVY_APP_ID` (HUMAN_ACTIONS.md #1), open the
-app, sign in with email, complete the setup wizard, top up, watch the
-Hyperliquid account. Without an app ID the identical code path runs with a
-pasted demo key (Anvil dev key) and was verified end to end on Anvil.
-
-**Remaining blocker:** a Privy app ID (5 minutes, dashboard.privy.io).
+The vault was funded by a different address (`deposit(authority, amount)` pulls
+from `msg.sender`), so the money never had to pass through the Privy wallet —
+only the *authority* over it did.
 
 ## The Graph — HyperEVM package (composable track evidence)
 
