@@ -1,0 +1,59 @@
+syntax = "proto3";
+package shield.evm.v1;
+
+// Typed ShieldVault.sol events (one message per log we care about).
+message ShieldEvents {
+  repeated ShieldEvent events = 1;
+}
+
+message ShieldEvent {
+  uint64 block = 1;
+  uint64 block_time = 2;
+  string tx_hash = 3;
+  uint32 log_index = 4;
+  string vault = 5; // authority address (lowercase hex)
+  string name = 6;  // Deposited, TopUpExecuted, RegistrationChanged, ...
+  // flat, stringly-typed fields so the schema is stable across versions
+  map<string, string> fields = 7;
+}
+
+// Money crossing the vault boundary: the behavioural memory.
+enum FlowKind {
+  FLOW_KIND_UNSPECIFIED = 0;
+  TOP_UP_INSTANT = 1;
+  TOP_UP_GATED = 2;
+  COLD_TRANSFER = 3;
+  FULL_EXIT = 4;
+  RETURN = 5;
+  DEPOSIT = 6;
+}
+
+message Flow {
+  uint64 block = 1;
+  uint64 block_time = 2;
+  string tx_hash = 3;
+  string vault = 4;
+  FlowKind kind = 5;
+  bool outbound = 6;
+  string counterparty = 7;
+  uint64 amount = 8; // USDC base units (6 decimals)
+  bool counterparty_is_execution = 9;
+}
+
+message VaultFlows {
+  repeated Flow flows = 1;
+}
+
+message BehavioralProfile {
+  string vault = 1;
+  uint64 sent_to_execution = 2;
+  uint64 returned_from_execution = 3;
+  int64 net_execution_flow = 4;
+  uint64 deposited = 5;
+  uint64 top_up_count = 6;
+  uint64 return_count = 7;
+}
+
+message BehavioralProfiles {
+  repeated BehavioralProfile profiles = 1;
+}

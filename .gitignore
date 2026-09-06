@@ -37,3 +37,8 @@ contracts/lib/
 contracts/out/
 contracts/cache/
 contracts/broadcast/
+
+# EVM Substreams build artifacts
+substreams-evm/*.spkg
+substreams-evm/target/
+substreams-evm/src/abi_shield_vault.rs

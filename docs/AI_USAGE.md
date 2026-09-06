@@ -6,8 +6,13 @@ workflows, the prompts and planning artifacts. This is that disclosure.
 ## What was used
 
 - **Claude (Anthropic), via Claude Code inside Conductor**, as the primary
-  engineering agent for the whole build window (Sept 4–5, 2026): research,
-  design, code, tests, QA in a headless browser, and documentation.
+  engineering agent for the whole build window (Sept 4–6, 2026): research,
+  design, code, tests, QA in a headless browser, and documentation. The
+  Sept 6 sprint (Hyperliquid-first architecture, ShieldVault.sol, EVM
+  server, Privy integration, landing page, safety flows) ran as a scheduled
+  autonomous session directed by `docs/planning/SPRINT_BRIEF_2026-09-06.md`;
+  three research subagents fetched the live Hyperliquid, Privy, The Graph
+  and ETHGlobal documentation that `docs/ARCHITECTURE_DECISION.md` cites.
 - **gstack** (open-source Claude Code skill pack) for office-hours style
   design review and the headless-browser QA tooling.
 - **ChatGPT (OpenAI)** as an independent hostile reviewer of the design
@@ -27,7 +32,8 @@ ran the review loops. Nothing was pasted from a prior project.
 
 ## Planning artifacts (kept verbatim)
 
-- `docs/planning/BUILD_BRIEF.md`: the build brief that directed the agent.
+- `docs/planning/BUILD_BRIEF.md`: the Sept 5 build brief that directed the agent.
+- `docs/planning/SPRINT_BRIEF_2026-09-06.md`: the Sept 6 sprint brief (Hyperliquid-first).
 - `docs/designs/shield-treasury-vault.md`: the design document with its
   three Claude review rounds and two ChatGPT hostile-review rounds.
 - `docs/HACKATHON_STRATEGY.md`, `docs/ARCHITECTURE_DECISION.md`,

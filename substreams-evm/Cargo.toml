@@ -1,0 +1,29 @@
+[workspace]
+
+[package]
+name = "shield-evm-behavioral-memory"
+version = "0.1.0"
+edition = "2021"
+description = "Substreams for ShieldVault.sol (HyperEVM / any EVM): typed event decoding composed on the ethereum-common foundational block index, USDC-return detection, capital-flow classification, per-vault behavioural totals. Same module shape as the Solana package."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+substreams = "0.6"
+substreams-ethereum = "0.10"
+ethabi = "17"
+num-bigint = "0.4"
+prost = "0.13"
+prost-types = "0.13"
+hex = "0.4"
+
+[build-dependencies]
+prost-build = "0.13"
+substreams-ethereum = "0.10"
+anyhow = "1"
+
+[profile.release]
+lto = false
+opt-level = "s"
+strip = "debuginfo"

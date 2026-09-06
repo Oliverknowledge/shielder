@@ -119,3 +119,51 @@ A self-custodial "policy layer" between people and venues: commitment
 devices, limits, cooling-off, verified exits, across chains and off-chain
 venues, with the user's own history as the enforcement input. Wallets
 protect keys; nobody protects intent.
+
+
+---
+
+## Added 2026-09-06 (Hyperliquid-first)
+
+**Why Hyperliquid, and why can't Hyperliquid do this itself?**
+Because that's where the user trades. Hyperliquid's agent (API) wallets can
+only sign orders; every value-moving action needs the master key, and a user
+can't bind their own master key. So the boundary has to live outside the
+venue: in a vault the master key controls but cannot override. The vault
+funds the Hyperliquid account directly through Circle's CoreDepositWallet
+(`depositFor`), so "add capital" is exactly the action the rules govern.
+
+**Where is the money, concretely?**
+Protected capital: `ShieldVault.sol` on HyperEVM, credited to the user's
+address, no owner or admin. Bankroll: the user's Hyperliquid perps account.
+Nothing sits with Shield or Privy.
+
+**What does Privy actually enforce?**
+Nothing about the vault's rules, and we say so. Privy gives the user a
+self-custodial embedded wallet with email/passkey sign-in; that wallet is the
+vault's authority and signs the agent approval and the returns. Privy
+policies can add defence in depth on the trading wallet (deny withdrawals to
+unknown destinations, deny key export) but the commitment is the contract.
+
+**Can the user export the Privy key and bypass Shield?**
+They can export it (Privy documents that users always can unless a 2-of-2
+quorum with the app exists, which we deliberately don't create). Exporting
+doesn't help: the rules bind the key, not the app. There is no path in the
+contract that moves protected USDC except the five governed ones.
+
+**Why is the demo on Anvil rather than HyperEVM?**
+HyperEVM testnet only serves addresses that have deposited on Hyperliquid
+mainnet, and The Graph indexes HyperEVM mainnet only. The contract, server,
+CRE path and app were verified end to end on Anvil with mocks that implement
+the documented USDC and CoreDepositWallet interfaces; the live deployment is
+one `forge create` plus a funded address (HUMAN_ACTIONS.md #2).
+
+**Is the Solana code dead?**
+No: it is the same rule engine on another chain, with 46 tests and a working
+local demo, and it is the reason the app is chain-agnostic. It is documented
+as v0.
+
+**What happens when the 24 hours end?**
+Nothing. The weakening stays pending until the user confirms it again
+("Still want to?"), and any tightening in between invalidates it. That is
+the mechanic that makes calm-you the final decision-maker.

@@ -18,44 +18,60 @@ would.
 
 ## Product
 
-Shield is a self-custodial treasury for people who trade. You keep most of
-your capital in a vault and trade from a smaller bankroll wherever you
-already trade (Axiom, a Telegram bot, an exchange). Refilling the bankroll
-is governed by rules you set while calm: a protected floor, a daily limit
+Shield is the financial control layer underneath your trading app. Calm-you
+decides how much is trading money and how much is not. That decision lives
+in a vault only you control; the vault funds your Hyperliquid account
+directly, under rules you set while calm: a protected floor, a daily limit
 that can't be gamed by splitting, a pause on large moves, and a loss rule
-that reads your real on-chain history and pauses refills after a real
-loss. Making a rule stricter is instant. Making it weaker waits 24 hours.
-Leaving entirely waits 7 days. Small emergency withdrawals to your own cold
-wallet are always instant. When a refill is blocked, the money doesn't
-move, and the screen tells you exactly why, with the transactions that
-prove it.
+that reads what actually came back from the venue and pauses funding after
+a real loss. Inside the plan, Shield disappears: trade as fast as you like
+with an approved agent key. Making a rule stricter is instant. Making it
+weaker waits 24 hours and needs your yes again tomorrow. Leaving entirely
+waits 7 days. Small emergency withdrawals to your cold wallet are always
+instant. When a reload is blocked the money doesn't move, and the screen
+says "Not tonight", shows exactly why, shows what you left yourself, and
+offers the safe things you can still do: get me safe, protect me more, or
+ninety calm seconds.
+
+Onboarding reads your real Hyperliquid history and surfaces one insight
+("3 of your 4 largest losing sessions involved another reload") before
+proposing your rules. Sign-in is email or a passkey through Privy; the
+embedded wallet is the only authority over the vault.
 
 ## How it works
 
-1. You create a vault (a Solana program account only the program can spend
-   from), register your trading wallet and a cold wallet, set your rules,
-   deposit USDC.
-2. Top-ups go through the program: floor, 24h limit, large-move pause,
-   cooldown. Rejections are the program's, not the app's.
-3. A Substreams pipeline on The Graph indexes every flow across the vault
-   boundary, including plain SPL transfers coming back from the trading
-   wallet, and classifies them. Shield derives sessions and realised loss.
+1. You sign in with Privy and get an embedded EVM wallet; it creates your
+   vault in `ShieldVault.sol` on HyperEVM (no owner, no admin, no upgrade),
+   registers your Hyperliquid account and a cold wallet, sets your rules,
+   deposits USDC.
+2. Top-ups go through the contract: floor, 24h limit, large-move pause,
+   cooldown. An allowed top-up is delivered by the contract into your
+   Hyperliquid perps account in the same block (Circle's
+   `CoreDepositWallet.depositFor`). Rejections are the contract's, not the
+   app's, and they are on-chain.
+3. A Substreams pipeline on The Graph (the same five modules on Solana devnet
+   and HyperEVM, composed on the foundational `ethereum-common` index)
+   indexes every flow across the vault boundary, including the USDC that
+   comes back from the venue. Shield derives sessions and realised loss.
 4. When your loss trigger is met, a monitor (a Chainlink CRE confidential
-   workflow, or Shield's server running the same code) signs a verdict. The
-   vault verifies the signature against the key you pinned, checks the
-   attested loss against your trigger, and arms a pause of your chosen
-   length. The monitor never chooses the duration and can never do anything
-   but pause top-ups.
+   workflow, or Shield's server running the same code) signs an EIP-712
+   verdict. The vault checks the signature against the key you pinned and
+   the attested loss against your trigger, then arms a pause of your chosen
+   length. The monitor never chooses the duration and can only ever extend
+   a pause.
+5. The v0 Solana implementation of the same rule engine is kept in the repo
+   as the zero-credential local reference.
 
 ## Why blockchain
 
 The promise is "a signature from me is not enough for this transfer, for a
 period I chose earlier." A backend can't make that promise: whoever runs it
 can be pressured, hacked, or asked nicely by the user. A wallet can't: it
-signs what the key says. A program-owned account with immutable rules can,
-and anyone can verify it did. The delays are enforced by the chain's clock,
-the rejection is a transaction anyone can read, and recovery works with
-nothing but an RPC URL if the company disappears.
+signs what the key says. Hyperliquid can't: its agent wallets can trade but
+the master key can always move funds. A contract with no owner and immutable
+rules can, and anyone can verify it did. The delays are enforced by the
+chain's clock, the rejection is a transaction anyone can read, and recovery
+works with nothing but an RPC URL if the company disappears.
 
 ## What's new
 
