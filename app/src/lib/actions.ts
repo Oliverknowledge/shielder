@@ -1,11 +1,16 @@
 import { useCallback, useState } from "react";
-import type { TransactionInstruction } from "@solana/web3.js";
 import { ShieldTxError, useShield } from "./shield";
 import { useToast } from "../components/ui";
-import type { ShieldErrorName } from "../../../client/shield-client";
+import type { ShieldErrorName } from "../../../client/views";
+import type { PreparedTx } from "./engine";
 
 export const ERROR_COPY: Record<ShieldErrorName, string> = {
   Unauthorized: "Only the vault owner can do this.",
+  VaultExists: "You already have a vault.",
+  NoVault: "No vault for this address yet.",
+  ProposalSlotOccupied: "There is already a pending change of this kind. Cancel it first.",
+  TransferFailed: "The token transfer failed.",
+  Reentrancy: "Re-entrant call refused.",
   ZeroAmount: "Enter an amount.",
   InvalidParameter: "That value is outside the allowed range.",
   AlreadyRegisteredDifferentType: "That address already has a permanent type and can't be re-registered differently.",
@@ -56,10 +61,10 @@ export function useAction() {
   const [busy, setBusy] = useState<string | null>(null);
 
   const run = useCallback(
-    async (label: string, ixs: TransactionInstruction[], opts: { silent?: boolean; recordRejection?: boolean } = {}): Promise<string | null> => {
+    async (label: string, tx: PreparedTx, opts: { silent?: boolean; recordRejection?: boolean } = {}): Promise<string | null> => {
       setBusy(label);
       try {
-        const sig = await sendTx(ixs, { recordRejection: opts.recordRejection });
+        const sig = await sendTx(tx, { recordRejection: opts.recordRejection });
         if (!opts.silent) toast.ok(label, sig);
         return sig;
       } catch (e) {

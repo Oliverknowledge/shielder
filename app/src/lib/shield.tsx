@@ -1,101 +1,83 @@
 /**
- * Shield app data layer.
+ * Shield app data layer, chain-agnostic.
  *
  * Enforcement state (vault, proposals, registry, balances) is read straight
- * from Solana RPC, so every number that governs money is the chain's own,
- * never the server's. The server is used only for what the chain cannot
- * tell you: behavioural history (from The Graph) and the monitor's
- * explanations. If the server is down, the app degrades to "behaviour
- * unavailable" and every rule still works.
+ * from the chain through an Engine (Solana program or ShieldVault.sol), so
+ * every number that governs money is the chain's own, never the server's.
+ * The server only adds what the chain cannot tell you: behavioural history
+ * and the monitor's explanations. If it is down the app degrades to
+ * "behaviour unavailable" and every rule still works.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Connection, Keypair, PublicKey, Transaction, type TransactionInstruction } from "@solana/web3.js";
+import { Keypair } from "@solana/web3.js";
 import { ConnectionProvider, WalletProvider, useWallet } from "@solana/wallet-adapter-react";
-import { getAccount, getAssociatedTokenAddressSync } from "@solana/spl-token";
-import {
-  fetchAllProposals,
-  fetchRegistry,
-  fetchVault,
-  parseShieldError,
-  vaultPda,
-  vaultTokenAccountPda,
-  OwnerType,
-  type ProposalState,
-  type RegistryEntryState,
-  type ShieldErrorName,
-  type VaultState,
-} from "../../../client/shield-client";
+import type { Hex } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import type { Chain, ProposalView, RegistryView, VaultView, WalletBalanceView } from "../../../client/views";
 import { getJson, type ServerHealth, type VaultPayload } from "./api";
+import type { Actions, Engine, PreparedTx, Signer } from "./engine";
+import { solanaEngine } from "./solana-engine";
+import { evmEngine, type EvmEngineConfig } from "./evm-engine";
+import { MaybePrivy, usePrivyState } from "./privy";
 
-export type Network = "localnet" | "devnet" | "mainnet-beta";
-export const RPC_URL: string = (import.meta.env.VITE_SHIELD_RPC_URL as string | undefined) ?? "http://127.0.0.1:8899";
+export { ShieldTxError } from "./engine";
+export type { Signer } from "./engine";
+
+export const CHAIN: Chain = ((import.meta.env.VITE_SHIELD_CHAIN as string | undefined) === "evm" ? "evm" : "solana");
+export const RPC_URL: string = (import.meta.env.VITE_SHIELD_RPC_URL as string | undefined) ?? (CHAIN === "evm" ? "http://127.0.0.1:8545" : "http://127.0.0.1:8899");
 export const API_URL: string = (import.meta.env.VITE_SHIELD_API as string | undefined) ?? "http://localhost:8787";
-export const NETWORK: Network = RPC_URL.includes("devnet") ? "devnet" : RPC_URL.includes("mainnet") ? "mainnet-beta" : "localnet";
+export const EVM_CHAIN_ID = Number((import.meta.env.VITE_EVM_CHAIN_ID as string | undefined) ?? 31337);
 
-export function explorerUrl(kind: "tx" | "address", id: string): string {
-  const base = `https://explorer.solana.com/${kind}/${id}`;
-  if (NETWORK === "devnet") return `${base}?cluster=devnet`;
-  if (NETWORK === "localnet") return `${base}?cluster=custom&customUrl=${encodeURIComponent(RPC_URL)}`;
-  return base;
-}
+/** Human network name for the badge. */
+export const NETWORK: string = CHAIN === "evm"
+  ? (EVM_CHAIN_ID === 999 ? "hyperevm" : EVM_CHAIN_ID === 998 ? "hyperevm-testnet" : EVM_CHAIN_ID === 31337 ? "anvil" : `evm-${EVM_CHAIN_ID}`)
+  : RPC_URL.includes("devnet") ? "devnet" : RPC_URL.includes("mainnet") ? "mainnet-beta" : "localnet";
 
-export class ShieldTxError extends Error {
-  constructor(
-    message: string,
-    public readonly shieldError: ShieldErrorName | null,
-    public readonly logs: string[],
-    public readonly signature: string | null = null
-  ) {
-    super(message);
-  }
-}
-
-export interface Signer {
-  publicKey: PublicKey;
-  kind: "wallet" | "demo";
-  label: string;
-}
-
-export interface WalletBalance {
-  owner: string;
-  label: string;
-  kind: OwnerType;
-  active: boolean;
-  usdc: bigint | null;
-}
+export const IS_MAINNET = NETWORK === "mainnet-beta" || NETWORK === "hyperevm";
 
 export interface ShieldData {
-  network: Network;
-  connection: Connection;
+  chain: Chain;
+  network: string;
+  engine: Engine | null;
   signer: Signer | null;
-  connectDemo: (secretKey: number[]) => void;
+  connectDemo: (secret: number[] | string) => void;
   disconnect: () => Promise<void>;
-  vaultAddress: PublicKey | null;
-  vault: VaultState | null;
+  /** Server key for this signer's vault. */
+  vaultKey: string | null;
+  vault: VaultView | null;
   balance: bigint;
-  proposals: ProposalState[];
-  registry: RegistryEntryState[];
-  wallets: WalletBalance[];
-  walletUsdc: bigint | null; // signer's own USDC (outside the vault)
+  proposals: ProposalView[];
+  registry: RegistryView[];
+  wallets: WalletBalanceView[];
+  walletUsdc: bigint | null;
+  usdc: string | null;
   loading: boolean;
   server: VaultPayload | null;
   health: ServerHealth | null;
   serverError: string | null;
-  /** True until the first server response (or failure) for this vault. */
   serverLoading: boolean;
   refresh: () => Promise<void>;
-  sendTx: (ixs: TransactionInstruction[], opts?: { recordRejection?: boolean }) => Promise<string>;
-  simulate: (ixs: TransactionInstruction[]) => Promise<{ ok: true } | { ok: false; error: ShieldErrorName | null; logs: string[] }>;
+  actions: Actions | null;
+  sendTx: (tx: PreparedTx, opts?: { recordRejection?: boolean }) => Promise<string>;
+  explorerUrl: (kind: "tx" | "address", id: string) => string;
+  privy: ReturnType<typeof usePrivyState>;
   now: number;
 }
 
 const Ctx = createContext<ShieldData | null>(null);
-
 const DEMO_KEY = "shield.demoSecretKey";
+const DEMO_EVM_KEY = "shield.evmDemoKey";
+
+let explorerRef: (kind: "tx" | "address", id: string) => string = (kind, id) => `#${kind}/${id}`;
+/** Module-level accessor for components outside the provider tree (toasts). */
+export const explorerUrl = (kind: "tx" | "address", id: string) => explorerRef(kind, id);
 
 function Inner({ children }: { children: ReactNode }) {
   const wallet = useWallet();
-  const connection = useMemo(() => new Connection(RPC_URL, "confirmed"), []);
+  const privy = usePrivyState();
+  const [health, setHealth] = useState<ServerHealth | null>(null);
+
+  // --- demo keys (session only) ---
   const [demoKeypair, setDemoKeypair] = useState<Keypair | null>(() => {
     try {
       const raw = sessionStorage.getItem(DEMO_KEY);
@@ -104,24 +86,68 @@ function Inner({ children }: { children: ReactNode }) {
       return null;
     }
   });
+  const [demoEvmKey, setDemoEvmKey] = useState<Hex | null>(() => (sessionStorage.getItem(DEMO_EVM_KEY) as Hex | null) ?? null);
+  const demoKeypairRef = useRef(demoKeypair);
+  demoKeypairRef.current = demoKeypair;
+  const demoEvmRef = useRef(demoEvmKey);
+  demoEvmRef.current = demoEvmKey;
+  const walletRef = useRef(wallet);
+  walletRef.current = wallet;
+  const privyRef = useRef(privy);
+  privyRef.current = privy;
 
+  // --- engine ---
+  const evmCfg: EvmEngineConfig | null = useMemo(() => {
+    if (CHAIN !== "evm") return null;
+    const env = import.meta.env as Record<string, string | undefined>;
+    const vault = env.VITE_SHIELD_VAULT_ADDRESS ?? health?.evm?.vault;
+    const usdc = env.VITE_USDC_ADDRESS ?? health?.evm?.usdc;
+    if (!vault || !usdc) return null;
+    return {
+      rpcUrl: RPC_URL,
+      chainId: EVM_CHAIN_ID,
+      vault: vault as `0x${string}`,
+      usdc: usdc as `0x${string}`,
+      coreDepositMock: (env.VITE_CORE_DEPOSIT_MOCK ?? health?.evm?.coreDepositMock ?? undefined) as `0x${string}` | undefined,
+      hyperliquidNetwork: (env.VITE_HL_NETWORK as "mainnet" | "testnet" | undefined) ?? (EVM_CHAIN_ID === 999 ? "mainnet" : EVM_CHAIN_ID === 998 ? "testnet" : undefined),
+    };
+  }, [health?.evm?.vault, health?.evm?.usdc, health?.evm?.coreDepositMock]);
+
+  const engine: Engine | null = useMemo(() => {
+    if (CHAIN === "solana") {
+      return solanaEngine(RPC_URL, () => demoKeypairRef.current, () => (walletRef.current.connected ? { sendTransaction: (tx, c, o) => walletRef.current.sendTransaction(tx, c, o) } : null));
+    }
+    if (!evmCfg) return null;
+    return evmEngine(evmCfg, () => demoEvmRef.current, () => privyRef.current.provider);
+  }, [evmCfg]);
+
+  useEffect(() => {
+    if (engine) explorerRef = engine.explorerUrl;
+  }, [engine]);
+
+  // --- signer ---
   const signer: Signer | null = useMemo(() => {
-    if (wallet.connected && wallet.publicKey) return { publicKey: wallet.publicKey, kind: "wallet", label: wallet.wallet?.adapter.name ?? "Wallet" };
-    if (demoKeypair) return { publicKey: demoKeypair.publicKey, kind: "demo", label: "Demo key" };
+    if (CHAIN === "solana") {
+      if (wallet.connected && wallet.publicKey) return { address: wallet.publicKey.toBase58(), kind: "wallet", label: wallet.wallet?.adapter.name ?? "Wallet" };
+      if (demoKeypair) return { address: demoKeypair.publicKey.toBase58(), kind: "demo", label: "Demo key" };
+      return null;
+    }
+    if (privy.authenticated && privy.address) return { address: privy.address, kind: "privy", label: privy.label };
+    if (demoEvmKey) return { address: privateKeyToAccount(demoEvmKey).address, kind: "demo", label: "Demo key" };
     return null;
-  }, [wallet.connected, wallet.publicKey, wallet.wallet, demoKeypair]);
+  }, [wallet.connected, wallet.publicKey, wallet.wallet, demoKeypair, demoEvmKey, privy.authenticated, privy.address, privy.label]);
 
-  const vaultAddress = useMemo(() => (signer ? vaultPda(signer.publicKey)[0] : null), [signer]);
+  const vaultKey = useMemo(() => (engine && signer ? engine.vaultKeyFor(signer) : null), [engine, signer]);
 
-  const [vault, setVault] = useState<VaultState | null>(null);
+  // --- state ---
+  const [vault, setVault] = useState<VaultView | null>(null);
   const [balance, setBalance] = useState<bigint>(0n);
-  const [proposals, setProposals] = useState<ProposalState[]>([]);
-  const [registry, setRegistry] = useState<RegistryEntryState[]>([]);
-  const [wallets, setWallets] = useState<WalletBalance[]>([]);
+  const [proposals, setProposals] = useState<ProposalView[]>([]);
+  const [registry, setRegistry] = useState<RegistryView[]>([]);
+  const [wallets, setWallets] = useState<WalletBalanceView[]>([]);
   const [walletUsdc, setWalletUsdc] = useState<bigint | null>(null);
   const [loading, setLoading] = useState(true);
   const [server, setServer] = useState<VaultPayload | null>(null);
-  const [health, setHealth] = useState<ServerHealth | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [serverLoading, setServerLoading] = useState(true);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -134,52 +160,36 @@ function Inner({ children }: { children: ReactNode }) {
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!vaultAddress || !signer) {
+    if (!engine || !signer) {
       setVault(null);
-      setLoading(false);
+      setLoading(CHAIN === "evm" && !engine && !!signer); // still waiting for config
       return;
     }
     if (inflight.current) return;
     inflight.current = true;
     try {
-      const v = await fetchVault(connection, vaultAddress);
-      vaultExistsRef.current = !!v;
-      setVault(v);
-      if (v) {
-        const [vaultAta] = vaultTokenAccountPda(vaultAddress);
-        const [acct, props, reg] = await Promise.all([
-          getAccount(connection, vaultAta, "confirmed").catch(() => null),
-          fetchAllProposals(connection, vaultAddress),
-          fetchRegistry(connection, vaultAddress),
-        ]);
-        setBalance(acct?.amount ?? 0n);
-        setProposals(props);
-        setRegistry(reg);
-        const balances = await Promise.all(
-          reg.map(async (r) => {
-            const ata = getAssociatedTokenAddressSync(v.usdcMint, r.owner, true);
-            const a = await getAccount(connection, ata, "confirmed").catch(() => null);
-            return { owner: r.owner.toBase58(), label: r.label, kind: r.kind, active: r.active, usdc: a ? a.amount : null };
-          })
-        );
-        setWallets(balances);
-        const own = await getAccount(connection, getAssociatedTokenAddressSync(v.usdcMint, signer.publicKey, true), "confirmed").catch(() => null);
-        setWalletUsdc(own ? own.amount : 0n);
-      }
+      const snap = await engine.read(signer);
+      vaultExistsRef.current = !!snap.vault;
+      setVault(snap.vault);
+      setBalance(snap.balance);
+      setProposals(snap.proposals);
+      setRegistry(snap.registry);
+      setWallets(snap.wallets);
+      setWalletUsdc(snap.walletUsdc);
     } catch (e) {
       console.warn("refresh failed", e);
     } finally {
       inflight.current = false;
       setLoading(false);
     }
-  }, [connection, vaultAddress, signer]);
+  }, [engine, signer]);
 
   const refreshServer = useCallback(async () => {
     try {
       const h = await getJson<ServerHealth>(`${API_URL}/api/health`);
       setHealth(h);
-      if (vaultAddress && vaultExistsRef.current) {
-        const p = await getJson<VaultPayload>(`${API_URL}/api/vault/${vaultAddress.toBase58()}`);
+      if (vaultKey && vaultExistsRef.current) {
+        const p = await getJson<VaultPayload>(`${API_URL}/api/vault/${vaultKey}`);
         setServer(p);
         setServerLoading(false);
       } else {
@@ -190,13 +200,11 @@ function Inner({ children }: { children: ReactNode }) {
       setServerError(e instanceof Error ? e.message : String(e));
       setServerLoading(false);
     }
-  }, [vaultAddress]);
+  }, [vaultKey]);
 
   useEffect(() => {
     setLoading(true);
     setServerLoading(true);
-    // The server payload is only meaningful once we know the vault exists,
-    // so the first server fetch follows the first chain fetch.
     void refresh().then(() => refreshServer());
     const a = setInterval(() => void refresh(), 4000);
     const b = setInterval(() => void refreshServer(), 4000);
@@ -206,115 +214,81 @@ function Inner({ children }: { children: ReactNode }) {
     };
   }, [refresh, refreshServer]);
 
-  const connectDemo = useCallback((secretKey: number[]) => {
-    const kp = Keypair.fromSecretKey(Uint8Array.from(secretKey));
-    sessionStorage.setItem(DEMO_KEY, JSON.stringify(secretKey));
-    setDemoKeypair(kp);
+  const connectDemo = useCallback((secret: number[] | string) => {
+    if (CHAIN === "solana") {
+      const arr = typeof secret === "string" ? (JSON.parse(secret) as number[]) : secret;
+      const kp = Keypair.fromSecretKey(Uint8Array.from(arr));
+      sessionStorage.setItem(DEMO_KEY, JSON.stringify(arr));
+      setDemoKeypair(kp);
+    } else {
+      const hex = (typeof secret === "string" ? secret.trim() : "") as Hex;
+      privateKeyToAccount(hex); // validates
+      sessionStorage.setItem(DEMO_EVM_KEY, hex);
+      setDemoEvmKey(hex);
+    }
   }, []);
 
   const disconnect = useCallback(async () => {
     sessionStorage.removeItem(DEMO_KEY);
+    sessionStorage.removeItem(DEMO_EVM_KEY);
     setDemoKeypair(null);
+    setDemoEvmKey(null);
     if (wallet.connected) await wallet.disconnect();
-  }, [wallet]);
+    if (privy.authenticated) await privy.logout();
+  }, [wallet, privy]);
 
-  const buildTx = useCallback(
-    async (ixs: TransactionInstruction[]) => {
-      if (!signer) throw new Error("connect a wallet first");
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
-      const tx = new Transaction({ feePayer: signer.publicKey, blockhash, lastValidBlockHeight });
-      tx.add(...ixs);
-      return { tx, blockhash, lastValidBlockHeight };
-    },
-    [connection, signer]
-  );
-
-  const simulate = useCallback<ShieldData["simulate"]>(
-    async (ixs) => {
-      const { tx } = await buildTx(ixs);
-      const sim = await connection.simulateTransaction(tx);
-      if (sim.value.err) {
-        const logs = sim.value.logs ?? [];
-        return { ok: false, error: parseShieldError(`${JSON.stringify(sim.value.err)}\n${logs.join("\n")}`), logs };
-      }
-      return { ok: true };
-    },
-    [buildTx, connection]
-  );
+  const usdc = CHAIN === "evm" ? (evmCfg?.usdc ?? null) : (vault?.usdc ?? health?.usdcMint ?? ((import.meta.env.VITE_USDC_MINT as string | undefined) || null));
+  const actions = useMemo<Actions | null>(() => (engine && signer && usdc ? engine.actions(signer, usdc) : null), [engine, signer, usdc]);
 
   const sendTx = useCallback<ShieldData["sendTx"]>(
-    async (ixs, opts = {}) => {
-      if (!signer) throw new Error("connect a wallet first");
-      const { tx, blockhash, lastValidBlockHeight } = await buildTx(ixs);
-
-      // Simulate first: a rejection is the program's own decision, and we
-      // can show it without asking the wallet to sign anything.
-      const sim = await connection.simulateTransaction(tx);
-      if (sim.value.err) {
-        const logs = sim.value.logs ?? [];
-        const name = parseShieldError(`${JSON.stringify(sim.value.err)}\n${logs.join("\n")}`);
-        let recorded: string | null = null;
-        if (opts.recordRejection && demoKeypair && signer.kind === "demo") {
-          // Demo keys can land the rejection on-chain (skip preflight) so the
-          // failed transaction is inspectable on an explorer.
-          try {
-            tx.sign(demoKeypair);
-            recorded = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
-            await connection.confirmTransaction({ signature: recorded, blockhash, lastValidBlockHeight }, "confirmed").catch(() => null);
-          } catch {
-            recorded = null;
-          }
-        }
-        throw new ShieldTxError(name ? `Rejected by the vault: ${name}` : "Transaction failed", name, logs, recorded);
-      }
-
-      let signature: string;
-      if (signer.kind === "demo" && demoKeypair) {
-        tx.sign(demoKeypair);
-        signature = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false });
-      } else {
-        signature = await wallet.sendTransaction(tx, connection, { preflightCommitment: "confirmed" });
-      }
-      const conf = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
-      if (conf.value.err) throw new ShieldTxError("Transaction failed on-chain", null, [], signature);
+    async (tx, opts = {}) => {
+      if (!engine || !signer) throw new Error("connect a wallet first");
+      const sig = await engine.send(signer, tx, opts);
       await refresh();
       void refreshServer();
-      return signature;
+      return sig;
     },
-    [buildTx, connection, demoKeypair, refresh, refreshServer, signer, wallet]
+    [engine, signer, refresh, refreshServer]
   );
 
   const value: ShieldData = {
+    chain: CHAIN,
     network: NETWORK,
-    connection,
+    engine,
     signer,
     connectDemo,
     disconnect,
-    vaultAddress,
+    vaultKey,
     vault,
     balance,
     proposals,
     registry,
     wallets,
     walletUsdc,
+    usdc,
     loading,
     server,
     health,
     serverError,
     serverLoading,
     refresh,
+    actions,
     sendTx,
-    simulate,
+    explorerUrl: engine ? engine.explorerUrl : explorerUrl,
+    privy,
     now,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function ShieldProvider({ children }: { children: ReactNode }) {
+  // Solana wallet-standard providers are harmless on EVM builds; Privy wraps only when configured.
   return (
-    <ConnectionProvider endpoint={RPC_URL} config={{ commitment: "confirmed" }}>
-      <WalletProvider wallets={[]} autoConnect>
-        <Inner>{children}</Inner>
+    <ConnectionProvider endpoint={CHAIN === "solana" ? RPC_URL : "http://127.0.0.1:8899"} config={{ commitment: "confirmed" }}>
+      <WalletProvider wallets={[]} autoConnect={CHAIN === "solana"}>
+        <MaybePrivy chainId={EVM_CHAIN_ID} rpcUrl={RPC_URL}>
+          <Inner>{children}</Inner>
+        </MaybePrivy>
       </WalletProvider>
     </ConnectionProvider>
   );

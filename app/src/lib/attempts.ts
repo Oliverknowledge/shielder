@@ -5,7 +5,7 @@
  * recorded one) so Activity can show them as proof.
  */
 import { useCallback, useEffect, useState } from "react";
-import type { ShieldErrorName } from "../../../client/shield-client";
+import type { ShieldErrorName } from "../../../client/views";
 
 export interface BlockedAttempt {
   ts: number; // unix seconds

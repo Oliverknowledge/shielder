@@ -51,7 +51,7 @@ function AccountMenu() {
     };
   }, [open]);
   if (!signer) return null;
-  const pk = signer.publicKey.toBase58();
+  const pk = signer.address;
   return (
     <div className="account-wrap" ref={ref}>
       <button className="account" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}>

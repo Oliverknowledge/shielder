@@ -13,6 +13,8 @@ export interface ServerHealth {
   vaults: string[];
   usdcMint: string | null;
   executionWallet: string | null;
+  chain?: "solana" | "evm";
+  evm?: { vault: string; usdc: string; coreDepositMock?: string | null; chainId: number; rpcUrl: string } | null;
 }
 
 export interface SourceStatus {

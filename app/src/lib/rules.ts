@@ -2,8 +2,7 @@
  * The vault's rules as plain-English sentences, plus the mapping from a
  * sentence's value back to the program's tighten/loosen parameters.
  */
-import { PublicKey } from "@solana/web3.js";
-import { OwnerType, usdcToRaw, type LoosenParams, type TightenParams, type VaultState } from "../../../client/shield-client";
+import { OwnerKind, usdcToRaw, type LoosenView as LoosenParams, type TightenView as TightenParams, type VaultView as VaultState } from "../../../client/views";
 import { usd, hoursLabel, short, rawToNumber } from "./format";
 
 export type RuleKey = "floor" | "daily" | "threshold" | "lossTrigger" | "lossCooldown" | "cap" | "loosenDelay" | "exitDelay";
@@ -74,7 +73,7 @@ export function describeLoosen(p: LoosenParams, v: VaultState | null): ChangeLin
   if (p.newEmergencyCap !== undefined) lines.push({ name: "Instant cold-wallet cap", from: cur("cap"), to: usd(p.newEmergencyCap) });
   if (p.newLoosenCooldownSecs !== undefined) lines.push({ name: "Weakening delay", from: cur("loosenDelay"), to: hoursLabel(p.newLoosenCooldownSecs) });
   if (p.newFullExitCooldownSecs !== undefined) lines.push({ name: "Exit delay", from: cur("exitDelay"), to: hoursLabel(p.newFullExitCooldownSecs) });
-  if (p.newRiskVerifier !== undefined) lines.push(p.newRiskVerifier.equals(PublicKey.default) ? { name: "Monitor", from: "on", to: "off" } : { name: "Monitor", from: null, to: short(p.newRiskVerifier.toBase58()) });
-  if (p.registerOwner) lines.push({ name: p.registerKind === OwnerType.Cold ? "New cold wallet" : "New trading wallet", from: null, to: p.registerLabel || short(p.registerOwner.toBase58()) });
+  if (p.newRiskVerifier !== undefined) lines.push(p.newRiskVerifier === null ? { name: "Monitor", from: "on", to: "off" } : { name: "Monitor", from: null, to: short(p.newRiskVerifier) });
+  if (p.registerOwner) lines.push({ name: p.registerKind === OwnerKind.Cold ? "New cold wallet" : "New trading wallet", from: null, to: p.registerLabel || short(p.registerOwner) });
   return lines.length ? lines : [{ name: "Rule change", from: null, to: "" }];
 }

@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { useShield, API_URL, NETWORK } from "../lib/shield";
+import { useShield, API_URL, IS_MAINNET } from "../lib/shield";
 import { CapitalBar, Countdown, Dot, Field, Icon, Money, MoneyInput, Pill, Sheet, Skeleton, useToast, type Tone } from "../components/ui";
 import { usd, clockTime, hoursLabel, timeOnly, spanAdjective } from "../lib/format";
-import { evaluateTopUp, rollingVelocity, ProposalCategory, OwnerType, COOLDOWN_REASON, cancelProposalIx, depositIx, usdcToRaw, type ProposalState } from "../../../client/shield-client";
+import { evaluateTopUp, rollingVelocity, ProposalKind, OwnerKind, COOLDOWN_REASON, usdcToRaw, type ProposalView } from "../../../client/views";
 import { useAction } from "../lib/actions";
 import { getJson } from "../lib/api";
 import { describeLoosen } from "../lib/rules";
@@ -12,32 +11,30 @@ import { describeEvents } from "../lib/events";
 import { GetMeSafe } from "../components/Safety";
 import { usePrefs } from "../lib/prefs";
 import { useAttempts } from "../lib/attempts";
-import { executeRuleChangeIx, executeRuleChangeWithRegistrationIx } from "../../../client/shield-client";
 
 export function Overview() {
-  const { vault, balance, proposals, wallets, server, serverLoading, serverError, now, vaultAddress, signer, walletUsdc, health, refresh } = useShield();
+  const { vault, balance, proposals, wallets, server, serverLoading, serverError, now, vaultKey, signer, walletUsdc, health, refresh, actions, usdc } = useShield();
   const { run, busy } = useAction();
   const toast = useToast();
   const [depositOpen, setDepositOpen] = useState(false);
   const [depositAmount, setDepositAmount] = useState("");
   const [faucetBusy, setFaucetBusy] = useState(false);
   const [safeOpen, setSafeOpen] = useState(false);
-  const [prefs, setPrefs] = usePrefs(signer?.publicKey.toBase58() ?? null);
-  const attempts = useAttempts(vaultAddress?.toBase58() ?? null);
+  const [prefs, setPrefs] = usePrefs(signer?.address ?? null);
+  const attempts = useAttempts(vaultKey);
   const [sessionStart] = useState(() => prefs.lastSeenAt);
   useEffect(() => {
     // remember this visit so the next one can say "last night"
     if (signer) setPrefs({ lastSeenAt: now });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signer?.publicKey.toBase58()]);
-  if (!vault || !vaultAddress || !signer) return null;
+  }, [signer?.address]);
+  if (!vault || !actions || !signer) return null;
 
   const deposit = async () => {
     const amt = usdcToRaw(Number(depositAmount || 0));
     if (amt <= 0n) return;
-    const ata = getAssociatedTokenAddressSync(vault.usdcMint, signer.publicKey, true);
     try {
-      await run(`Deposited ${usd(amt)}`, [depositIx({ depositor: signer.publicKey, vault: vaultAddress, sourceTokenAccount: ata, amount: amt })]);
+      await run(`Deposited ${usd(amt)}`, actions.deposit(amt));
       setDepositOpen(false);
       setDepositAmount("");
     } catch {
@@ -47,7 +44,7 @@ export function Overview() {
   const faucet = async () => {
     setFaucetBusy(true);
     try {
-      await getJson(`${API_URL}/api/demo/faucet`, { method: "POST", body: JSON.stringify({ owner: signer.publicKey.toBase58(), amountUsdc: Number(depositAmount || 10000) || 10000, mint: vault.usdcMint.toBase58() }) });
+      await getJson(`${API_URL}/api/demo/faucet`, { method: "POST", body: JSON.stringify({ owner: signer.address, amountUsdc: Number(depositAmount || 10000) || 10000, mint: usdc }) });
       toast.ok("Test USDC added to your wallet");
       await refresh();
     } catch (e) {
@@ -59,7 +56,7 @@ export function Overview() {
 
   const cooldownActive = Number(vault.cooldownUntil) > now;
   const byRule = vault.cooldownReason === COOLDOWN_REASON.RISK_VERDICT;
-  const execWallets = wallets.filter((w) => w.kind === OwnerType.Execution && w.active);
+  const execWallets = wallets.filter((w) => w.kind === OwnerKind.Execution && w.active);
   const bankroll = execWallets.reduce((a, w) => a + (w.usdc ?? 0n), 0n);
   const tradingLabel = execWallets.map((w) => w.label).join(", ") || "your trading wallet";
   const velocity = rollingVelocity(vault, BigInt(now));
@@ -69,8 +66,8 @@ export function Overview() {
   const total = balance + bankroll;
   const canMove = remainingToday < headroom ? remainingToday : headroom;
   const probe = evaluateTopUp(vault, balance, canMove > 0n ? canMove : 1n, BigInt(now));
-  const pending = proposals.filter((p) => p.category !== ProposalCategory.TopUp);
-  const topUpPending = proposals.find((p) => p.category === ProposalCategory.TopUp);
+  const pending = proposals.filter((p) => p.category !== ProposalKind.TopUp);
+  const topUpPending = proposals.find((p) => p.category === ProposalKind.TopUp);
   const h24 = server?.profile.windows.h24;
   const lossToday = h24 && Number(h24.realisedLoss) > 0 ? h24.realisedLoss : null;
   const labelOf = (owner: string) => wallets.find((w) => w.owner === owner)?.label ?? `${owner.slice(0, 4)}…`;
@@ -81,7 +78,7 @@ export function Overview() {
     : approaching
       ? { tone: "pending", label: remainingToday === 0n ? "Daily limit reached" : "Approaching your limit" }
       : { tone: "protect", label: "Within your plan" };
-  const matured = proposals.filter((p) => p.category !== ProposalCategory.TopUp && Number(p.executeAfter) <= now && p.configVersionAtCreation === vault.configVersion);
+  const matured = proposals.filter((p) => p.category !== ProposalKind.TopUp && Number(p.executeAfter) <= now && p.configVersionAtCreation === vault.configVersion);
   const blockedSinceLastVisit = attempts.filter((a) => a.ts > sessionStart && a.ts < now - 600);
   const lastNight = blockedSinceLastVisit.length > 0 ? blockedSinceLastVisit[0] : null;
 
@@ -184,19 +181,17 @@ export function Overview() {
             const what = lines.map((l) => `${l.name.toLowerCase()}${l.from ? ` from ${l.from}` : ""} to ${l.to}`).join(", ") || (p.action.kind === "uninstallVault" ? "leave Shield" : "make a change");
             const apply = () => {
               if (p.action.kind === "loosen") {
-                const owner = p.action.params.registerOwner;
-                const ix = owner ? executeRuleChangeWithRegistrationIx({ authority: signer.publicKey, vault: vaultAddress, owner }) : executeRuleChangeIx({ authority: signer.publicKey, vault: vaultAddress });
-                void run("Change applied", [ix]).catch(() => null);
+                void run("Change applied", actions.executeRuleChange(p.action.params.registerOwner)).catch(() => null);
               }
             };
             return (
-              <div key={p.address.toBase58()} style={{ marginTop: lastNight ? 22 : 8 }}>
+              <div key={p.id} style={{ marginTop: lastNight ? 22 : 8 }}>
                 <p className="lead" style={{ color: "var(--paper)" }}>
                   On {clockTime(Number(p.createdAt), now)} you asked to {what}. <b>Still want to?</b>
                 </p>
                 <p className="small" style={{ opacity: 0.7, marginTop: 6 }}>Nothing changed by itself. Your current protection stays until you choose.</p>
                 <div className="row wrap" style={{ marginTop: 14, gap: 8 }}>
-                  <button className="btn btn-protect" disabled={!!busy} onClick={() => void run("Kept your protection", [cancelProposalIx({ authority: signer.publicKey, vault: vaultAddress, category: p.category })]).catch(() => null)}>Keep my protection</button>
+                  <button className="btn btn-protect" disabled={!!busy} onClick={() => void run("Kept your protection", actions.cancelProposal(p.category)).catch(() => null)}>Keep my protection</button>
                   {p.action.kind === "loosen" ? (
                     <button className="btn btn-secondary" disabled={!!busy} onClick={apply}>Change it</button>
                   ) : (
@@ -217,7 +212,7 @@ export function Overview() {
           </div>
           <div className="list">
             {pending.filter((p) => !matured.includes(p)).map((p) => (
-              <PendingRow key={p.address.toBase58()} p={p} now={now} vault={vault} busy={!!busy} onCancel={() => void run("Cancelled", [cancelProposalIx({ authority: signer.publicKey, vault: vaultAddress, category: p.category })]).catch(() => null)} />
+              <PendingRow key={p.id} p={p} now={now} vault={vault} busy={!!busy} onCancel={() => void run("Cancelled", actions.cancelProposal(p.category)).catch(() => null)} />
             ))}
           </div>
         </section>
@@ -287,7 +282,7 @@ export function Overview() {
           <Field label="Amount" hint={`In your wallet: ${walletUsdc === null ? "…" : usd(walletUsdc)} USDC`}>
             <MoneyInput value={depositAmount} onChange={setDepositAmount} autoFocus />
           </Field>
-          {NETWORK !== "mainnet-beta" && health?.demo && walletUsdc !== null && walletUsdc < usdcToRaw(Number(depositAmount || 0)) && (
+          {!IS_MAINNET && health?.demo && walletUsdc !== null && walletUsdc < usdcToRaw(Number(depositAmount || 0)) && (
             <div className="warn-box row-between">
               <span>Not enough test USDC in your wallet.</span>
               <button className="btn btn-secondary btn-sm" onClick={() => void faucet()} disabled={faucetBusy}>{faucetBusy ? "Adding…" : "Get test USDC"}</button>
@@ -302,7 +297,7 @@ export function Overview() {
   );
 }
 
-function PendingRow({ p, now, vault, busy, onCancel }: { p: ProposalState; now: number; vault: NonNullable<ReturnType<typeof useShield>["vault"]>; busy: boolean; onCancel: () => void }) {
+function PendingRow({ p, now, vault, busy, onCancel }: { p: ProposalView; now: number; vault: NonNullable<ReturnType<typeof useShield>["vault"]>; busy: boolean; onCancel: () => void }) {
   const matured = Number(p.executeAfter) <= now;
   const stale = p.configVersionAtCreation !== vault.configVersion;
   const lines =

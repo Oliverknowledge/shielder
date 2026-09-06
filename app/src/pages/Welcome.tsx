@@ -3,11 +3,11 @@ import { Navigate } from "react-router-dom";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletReadyState } from "@solana/wallet-adapter-base";
 import { motion } from "motion/react";
-import { useShield, NETWORK } from "../lib/shield";
+import { useShield, NETWORK, IS_MAINNET, CHAIN } from "../lib/shield";
 import { CapitalBar, Dot, Icon } from "../components/ui";
 
 export function Welcome() {
-  const { signer, vault, loading, connectDemo } = useShield();
+  const { signer, vault, loading, connectDemo, privy } = useShield();
   const wallet = useWallet();
   const [showDemo, setShowDemo] = useState(false);
   const [demoJson, setDemoJson] = useState("");
@@ -23,6 +23,12 @@ export function Welcome() {
 
   const tryDemo = () => {
     try {
+      if (CHAIN === "evm") {
+        const hex = demoJson.trim();
+        if (!/^0x[0-9a-fA-F]{64}$/.test(hex)) throw new Error("Expected a 0x-prefixed 32-byte private key");
+        connectDemo(hex);
+        return;
+      }
       const arr = JSON.parse(demoJson) as number[];
       if (!Array.isArray(arr) || arr.length !== 64) throw new Error("Expected a 64-number Solana keypair array");
       connectDemo(arr);
@@ -71,8 +77,15 @@ export function Welcome() {
         <h2 className="title" style={{ marginBottom: 4 }}>Connect a wallet</h2>
         <p className="small muted" style={{ marginBottom: 16 }}>Your wallet is the only authority over the vault. Shield never holds keys.</p>
         <div className="stack-s">
-          {installed.length === 0 && <p className="small dim">No Solana wallet detected. Install Phantom, Solflare or Backpack{NETWORK !== "mainnet-beta" ? ", or continue with a demo key below" : ""}.</p>}
-          {installed.map((w) => (
+          {privy.available && (
+            <button className="btn btn-block btn-lg" disabled={!privy.ready} onClick={() => privy.login()}>
+              {privy.ready ? "Continue with email, passkey or wallet" : "Loading…"}
+            </button>
+          )}
+          {privy.available && <p className="tiny muted">Powered by Privy: a self-custodial wallet is created for you on {NETWORK}. No seed phrase ceremony.</p>}
+          {CHAIN === "solana" && installed.length === 0 && <p className="small dim">No Solana wallet detected. Install Phantom, Solflare or Backpack{!IS_MAINNET ? ", or continue with a demo key below" : ""}.</p>}
+          {CHAIN === "evm" && !privy.available && <p className="small dim">Sign in with a local key for the {NETWORK} demo. With a Privy app ID configured, this becomes email or passkey sign-in with an embedded wallet.</p>}
+          {CHAIN === "solana" && installed.map((w) => (
             <motion.button
               key={w.adapter.name}
               className="btn btn-secondary btn-block"
@@ -91,16 +104,16 @@ export function Welcome() {
           ))}
         </div>
 
-        {NETWORK !== "mainnet-beta" && (
+        {!IS_MAINNET && (
           <div style={{ marginTop: 14 }}>
             {!showDemo ? (
-              <button className={`btn ${installed.length === 0 ? "btn-secondary btn-block" : "btn-ghost btn-sm"}`} onClick={() => setShowDemo(true)}>
+              <button className={`btn ${installed.length === 0 && !privy.available ? "btn-secondary btn-block" : "btn-ghost btn-sm"}`} onClick={() => setShowDemo(true)}>
                 Continue with a demo key ({NETWORK})
               </button>
             ) : (
               <div className="stack-s fade-in">
-                <p className="tiny muted">Paste a Solana CLI keypair JSON (the 64-number array). Kept in this tab's session only. Never do this with a real key.</p>
-                <textarea className="input mono" rows={3} value={demoJson} onChange={(e) => setDemoJson(e.target.value)} placeholder="[12,34,…]" />
+                <p className="tiny muted">{CHAIN === "evm" ? "Paste a hex private key (an Anvil dev key on the local demo). Kept in this tab's session only. Never do this with a real key." : "Paste a Solana CLI keypair JSON (the 64-number array). Kept in this tab's session only. Never do this with a real key."}</p>
+                <textarea className="input mono" rows={3} value={demoJson} onChange={(e) => setDemoJson(e.target.value)} placeholder={CHAIN === "evm" ? "0x…" : "[12,34,…]"} />
                 {demoError && <p className="tiny c-blocked">{demoError}</p>}
                 <div className="row">
                   <button className="btn btn-sm" onClick={tryDemo} disabled={!demoJson.trim()}>
@@ -117,7 +130,7 @@ export function Welcome() {
       </div>
 
       <p className="tiny muted" style={{ marginTop: 20 }}>
-        A Solana program enforces the rules. The Graph Substreams remembers what came back. A Chainlink CRE confidential workflow signs the loss verdicts. All of it is code you can read.
+        {CHAIN === "evm" ? "A vault contract on HyperEVM enforces the rules and funds your Hyperliquid account directly." : "A Solana program enforces the rules."} The Graph Substreams remembers what came back. A Chainlink CRE confidential workflow signs the loss verdicts. All of it is code you can read.
       </p>
     </main>
   );

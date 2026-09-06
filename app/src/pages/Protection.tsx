@@ -1,31 +1,14 @@
 import { useState } from "react";
-import { PublicKey } from "@solana/web3.js";
-import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { AnimatePresence, motion } from "motion/react";
 import { useShield } from "../lib/shield";
 import { useAction } from "../lib/actions";
 import { Countdown, Dot, Field, Icon, MoneyInput, Pill, Sheet, useToast } from "../components/ui";
 import { usd, hoursLabel, duration, short, clockTime } from "../lib/format";
 import { RULES, paramFor, fmtRule, isStricter, describeLoosen, type RuleDef } from "../lib/rules";
-import {
-  ProposalCategory,
-  OwnerType,
-  COOLDOWN_REASON,
-  cancelProposalIx,
-  executeFullExitIx,
-  executeRuleChangeIx,
-  executeRuleChangeWithRegistrationIx,
-  proposeLoosenIx,
-  proposeUninstallVaultIx,
-  proposeColdTransferAboveCapIx,
-  instantColdTransferIx,
-  removeRegistrationIx,
-  tightenIx,
-  usdcToRaw,
-} from "../../../client/shield-client";
+import { ProposalKind, OwnerKind, Route, COOLDOWN_REASON, usdcToRaw } from "../../../client/views";
 
 export function Protection() {
-  const { vault, proposals, registry, wallets, signer, vaultAddress, now, health } = useShield();
+  const { vault, proposals, registry, wallets, signer, now, health, actions, engine, chain } = useShield();
   const { run, busy } = useAction();
   const toast = useToast();
   const [editing, setEditing] = useState<RuleDef | null>(null);
@@ -34,21 +17,21 @@ export function Protection() {
   const [addOpen, setAddOpen] = useState(false);
   const [addAddr, setAddAddr] = useState("");
   const [addLabel, setAddLabel] = useState("");
-  const [addKind, setAddKind] = useState<OwnerType>(OwnerType.Cold);
+  const [addKind, setAddKind] = useState<OwnerKind>(OwnerKind.Cold);
   const [exitOpen, setExitOpen] = useState(false);
   const [exitDest, setExitDest] = useState("");
   const [coldOpen, setColdOpen] = useState(false);
   const [coldAmount, setColdAmount] = useState("");
   const [coldDest, setColdDest] = useState("");
 
-  if (!vault || !signer || !vaultAddress) return null;
+  if (!vault || !signer || !actions || !engine) return null;
 
-  const ruleChange = proposals.find((p) => p.category === ProposalCategory.RuleChange);
-  const exitPending = proposals.find((p) => p.category === ProposalCategory.FullExit);
+  const ruleChange = proposals.find((p) => p.category === ProposalKind.RuleChange);
+  const exitPending = proposals.find((p) => p.category === ProposalKind.FullExit);
   const cooldownActive = Number(vault.cooldownUntil) > now;
-  const coldWallets = registry.filter((r) => r.kind === OwnerType.Cold && r.active);
-  const monitorIsShield = !!health?.monitor.verifier && vault.riskVerifier.toBase58() === health.monitor.verifier;
-  const monitorSet = !vault.riskVerifier.equals(PublicKey.default);
+  const coldWallets = registry.filter((r) => r.kind === OwnerKind.Cold && r.active);
+  const monitorIsShield = !!health?.monitor.verifier && !!vault.riskVerifier && vault.riskVerifier.toLowerCase() === health.monitor.verifier.toLowerCase();
+  const monitorSet = !!vault.riskVerifier;
   const loosenWait = hoursLabel(vault.loosenCooldownSecs);
 
   const openEdit = (def: RuleDef) => {
@@ -65,11 +48,11 @@ export function Protection() {
     const params = paramFor(editing.key, v);
     try {
       if (stricter) {
-        await run(`${editing.name} tightened to ${fmtRule(editing, v)}`, [tightenIx({ authority: signer.publicKey, vault: vaultAddress, ...params.tighten })]);
+        await run(`${editing.name} tightened to ${fmtRule(editing, v)}`, actions.tighten(params.tighten));
         setFlash(editing.key);
         setTimeout(() => setFlash(null), 1800);
       } else {
-        await run(`Change scheduled: activates in ${loosenWait}`, [proposeLoosenIx({ authority: signer.publicKey, vault: vaultAddress, ...params.loosen })]);
+        await run(`Change scheduled: activates in ${loosenWait}`, actions.proposeLoosen(params.loosen));
       }
       setEditing(null);
     } catch {
@@ -78,57 +61,47 @@ export function Protection() {
   };
 
   const pause = (hours: number) =>
-    run(`Top-ups paused for ${hours} hours`, [tightenIx({ authority: signer.publicKey, vault: vaultAddress, pauseTopUpsUntil: BigInt(Math.max(Number(vault.cooldownUntil), now) + hours * 3600) })]).catch(() => null);
+    run(`Top-ups paused for ${hours} hours`, actions.tighten({ pauseTopUpsUntil: BigInt(Math.max(Number(vault.cooldownUntil), now) + hours * 3600) })).catch(() => null);
 
   const executeRuleChange = async () => {
     if (!ruleChange || ruleChange.action.kind !== "loosen") return;
-    const owner = ruleChange.action.params.registerOwner;
-    const ix = owner
-      ? executeRuleChangeWithRegistrationIx({ authority: signer.publicKey, vault: vaultAddress, owner })
-      : executeRuleChangeIx({ authority: signer.publicKey, vault: vaultAddress });
-    await run("Change applied", [ix]).catch(() => null);
+    await run("Change applied", actions.executeRuleChange(ruleChange.action.params.registerOwner)).catch(() => null);
   };
 
   const addDestination = async () => {
+    const owner = addAddr.trim();
+    if (!engine.isValidAddress(owner)) return toast.err("That doesn't look like a valid address.");
     try {
-      const owner = new PublicKey(addAddr.trim());
-      await run(`New wallet scheduled: usable in ${loosenWait}`, [proposeLoosenIx({ authority: signer.publicKey, vault: vaultAddress, registerOwner: owner, registerKind: addKind, registerLabel: addLabel || (addKind === OwnerType.Cold ? "Cold" : "Trading") })]);
+      await run(`New wallet scheduled: usable in ${loosenWait}`, actions.proposeLoosen({ registerOwner: owner, registerKind: addKind, registerRoute: addKind === OwnerKind.Execution && chain === "evm" ? Route.HyperCore : Route.Evm, registerLabel: addLabel || (addKind === OwnerKind.Cold ? "Cold" : "Trading") }));
       setAddOpen(false);
       setAddAddr("");
       setAddLabel("");
-    } catch (e) {
-      toast.err(e instanceof Error ? e.message : String(e));
+    } catch {
+      /* toast shown */
     }
   };
 
   const proposeExit = async () => {
-    const dest = coldWallets.find((c) => c.owner.toBase58() === exitDest) ?? coldWallets[0];
+    const dest = coldWallets.find((c) => c.owner === exitDest) ?? coldWallets[0];
     if (!dest) return toast.err(`Register a cold wallet first (waits ${loosenWait}).`);
-    await run(`Exit scheduled: executes in ${duration(Number(vault.fullExitCooldownSecs))}`, [proposeUninstallVaultIx({ authority: signer.publicKey, vault: vaultAddress, destinationOwner: dest.owner })]).catch(() => null);
+    await run(`Exit scheduled: executes in ${duration(Number(vault.fullExitCooldownSecs))}`, actions.proposeUninstallVault(dest.owner)).catch(() => null);
     setExitOpen(false);
   };
 
   const executeExit = async () => {
     if (!exitPending || exitPending.action.kind === "loosen" || exitPending.action.kind === "topUp") return;
-    const owner = exitPending.action.destinationOwner;
-    const ata = getAssociatedTokenAddressSync(vault.usdcMint, owner, true);
-    await run("Exit executed", [
-      createAssociatedTokenAccountIdempotentInstruction(signer.publicKey, ata, owner, vault.usdcMint),
-      executeFullExitIx({ authority: signer.publicKey, vault: vaultAddress, destinationOwner: owner, destinationTokenAccount: ata }),
-    ]).catch(() => null);
+    await run("Exit executed", actions.executeFullExit(exitPending.action.destinationOwner)).catch(() => null);
   };
 
   const coldTransfer = async () => {
-    const dest = coldWallets.find((c) => c.owner.toBase58() === coldDest) ?? coldWallets[0];
+    const dest = coldWallets.find((c) => c.owner === coldDest) ?? coldWallets[0];
     const amt = usdcToRaw(Number(coldAmount || 0));
     if (!dest || amt <= 0n) return;
-    const ata = getAssociatedTokenAddressSync(vault.usdcMint, dest.owner, true);
-    const ensure = createAssociatedTokenAccountIdempotentInstruction(signer.publicKey, ata, dest.owner, vault.usdcMint);
     try {
       if (amt <= vault.emergencyCap) {
-        await run(`Moved ${usd(amt)} to ${dest.label}`, [ensure, instantColdTransferIx({ authority: signer.publicKey, vault: vaultAddress, destinationOwner: dest.owner, destinationTokenAccount: ata, amount: amt })]);
+        await run(`Moved ${usd(amt)} to ${dest.label}`, actions.instantColdTransfer(dest.owner, amt));
       } else {
-        await run(`Withdrawal of ${usd(amt)} scheduled (${duration(Number(vault.fullExitCooldownSecs))})`, [proposeColdTransferAboveCapIx({ authority: signer.publicKey, vault: vaultAddress, destinationOwner: dest.owner, amount: amt })]);
+        await run(`Withdrawal of ${usd(amt)} scheduled (${duration(Number(vault.fullExitCooldownSecs))})`, actions.proposeColdTransferAboveCap(dest.owner, amt));
       }
       setColdOpen(false);
       setColdAmount("");
@@ -170,7 +143,7 @@ export function Protection() {
               stale={ruleChange.configVersionAtCreation !== vault.configVersion}
               busy={!!busy}
               onApply={() => void executeRuleChange()}
-              onCancel={() => void run("Change cancelled", [cancelProposalIx({ authority: signer.publicKey, vault: vaultAddress, category: ProposalCategory.RuleChange })]).catch(() => null)}
+              onCancel={() => void run("Change cancelled", actions.cancelProposal(ProposalKind.RuleChange)).catch(() => null)}
             />
           </motion.section>
         )}
@@ -179,7 +152,7 @@ export function Protection() {
       <section className="section" style={{ marginTop: 8 }}>
         <div className="section-head">
           <h2>Your rules</h2>
-          <span className="tiny muted">Enforced by the vault program</span>
+          <span className="tiny muted">Enforced by the vault {chain === "evm" ? "contract" : "program"}</span>
         </div>
         <div className="list">
           {RULES.map((def) => (
@@ -219,19 +192,19 @@ export function Protection() {
         </div>
         <div className="list">
           {registry.map((r) => {
-            const bal = wallets.find((w) => w.owner === r.owner.toBase58())?.usdc;
+            const bal = wallets.find((w) => w.owner === r.owner)?.usdc;
             return (
-              <div key={r.owner.toBase58()} className="list-row">
+              <div key={r.owner} className="list-row">
                 <div style={{ minWidth: 0 }}>
                   <div className="row" style={{ gap: 8 }}>
-                    <span style={{ fontWeight: 600 }}>{r.label || short(r.owner.toBase58())}</span>
-                    <Pill tone={r.kind === OwnerType.Cold ? "protect" : "bankroll"}>{r.kind === OwnerType.Cold ? "Cold" : "Trading"}</Pill>
+                    <span style={{ fontWeight: 600 }}>{r.label || short(r.owner)}</span>
+                    <Pill tone={r.kind === OwnerKind.Cold ? "protect" : "bankroll"}>{r.kind === OwnerKind.Cold ? "Cold" : r.route === Route.HyperCore ? "Hyperliquid" : "Trading"}</Pill>
                     {!r.active && <Pill tone="neutral">Removed</Pill>}
                   </div>
-                  <div className="addr">{short(r.owner.toBase58(), 6)}{bal !== undefined && bal !== null ? ` · ${usd(bal)} there now` : ""}</div>
+                  <div className="addr">{short(r.owner, 6)}{bal !== undefined && bal !== null ? ` · ${usd(bal)} there now` : ""}</div>
                 </div>
                 {r.active && (
-                  <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run(`${r.label || "Wallet"} removed`, [removeRegistrationIx({ authority: signer.publicKey, vault: vaultAddress, owner: r.owner })]).catch(() => null)}>
+                  <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run(`${r.label || "Wallet"} removed`, actions.removeRegistration(r.owner)).catch(() => null)}>
                     Remove
                   </button>
                 )}
@@ -254,12 +227,12 @@ export function Protection() {
               : "No monitor: your loss rule can't fire. Adding one is an instant tightening."}
           </p>
           <div className="row-between wrap" style={{ marginTop: 10 }}>
-            <span className="addr">{monitorSet ? short(vault.riskVerifier.toBase58(), 6) : "—"}</span>
+            <span className="addr">{monitorSet && vault.riskVerifier ? short(vault.riskVerifier, 6) : "—"}</span>
             {!monitorSet && health?.monitor.verifier && (
-              <button className="btn btn-sm" disabled={!!busy} onClick={() => void run("Monitor added", [tightenIx({ authority: signer.publicKey, vault: vaultAddress, setRiskVerifier: new PublicKey(health.monitor.verifier!) })]).catch(() => null)}>Add Shield monitor</button>
+              <button className="btn btn-sm" disabled={!!busy} onClick={() => void run("Monitor added", actions.tighten({ setRiskVerifier: health.monitor.verifier! })).catch(() => null)}>Add Shield monitor</button>
             )}
             {monitorSet && (
-              <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run(`Removal scheduled: ${loosenWait}`, [proposeLoosenIx({ authority: signer.publicKey, vault: vaultAddress, newRiskVerifier: PublicKey.default })]).catch(() => null)}>
+              <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run(`Removal scheduled: ${loosenWait}`, actions.proposeLoosen({ newRiskVerifier: null })).catch(() => null)}>
                 Remove · waits {loosenWait}
               </button>
             )}
@@ -277,7 +250,7 @@ export function Protection() {
               <div style={{ fontWeight: 600 }}>To your cold wallet</div>
               <div className="small dim">Up to {usd(vault.emergencyCap)} instantly, even during a cooldown. More waits {duration(Number(vault.fullExitCooldownSecs))}.</div>
             </div>
-            <button className="btn btn-secondary btn-sm" disabled={coldWallets.length === 0} onClick={() => { setColdDest(coldWallets[0]?.owner.toBase58() ?? ""); setColdOpen(true); }}>
+            <button className="btn btn-secondary btn-sm" disabled={coldWallets.length === 0} onClick={() => { setColdDest(coldWallets[0]?.owner ?? ""); setColdOpen(true); }}>
               {coldWallets.length ? "Move funds" : "No cold wallet"}
             </button>
           </div>
@@ -295,10 +268,10 @@ export function Protection() {
             {exitPending ? (
               <div className="actions">
                 {Number(exitPending.executeAfter) <= now && <button className="btn btn-sm" disabled={!!busy} onClick={() => void executeExit()}>Execute</button>}
-                <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run("Exit cancelled", [cancelProposalIx({ authority: signer.publicKey, vault: vaultAddress, category: ProposalCategory.FullExit })]).catch(() => null)}>Cancel</button>
+                <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run("Exit cancelled", actions.cancelProposal(ProposalKind.FullExit)).catch(() => null)}>Cancel</button>
               </div>
             ) : (
-              <button className="btn btn-danger btn-sm" onClick={() => { setExitDest(coldWallets[0]?.owner.toBase58() ?? ""); setExitOpen(true); }} disabled={coldWallets.length === 0}>
+              <button className="btn btn-danger btn-sm" onClick={() => { setExitDest(coldWallets[0]?.owner ?? ""); setExitOpen(true); }} disabled={coldWallets.length === 0}>
                 {coldWallets.length ? "Start the exit" : "No cold wallet"}
               </button>
             )}
@@ -332,7 +305,7 @@ export function Protection() {
                 ) : (
                   <div className="banner banner-pending small row" style={{ gap: 10, alignItems: "flex-start" }}>
                     <Icon name="clock" size={18} />
-                    <span><b>Activates in {loosenWait}.</b> Your current {fmtRule(editing, editCur)} stays in force until then. Cancel any time.</span>
+                    <span><b>Review in {loosenWait}.</b> Your current {fmtRule(editing, editCur)} stays in force until then, and nothing changes until you confirm it again tomorrow. Cancel any time.</span>
                   </div>
                 )}
               </>
@@ -340,7 +313,7 @@ export function Protection() {
               <p className="small muted">Enter a different value.</p>
             )}
             <button className={`btn btn-block btn-lg ${editStricter ? "btn-protect" : ""}`} disabled={!!busy || !editValid} onClick={() => void applyEdit()}>
-              {busy ? "Confirming…" : editValid ? (editStricter ? "Tighten now" : `Schedule for ${loosenWait} from now`) : "Change"}
+              {busy ? "Confirming…" : editValid ? (editStricter ? "Tighten now" : `Request change · review in ${loosenWait}`) : "Change"}
             </button>
           </div>
         )}
@@ -349,14 +322,14 @@ export function Protection() {
       <Sheet open={addOpen} onClose={() => setAddOpen(false)} title="Add a wallet">
         <div className="stack">
           <div className="segmented" style={{ alignSelf: "flex-start" }}>
-            <button className={addKind === OwnerType.Cold ? "active" : ""} onClick={() => setAddKind(OwnerType.Cold)}>Cold wallet</button>
-            <button className={addKind === OwnerType.Execution ? "active" : ""} onClick={() => setAddKind(OwnerType.Execution)}>Trading wallet</button>
+            <button className={addKind === OwnerKind.Cold ? "active" : ""} onClick={() => setAddKind(OwnerKind.Cold)}>Cold wallet</button>
+            <button className={addKind === OwnerKind.Execution ? "active" : ""} onClick={() => setAddKind(OwnerKind.Execution)}>Trading wallet</button>
           </div>
           <Field label="Address" hint="The type is permanent for this address.">
-            <input className="input mono" value={addAddr} onChange={(e) => setAddAddr(e.target.value)} placeholder="Solana address" />
+            <input className="input mono" value={addAddr} onChange={(e) => setAddAddr(e.target.value)} placeholder={chain === "evm" ? "0x…" : "Solana address"} />
           </Field>
           <Field label="Label">
-            <input className="input" value={addLabel} onChange={(e) => setAddLabel(e.target.value.slice(0, 24))} placeholder={addKind === OwnerType.Cold ? "Ledger" : "Axiom"} />
+            <input className="input" value={addLabel} onChange={(e) => setAddLabel(e.target.value.slice(0, 24))} placeholder={addKind === OwnerKind.Cold ? "Ledger" : "Hyperliquid"} />
           </Field>
           <div className="banner banner-pending small row" style={{ gap: 10, alignItems: "flex-start" }}>
             <Icon name="clock" size={18} />
@@ -371,7 +344,7 @@ export function Protection() {
           <p className="dim">Everything in the treasury moves to the cold wallet you pick, after {duration(Number(vault.fullExitCooldownSecs))}. You can cancel until then.</p>
           <div className="chips">
             {coldWallets.map((c) => (
-              <button key={c.owner.toBase58()} className={`chip ${exitDest === c.owner.toBase58() ? "active" : ""}`} onClick={() => setExitDest(c.owner.toBase58())}>{c.label || short(c.owner.toBase58())}</button>
+              <button key={c.owner} className={`chip ${exitDest === c.owner ? "active" : ""}`} onClick={() => setExitDest(c.owner)}>{c.label || short(c.owner)}</button>
             ))}
           </div>
           <button className="btn btn-danger btn-block btn-lg" disabled={!!busy} onClick={() => void proposeExit()}>Schedule the exit</button>
@@ -382,7 +355,7 @@ export function Protection() {
         <div className="stack">
           <div className="chips">
             {coldWallets.map((c) => (
-              <button key={c.owner.toBase58()} className={`chip ${coldDest === c.owner.toBase58() ? "active" : ""}`} onClick={() => setColdDest(c.owner.toBase58())}>{c.label || short(c.owner.toBase58())}</button>
+              <button key={c.owner} className={`chip ${coldDest === c.owner ? "active" : ""}`} onClick={() => setColdDest(c.owner)}>{c.label || short(c.owner)}</button>
             ))}
           </div>
           <MoneyInput value={coldAmount} onChange={setColdAmount} autoFocus />
@@ -403,7 +376,7 @@ function PendingChange({ lines, executeAfter, now, stale, busy, onApply, onCance
     <div>
       <div className="row" style={{ gap: 8 }}>
         <Dot tone={stale ? "neutral" : "pending"} />
-        <span className={`eyebrow ${stale ? "" : "c-pending"}`}>{stale ? "Superseded change" : "Weakening change scheduled"}</span>
+        <span className={`eyebrow ${stale ? "" : "c-pending"}`}>{stale ? "Superseded change" : matured ? "Change requested · waiting for you" : "Change requested"}</span>
       </div>
       <div className="row-between wrap" style={{ marginTop: 10, alignItems: "flex-start" }}>
         <div style={{ minWidth: 0 }}>
@@ -420,17 +393,18 @@ function PendingChange({ lines, executeAfter, now, stale, busy, onApply, onCance
         </div>
         {!stale && !matured && (
           <div style={{ textAlign: "right" }}>
-            <div className="tiny muted">Activates in</div>
+            <div className="tiny muted">Review in</div>
             <div className="big-count"><Countdown until={executeAfter} now={now} /></div>
           </div>
         )}
       </div>
       <p className="small dim" style={{ marginTop: 10 }}>
-        {stale ? "You tightened a rule after scheduling this, so the vault will refuse to apply it. Cancel it to clear the slot." : matured ? "The waiting period is over. Apply it, or cancel to keep things as they are." : lines[0]?.from ? `Your current ${lines[0].from} stays in force until then.` : "Your current protection stays in force until then."}
+        {stale ? "You tightened a rule after requesting this, so the vault will refuse to apply it. Cancel it to clear the slot." : matured ? "The waiting period is over. Nothing changed by itself: still want to?" : lines[0]?.from ? `Your current ${lines[0].from} stays in force until then.` : "Your current protection stays in force until then."}
       </p>
-      <div className="row" style={{ marginTop: 12, gap: 6 }}>
-        {!stale && matured && <button className="btn btn-sm" disabled={busy} onClick={onApply}>Apply now</button>}
-        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={onCancel}>Cancel change</button>
+      <div className="row wrap" style={{ marginTop: 12, gap: 6 }}>
+        {!stale && matured && <button className="btn btn-protect btn-sm" disabled={busy} onClick={onCancel}>Keep my protection</button>}
+        {!stale && matured && <button className="btn btn-secondary btn-sm" disabled={busy} onClick={onApply}>Change it</button>}
+        {(stale || !matured) && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={onCancel}>Cancel change</button>}
       </div>
     </div>
   );

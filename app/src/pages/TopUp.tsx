@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { PublicKey } from "@solana/web3.js";
-import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { AnimatePresence, motion } from "motion/react";
 import { GetMeSafe, ResetScreen } from "../components/Safety";
 import { usePrefs } from "../lib/prefs";
@@ -9,24 +7,11 @@ import { useAttempts } from "../lib/attempts";
 import { useShield, ShieldTxError } from "../lib/shield";
 import { useAction, describeError } from "../lib/actions";
 import { Countdown, Dot, ExplorerLink, Icon, MoneyInput, Sheet } from "../components/ui";
+import type { TightenView } from "../../../client/views";
 import { FlowScene } from "../components/FlowScene";
 import { usd, usdInput, clockTime, spanAdjective, hoursLabel } from "../lib/format";
 import { recordAttempt } from "../lib/attempts";
-import {
-  evaluateTopUp,
-  rollingVelocity,
-  instantTopUpIx,
-  proposeTopUpIx,
-  executeTopUpIx,
-  cancelProposalIx,
-  tightenIx,
-  usdcToRaw,
-  rawToUsdc,
-  ProposalCategory,
-  OwnerType,
-  COOLDOWN_REASON,
-  type ShieldErrorName,
-} from "../../../client/shield-client";
+import { evaluateTopUp, rollingVelocity, usdcToRaw, rawToUsdc, ProposalKind, OwnerKind, COOLDOWN_REASON, type ShieldErrorName } from "../../../client/views";
 
 type Phase = "idle" | "moving" | "done" | "blocked";
 
@@ -38,9 +23,9 @@ const card = {
 };
 
 export function TopUp() {
-  const { vault, balance, wallets, proposals, server, now, signer, vaultAddress } = useShield();
+  const { vault, balance, wallets, proposals, server, now, signer, vaultKey, actions } = useShield();
   const { run, busy } = useAction();
-  const executionWallets = wallets.filter((w) => w.kind === OwnerType.Execution && w.active);
+  const executionWallets = wallets.filter((w) => w.kind === OwnerKind.Execution && w.active);
   const [dest, setDest] = useState<string>(executionWallets[0]?.owner ?? "");
   const [amount, setAmount] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
@@ -50,14 +35,14 @@ export function TopUp() {
   const [safeOpen, setSafeOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
-  const [prefs] = usePrefs(signer?.publicKey.toBase58() ?? null);
-  const attempts = useAttempts(vaultAddress?.toBase58() ?? null);
+  const [prefs] = usePrefs(signer?.address ?? null);
+  const attempts = useAttempts(vaultKey);
 
   useEffect(() => {
     if (!dest && executionWallets[0]) setDest(executionWallets[0].owner);
   }, [executionWallets, dest]);
 
-  if (!vault || !signer || !vaultAddress) return null;
+  if (!vault || !signer || !actions || !vaultKey) return null;
 
   const amountRaw = usdcToRaw(Number(amount || 0));
   const decision = useMemo(() => evaluateTopUp(vault, balance, amountRaw, BigInt(now)), [vault, balance, amountRaw, now]);
@@ -65,7 +50,7 @@ export function TopUp() {
   const remainingToday = vault.velocityThreshold > velocity ? vault.velocityThreshold - velocity : 0n;
   const headroom = balance > vault.protectedFloor ? balance - vault.protectedFloor : 0n;
   const maxInstant = [decision.instantThreshold > 0n ? decision.instantThreshold - 1n : 0n, remainingToday, headroom].reduce((a, b) => (a < b ? a : b));
-  const pendingTopUp = proposals.find((p) => p.category === ProposalCategory.TopUp);
+  const pendingTopUp = proposals.find((p) => p.category === ProposalKind.TopUp);
   const cooldownActive = Number(vault.cooldownUntil) > now;
   const byRule = vault.cooldownReason === COOLDOWN_REASON.RISK_VERDICT;
   const destWallet = executionWallets.find((w) => w.owner === dest);
@@ -75,20 +60,17 @@ export function TopUp() {
 
   const submit = async () => {
     if (!destWallet || amountRaw <= 0n) return;
-    const owner = new PublicKey(destWallet.owner);
-    const ata = getAssociatedTokenAddressSync(vault.usdcMint, owner, true);
-    const ensureAta = createAssociatedTokenAccountIdempotentInstruction(signer.publicKey, ata, owner, vault.usdcMint);
     setBlocked(null);
     setScheduled(false);
     setPhase("moving");
     try {
       if (decision.path === "gated") {
-        await run(`Top-up of ${usd(amountRaw)} scheduled`, [proposeTopUpIx({ authority: signer.publicKey, vault: vaultAddress, destinationOwner: owner, amount: amountRaw })], { silent: true });
+        await run(`Top-up of ${usd(amountRaw)} scheduled`, actions.proposeTopUp(destWallet.owner, amountRaw), { silent: true });
         setScheduled(true);
         setPhase("idle");
         return;
       }
-      await run(`Sent ${usd(amountRaw)} to ${destWallet.label}`, [ensureAta, instantTopUpIx({ authority: signer.publicKey, vault: vaultAddress, destinationOwner: owner, destinationTokenAccount: ata, amount: amountRaw })], {
+      await run(`Sent ${usd(amountRaw)} to ${destWallet.label}`, actions.instantTopUp(destWallet.owner, amountRaw), {
         silent: true,
         recordRejection: true,
       });
@@ -98,7 +80,7 @@ export function TopUp() {
       const d = describeError(e);
       if (e instanceof ShieldTxError && e.shieldError === "AmountRequiresGatedTopUp") {
         try {
-          await run(`Top-up of ${usd(amountRaw)} scheduled`, [proposeTopUpIx({ authority: signer.publicKey, vault: vaultAddress, destinationOwner: owner, amount: amountRaw })], { silent: true });
+          await run(`Top-up of ${usd(amountRaw)} scheduled`, actions.proposeTopUp(destWallet.owner, amountRaw), { silent: true });
           setScheduled(true);
           setPhase("idle");
           return;
@@ -106,7 +88,7 @@ export function TopUp() {
           /* fall through */
         }
       }
-      recordAttempt(vaultAddress.toBase58(), { ts: now, amount: amountRaw.toString(), reason: d.name, sig: d.sig, destinationLabel: destWallet.label });
+      recordAttempt(vaultKey, { ts: now, amount: amountRaw.toString(), reason: d.name, sig: d.sig, destinationLabel: destWallet.label });
       setBlocked({ reason: d.name, sig: d.sig, amount: amountRaw });
       setPhase("blocked");
     }
@@ -114,14 +96,9 @@ export function TopUp() {
 
   const executePending = async () => {
     if (!pendingTopUp || pendingTopUp.action.kind !== "topUp") return;
-    const owner = pendingTopUp.action.destinationOwner;
-    const ata = getAssociatedTokenAddressSync(vault.usdcMint, owner, true);
     setPhase("moving");
     try {
-      await run(`Sent ${usd(pendingTopUp.action.amount)}`, [
-        createAssociatedTokenAccountIdempotentInstruction(signer.publicKey, ata, owner, vault.usdcMint),
-        executeTopUpIx({ authority: signer.publicKey, vault: vaultAddress, destinationOwner: owner, destinationTokenAccount: ata }),
-      ]);
+      await run(`Sent ${usd(pendingTopUp.action.amount)}`, actions.executeTopUp(pendingTopUp.action.destinationOwner));
       setSent(pendingTopUp.action.amount);
       setPhase("done");
     } catch (e) {
@@ -133,7 +110,7 @@ export function TopUp() {
 
   const extendPause = async (hours: number) => {
     const base = Math.max(Number(vault.cooldownUntil), now);
-    await run(`Pause extended by ${hours} hours`, [tightenIx({ authority: signer.publicKey, vault: vaultAddress, pauseTopUpsUntil: BigInt(base + hours * 3600) })]).catch(() => null);
+    await run(`Pause extended by ${hours} hours`, actions.tighten({ pauseTopUpsUntil: BigInt(base + hours * 3600) })).catch(() => null);
   };
 
   const preview = (() => {
@@ -223,7 +200,7 @@ export function TopUp() {
             <h2 className="title-l" style={{ marginTop: 10 }}>{usd(pendingTopUp.action.amount)} moves in <Countdown until={pendingTopUp.executeAfter} now={now} />.</h2>
             <p className="dim" style={{ marginTop: 8 }}>Large top-ups wait 30 minutes. Your treasury stays protected until then, and you can cancel any time.</p>
             <div className="row" style={{ marginTop: 16 }}>
-              <button className="btn btn-ghost" disabled={!!busy} onClick={() => void run("Top-up cancelled", [cancelProposalIx({ authority: signer.publicKey, vault: vaultAddress, category: ProposalCategory.TopUp })]).then(() => setScheduled(false)).catch(() => null)}>
+              <button className="btn btn-ghost" disabled={!!busy} onClick={() => void run("Top-up cancelled", actions.cancelProposal(ProposalKind.TopUp)).then(() => setScheduled(false)).catch(() => null)}>
                 Cancel it
               </button>
             </div>
@@ -283,7 +260,7 @@ export function TopUp() {
             </div>
             <div className="actions">
               <button className="btn btn-sm" disabled={!!busy || Number(pendingTopUp.executeAfter) > now || cooldownActive} onClick={() => void executePending()}>Move it</button>
-              <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run("Top-up cancelled", [cancelProposalIx({ authority: signer.publicKey, vault: vaultAddress, category: ProposalCategory.TopUp })]).catch(() => null)}>Cancel</button>
+              <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void run("Top-up cancelled", actions.cancelProposal(ProposalKind.TopUp)).catch(() => null)}>Cancel</button>
             </div>
           </div>
         </section>
@@ -367,7 +344,7 @@ function LossEvidence() {
 function SessionFacts({ amount, reason, attemptsToday }: { amount: bigint; reason: ShieldErrorName | null; attemptsToday: number }) {
   const { vault, balance, wallets, server, now } = useShield();
   if (!vault) return null;
-  const bankroll = wallets.filter((w) => w.kind === OwnerType.Execution && w.active).reduce((a, w) => a + (w.usdc ?? 0n), 0n);
+  const bankroll = wallets.filter((w) => w.kind === OwnerKind.Execution && w.active).reduce((a, w) => a + (w.usdc ?? 0n), 0n);
   const h24 = server?.profile.windows.h24;
   const sent = h24 ? BigInt(h24.sent) : 0n;
   const back = h24 ? BigInt(h24.returned) : 0n;
@@ -390,14 +367,14 @@ function SessionFacts({ amount, reason, attemptsToday }: { amount: bigint; reaso
 }
 
 function ProtectMore({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { vault, signer, vaultAddress, now } = useShield();
+  const { vault, signer, actions, now } = useShield();
   const { run, busy } = useAction();
-  if (!vault || !signer || !vaultAddress) return null;
+  if (!vault || !signer || !actions) return null;
   const until = Math.max(Number(vault.cooldownUntil), now) + 86400;
   const halved = vault.velocityThreshold / 2n;
   const longer = vault.lossCooldownSecs + 6n * 3600n;
-  const act = (label: string, params: Parameters<typeof tightenIx>[0]) => run(label, [tightenIx(params)]).then(onClose).catch(() => null);
-  const base = { authority: signer.publicKey, vault: vaultAddress };
+  const act = (label: string, params: TightenView) => run(label, actions.tighten(params)).then(onClose).catch(() => null);
+  const base = {};
   return (
     <Sheet open={open} onClose={onClose} title="Protect me more">
       <div className="stack">

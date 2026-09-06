@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import { PublicKey } from "@solana/web3.js";
-import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { motion } from "motion/react";
-import { useShield, API_URL, NETWORK } from "../lib/shield";
+import { useShield, API_URL, IS_MAINNET } from "../lib/shield";
 import { useAction } from "../lib/actions";
 import { CapitalBar, Dot, Field, Icon, MoneyInput, Stepper, useToast } from "../components/ui";
 import { usd, hoursLabel, short } from "../lib/format";
 import { TROUBLES, usePrefs, type Trouble } from "../lib/prefs";
-import { depositIx, initializeVaultIx, registerOwnerIx, usdcToRaw, vaultPda, OwnerType } from "../../../client/shield-client";
+import { usdcToRaw, OwnerKind, Route } from "../../../client/views";
+import type { RegistrationInput } from "../../../client/solana-adapter";
 import { getJson, type HlProfileJson } from "../lib/api";
 
 const STEPS = ["You", "Wallets", "Protection", "Review", "Activate"];
@@ -27,17 +26,9 @@ interface Draft {
   monitor: boolean;
 }
 
-function isPubkey(s: string): boolean {
-  try {
-    new PublicKey(s);
-    return s.length >= 32;
-  } catch {
-    return false;
-  }
-}
-
 export function Setup() {
-  const { signer, vault, loading, health, walletUsdc, refresh, vaultAddress } = useShield();
+  const { signer, vault, loading, health, walletUsdc, refresh, actions, engine, usdc, chain } = useShield();
+  const isPubkey = (s: string) => !!engine && engine.isValidAddress(s);
   const navigate = useNavigate();
   const toast = useToast();
   const { run, busy } = useAction();
@@ -58,7 +49,7 @@ export function Setup() {
   const [activated, setActivated] = useState(false);
   const [deposited, setDeposited] = useState(false);
   const [faucetBusy, setFaucetBusy] = useState(false);
-  const [prefs, setPrefs] = usePrefs(signer?.publicKey.toBase58() ?? null);
+  const [prefs, setPrefs] = usePrefs(signer?.address ?? null);
   const [hlAddress, setHlAddress] = useState("");
   const [hlBusy, setHlBusy] = useState(false);
   const [hlProfile, setHlProfile] = useState<HlProfileJson | null>(null);
@@ -108,20 +99,18 @@ export function Setup() {
   if (!signer) return <Navigate to="/welcome" replace />;
   if (vault && !activated) return <Navigate to="/" replace />;
 
-  const usdcMint = health?.usdcMint ?? (import.meta.env.VITE_USDC_MINT as string | undefined) ?? null;
-  const verifier = draft.monitor && health?.monitor.verifier ? new PublicKey(health.monitor.verifier) : PublicKey.default;
+  const usdcMint = usdc;
+  const verifier = draft.monitor && health?.monitor.verifier ? health.monitor.verifier : null;
 
   const activate = async () => {
-    if (!usdcMint) {
-      toast.err("No USDC mint configured. Start the Shield server or set VITE_USDC_MINT.");
+    if (!usdcMint || !actions) {
+      toast.err("No USDC configured. Start the Shield server or set the USDC address.");
       return;
     }
-    const mint = new PublicKey(usdcMint);
-    const [vaultPk] = vaultPda(signer.publicKey);
-    const ixs = [
-      initializeVaultIx({
-        authority: signer.publicKey,
-        usdcMint: mint,
+    const regs: RegistrationInput[] = [{ owner: draft.executionAddress, kind: OwnerKind.Execution, route: chain === "evm" ? Route.HyperCore : Route.Evm, label: draft.executionLabel || "Trading" }];
+    if (draft.coldAddress) regs.push({ owner: draft.coldAddress, kind: OwnerKind.Cold, route: Route.Evm, label: draft.coldLabel || "Cold" });
+    const tx = actions.activate(
+      {
         riskVerifier: verifier,
         protectedFloor: usdcToRaw(n(draft.floor)),
         topUpThresholdBps: Math.round(draft.thresholdPct * 100),
@@ -129,20 +118,15 @@ export function Setup() {
         velocityThreshold: usdcToRaw(n(draft.daily)),
         lossTriggerUsdc: usdcToRaw(n(draft.lossTrigger)),
         lossCooldownSecs: BigInt(Math.round(draft.lossCooldownHours * 3600)),
-      }),
-      registerOwnerIx({ authority: signer.publicKey, vault: vaultPk, owner: new PublicKey(draft.executionAddress), kind: OwnerType.Execution, label: draft.executionLabel || "Trading" }),
-    ];
-    if (draft.coldAddress) {
-      ixs.push(registerOwnerIx({ authority: signer.publicKey, vault: vaultPk, owner: new PublicKey(draft.coldAddress), kind: OwnerType.Cold, label: draft.coldLabel || "Cold" }));
-    }
-    const execAta = getAssociatedTokenAddressSync(mint, new PublicKey(draft.executionAddress), true);
-    ixs.push(createAssociatedTokenAccountIdempotentInstruction(signer.publicKey, execAta, new PublicKey(draft.executionAddress), mint));
+      },
+      regs
+    );
     // Mark as activated before sending: the provider refreshes the vault as
     // soon as the transaction confirms, and the redirect guard must not fire
     // before the deposit step has been shown.
     setActivated(true);
     try {
-      await run("Shield activated", ixs);
+      await run("Shield activated", tx);
       await refresh();
     } catch {
       setActivated(false);
@@ -150,11 +134,9 @@ export function Setup() {
   };
 
   const deposit = async () => {
-    if (!usdcMint || !vaultAddress) return;
-    const mint = new PublicKey(usdcMint);
-    const ata = getAssociatedTokenAddressSync(mint, signer.publicKey, true);
+    if (!usdcMint || !actions) return;
     try {
-      await run(`Deposited ${usd(usdcToRaw(n(draft.deposit)))}`, [depositIx({ depositor: signer.publicKey, vault: vaultAddress, sourceTokenAccount: ata, amount: usdcToRaw(n(draft.deposit)) })]);
+      await run(`Deposited ${usd(usdcToRaw(n(draft.deposit)))}`, actions.deposit(usdcToRaw(n(draft.deposit))));
       setDeposited(true);
       setTimeout(() => navigate("/"), 600);
     } catch {
@@ -165,7 +147,7 @@ export function Setup() {
   const faucet = async () => {
     setFaucetBusy(true);
     try {
-      await getJson(`${API_URL}/api/demo/faucet`, { method: "POST", body: JSON.stringify({ owner: signer.publicKey.toBase58(), amountUsdc: n(draft.deposit) || 10000 }) });
+      await getJson(`${API_URL}/api/demo/faucet`, { method: "POST", body: JSON.stringify({ owner: signer.address, amountUsdc: n(draft.deposit) || 10000 }) });
       toast.ok("Test USDC added to your wallet");
       await refresh();
     } catch (e) {
@@ -256,7 +238,7 @@ export function Setup() {
             <div className="card stack">
               <p className="eyebrow">Trading wallet</p>
               <Field label="Address" hint="Axiom, a Telegram bot, an exchange deposit address: wherever you actually trade from.">
-                <input className="input mono" value={draft.executionAddress} onChange={(e) => set({ executionAddress: e.target.value.trim() })} placeholder="Solana address" />
+                <input className="input mono" value={draft.executionAddress} onChange={(e) => set({ executionAddress: e.target.value.trim() })} placeholder={chain === "evm" ? "0x… (your Hyperliquid account address)" : "Solana address"} />
               </Field>
               <Field label="Name">
                 <input className="input" value={draft.executionLabel} onChange={(e) => set({ executionLabel: e.target.value.slice(0, 24) })} />
@@ -265,7 +247,7 @@ export function Setup() {
             <div className="card stack">
               <p className="eyebrow">Cold wallet · optional now, 24h to add later</p>
               <Field label="Address" hint="A wallet you control and don't trade from. Small emergency amounts can move here instantly; a full exit takes 7 days.">
-                <input className="input mono" value={draft.coldAddress} onChange={(e) => set({ coldAddress: e.target.value.trim() })} placeholder="Solana address" />
+                <input className="input mono" value={draft.coldAddress} onChange={(e) => set({ coldAddress: e.target.value.trim() })} placeholder={chain === "evm" ? "0x…" : "Solana address"} />
               </Field>
               <Field label="Name">
                 <input className="input" value={draft.coldLabel} onChange={(e) => set({ coldLabel: e.target.value.slice(0, 24) })} />
@@ -379,7 +361,7 @@ export function Setup() {
             {!activated ? (
               <div className="card stack">
                 <div className="notice-list">
-                  <div className="notice"><Dot tone="protect" /><span>Creates your vault, owned by <span className="mono">{short(signer.publicKey.toBase58())}</span> and nobody else.</span></div>
+                  <div className="notice"><Dot tone="protect" /><span>Creates your vault, owned by <span className="mono">{short(signer.address)}</span> and nobody else.</span></div>
                   <div className="notice"><Dot tone="bankroll" /><span>Registers <b>{draft.executionLabel || "Trading"}</b> as your trading wallet.</span></div>
                   {draft.coldAddress && <div className="notice"><Dot tone="protect" /><span>Registers <b>{draft.coldLabel || "Cold"}</b> as your cold wallet.</span></div>}
                   <div className="notice"><Dot tone={draft.monitor && health?.monitor.verifier ? "protect" : "neutral"} /><span>{draft.monitor && health?.monitor.verifier ? "Turns on the Shield monitor for your loss rule." : "No monitor for now. Adding one later is instant."}</span></div>
@@ -387,14 +369,14 @@ export function Setup() {
                 <button className="btn btn-lg btn-block" onClick={() => void activate()} disabled={!!busy || !usdcMint}>
                   {busy ? "Confirming…" : "Create my vault"}
                 </button>
-                <p className="tiny muted">Program {health?.programId ? short(health.programId, 6) : "…"} · USDC {usdcMint ? short(usdcMint, 6) : "not configured"}</p>
+                <p className="tiny muted">{chain === "evm" ? "Vault contract" : "Program"} {chain === "evm" ? (health?.evm?.vault ? short(health.evm.vault, 6) : "…") : health?.programId ? short(health.programId, 6) : "…"} · USDC {usdcMint ? short(usdcMint, 6) : "not configured"}</p>
               </div>
             ) : (
               <div className="card stack">
                 <Field label="Deposit into the treasury" hint={`In your wallet: ${walletUsdc === null ? "…" : usd(walletUsdc)} USDC`}>
                   <MoneyInput value={draft.deposit} onChange={(v) => set({ deposit: v })} />
                 </Field>
-                {walletUsdc !== null && walletUsdc < usdcToRaw(n(draft.deposit)) && NETWORK !== "mainnet-beta" && health?.demo && (
+                {walletUsdc !== null && walletUsdc < usdcToRaw(n(draft.deposit)) && !IS_MAINNET && health?.demo && (
                   <div className="warn-box row-between">
                     <span>You need test USDC first.</span>
                     <button className="btn btn-secondary btn-sm" onClick={() => void faucet()} disabled={faucetBusy}>

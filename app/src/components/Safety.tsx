@@ -13,12 +13,12 @@ import { useAction } from "../lib/actions";
 import { Icon, Sheet } from "./ui";
 import { HoldButton } from "./HoldButton";
 import { usd, clockTime, hoursLabel } from "../lib/format";
-import { tightenIx, OwnerType, type TightenParams } from "../../../client/shield-client";
+import { OwnerKind, type TightenView } from "../../../client/views";
 
 const DAY = 24 * 3600;
 
 export function GetMeSafe({ open, onClose, context }: { open: boolean; onClose: () => void; context?: "home" | "blocked" }) {
-  const { vault, balance, wallets, now, signer, vaultAddress } = useShield();
+  const { vault, balance, wallets, now, signer, actions } = useShield();
   const { run, busy } = useAction();
   const [halveLimit, setHalveLimit] = useState(false);
   const [done, setDone] = useState<{ until: number; protectedNow: bigint } | null>(null);
@@ -27,16 +27,16 @@ export function GetMeSafe({ open, onClose, context }: { open: boolean; onClose: 
     if (!open) setDone(null);
   }, [open]);
 
-  if (!vault || !signer || !vaultAddress) return null;
-  const bankroll = wallets.filter((w) => w.kind === OwnerType.Execution && w.active).reduce((a, w) => a + (w.usdc ?? 0n), 0n);
+  if (!vault || !signer || !actions) return null;
+  const bankroll = wallets.filter((w) => w.kind === OwnerKind.Execution && w.active).reduce((a, w) => a + (w.usdc ?? 0n), 0n);
   const until = Math.max(Number(vault.cooldownUntil), now) + DAY;
   const halved = vault.velocityThreshold / 2n;
 
   const go = async () => {
-    const params: TightenParams = { pauseTopUpsUntil: BigInt(until) };
+    const params: TightenView = { pauseTopUpsUntil: BigInt(until) };
     if (halveLimit && halved > 0n) params.newVelocityThreshold = halved;
     try {
-      await run("You're safe for tonight", [tightenIx({ authority: signer.publicKey, vault: vaultAddress, ...params })], { silent: true });
+      await run("You're safe for tonight", actions.tighten(params), { silent: true });
       setDone({ until, protectedNow: balance });
     } catch {
       /* toast shown by useAction */
@@ -53,7 +53,7 @@ export function GetMeSafe({ open, onClose, context }: { open: boolean; onClose: 
             <div><div className="k">Protected</div><div className="v">{usd(done.protectedNow)}</div></div>
             <div><div className="k">New funding locked until</div><div className="v">{clockTime(done.until, now)}</div></div>
           </div>
-          <p className="dim">Nothing can be added to your trading wallet until then. Everything already protected stays protected. You can still trade what's in {wallets.find((w) => w.kind === OwnerType.Execution && w.active)?.label ?? "your trading wallet"}.</p>
+          <p className="dim">Nothing can be added to your trading wallet until then. Everything already protected stays protected. You can still trade what's in {wallets.find((w) => w.kind === OwnerKind.Execution && w.active)?.label ?? "your trading wallet"}.</p>
           <button className="btn btn-block" onClick={onClose}>Done</button>
         </motion.div>
       ) : (
@@ -93,8 +93,8 @@ export function ResetScreen({ open, onClose, attempted, onStopForTonight }: { op
     return () => clearInterval(t);
   }, [open]);
   if (!open || !vault) return null;
-  const execLabel = wallets.find((w) => w.kind === OwnerType.Execution && w.active)?.label ?? "your trading wallet";
-  const bankroll = wallets.filter((w) => w.kind === OwnerType.Execution && w.active).reduce((a, w) => a + (w.usdc ?? 0n), 0n);
+  const execLabel = wallets.find((w) => w.kind === OwnerKind.Execution && w.active)?.label ?? "your trading wallet";
+  const bankroll = wallets.filter((w) => w.kind === OwnerKind.Execution && w.active).reduce((a, w) => a + (w.usdc ?? 0n), 0n);
   const h24 = server?.profile.windows.h24;
   const loss = h24 ? BigInt(h24.realisedLoss) : 0n;
   const reloads = h24?.topUpCount ?? 0;

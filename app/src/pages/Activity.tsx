@@ -4,7 +4,7 @@ import { Dot, ExplorerLink, Skeleton, type Tone } from "../components/ui";
 import { usd, short, timeOnly, dayLabel, clockTime } from "../lib/format";
 import { describeEvents } from "../lib/events";
 import { useAttempts } from "../lib/attempts";
-import { COOLDOWN_REASON } from "../../../client/shield-client";
+import { COOLDOWN_REASON } from "../../../client/views";
 
 interface Item {
   ts: number;
@@ -18,8 +18,8 @@ interface Item {
 }
 
 export function Activity() {
-  const { server, serverError, serverLoading, wallets, vault, vaultAddress, now } = useShield();
-  const attempts = useAttempts(vaultAddress?.toBase58() ?? null);
+  const { server, serverError, serverLoading, wallets, vault, vaultKey, now } = useShield();
+  const attempts = useAttempts(vaultKey);
   const labelOf = (owner: string) => wallets.find((w) => w.owner === owner)?.label ?? short(owner);
 
   const items = useMemo<Item[]>(() => {

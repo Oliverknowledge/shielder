@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useShield, API_URL } from "../lib/shield";
 import { Dot, ExplorerLink, Pill, Sheet, Skeleton, useToast } from "../components/ui";
 import { usd, ago, dateTime, short, timeOnly, dayLabel, hoursLabel } from "../lib/format";
-import { OwnerType } from "../../../client/shield-client";
+import { OwnerKind } from "../../../client/views";
 import { getJson, type EvidenceJson, type HlProfileJson } from "../lib/api";
 import { usePrefs } from "../lib/prefs";
 
@@ -18,7 +18,7 @@ const KIND_LABEL: Record<string, string> = {
 export function Behaviour() {
   const { server, serverError, serverLoading, wallets, vault, now, signer } = useShield();
   const toast = useToast();
-  const [prefs] = usePrefs(signer?.publicKey.toBase58() ?? null);
+  const [prefs] = usePrefs(signer?.address ?? null);
   const [hl, setHl] = useState<HlProfileJson | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -56,7 +56,7 @@ export function Behaviour() {
   const p = server.profile;
   const a = server.assessment;
   const sessions = [...p.sessions].sort((x, y) => y.lastActivityAt - x.lastActivityAt);
-  const execWallets = p.wallets.filter((w) => wallets.some((x) => x.owner === w.owner && x.kind === OwnerType.Execution));
+  const execWallets = p.wallets.filter((w) => wallets.some((x) => x.owner === w.owner && x.kind === OwnerKind.Execution));
   const sent = BigInt(p.totals.sent);
   const returned = BigInt(p.totals.returned);
   const open = execWallets.reduce((acc, w) => acc + BigInt(w.openExposure), 0n);
