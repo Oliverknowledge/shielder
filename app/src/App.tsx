@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactElement } from "react";
-import { BrowserRouter, Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { ShieldProvider, useShield, NETWORK } from "./lib/shield";
 import { ToastHost, Icon, Skeleton } from "./components/ui";
 import { Welcome } from "./pages/Welcome";
+import { Landing } from "./pages/Landing";
 import { Setup } from "./pages/Setup";
 import { Overview } from "./pages/Overview";
 import { TopUp } from "./pages/TopUp";
@@ -73,6 +74,7 @@ function AccountMenu() {
 
 function Shell() {
   const { signer, vault, loading, now } = useShield();
+  const location = useLocation();
   const hasVault = !!vault;
   const cooldownActive = vault ? Number(vault.cooldownUntil) > now : false;
 
@@ -82,6 +84,9 @@ function Shell() {
     if (!hasVault) return <Navigate to="/setup" replace />;
     return el;
   };
+
+  const landing = !signer && (location.pathname === "/" || location.pathname === "/landing");
+  if (landing) return <Landing />;
 
   return (
     <div className="shell">
@@ -107,6 +112,7 @@ function Shell() {
 
       <Routes>
         <Route path="/welcome" element={<Welcome />} />
+        <Route path="/landing" element={<Landing />} />
         <Route path="/setup" element={signer ? <Setup /> : <Navigate to="/welcome" replace />} />
         <Route path="/" element={gate(<Overview />)} />
         <Route path="/top-up" element={gate(<TopUp />)} />
