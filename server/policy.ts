@@ -56,6 +56,26 @@ export interface EvidenceBundle {
     signatures: string[];
   }>;
   policy: { lossTriggerUsdc: string; lossCooldownSecs: string };
+  /** Present only when the venue's own API contributed to the loss figure. */
+  venue?: { source: "hyperliquid"; network: string; account: string; realisedLossUsdc: string; fills: number; lastFillAt: number | null };
+}
+
+/**
+ * What the trading venue itself says happened on its side.
+ *
+ * Vault flows can only see a loss once money comes *back* from the venue.
+ * Capital deposited into a Hyperliquid account and lost there never returns,
+ * so the venue's own realised PnL is the honest evidence for that half. It is
+ * read from Hyperliquid's public API, never inferred from HyperEVM.
+ */
+export interface VenueLoss {
+  source: "hyperliquid";
+  network: string;
+  account: string;
+  /** Realised loss over the window in USDC raw units; positive when losing. */
+  realisedLossUsdc: bigint;
+  fills: number;
+  lastFillAt: number | null;
 }
 
 export interface Assessment {
@@ -85,12 +105,18 @@ const hours = (secs: bigint) => {
   return h >= 48 ? `${Math.round(h / 24)} days` : `${Math.round(h)}h`;
 };
 
-export function assess(profile: BehaviourProfile, policy: PolicyView, now: number, sinceLossAt = 0): Assessment {
+export function assess(profile: BehaviourProfile, policy: PolicyView, now: number, sinceLossAt = 0, venue?: VenueLoss | null): Assessment {
   const w = profile.windows.h24;
-  const realizedLossUsdc = w.realisedLoss;
+  const flowLoss = w.realisedLoss;
+  const venueLoss = venue && venue.realisedLossUsdc > 0n ? venue.realisedLossUsdc : 0n;
+  // Two independent views of the same 24 hours: what did not come back to the
+  // vault, and what the venue itself settled. Take the larger, never the sum,
+  // so a loss that both can see is never double counted.
+  const venueDominates = venueLoss > flowLoss;
+  const realizedLossUsdc = venueDominates ? venueLoss : flowLoss;
   const triggered = policy.lossTriggerUsdc > 0n && realizedLossUsdc >= policy.lossTriggerUsdc;
 
-  const newestLossAt = profile.lastLossAt;
+  const newestLossAt = venueDominates ? (venue?.lastFillAt ?? profile.lastLossAt) : profile.lastLossAt;
   const newLoss = newestLossAt !== null && newestLossAt > sinceLossAt;
   const target = BigInt(now) + policy.lossCooldownSecs;
   const wouldExtend = policy.lossCooldownSecs > 0n && target > policy.cooldownUntil;
@@ -110,11 +136,12 @@ export function assess(profile: BehaviourProfile, policy: PolicyView, now: numbe
         : `Sent ${usd(s.sent)}, ${usd(s.returned)} came back: ${usd(s.net)} gained, ${ago}.`
     );
   }
+  if (venueLoss > 0n) lines.push(`${usd(venueLoss)} realised on Hyperliquid ${venue!.network} over ${venue!.fills} fill${venue!.fills === 1 ? "" : "s"}, read from the venue's own API.`);
   if (profile.lossStreak >= 2) lines.push(`${profile.lossStreak} losing sessions in a row.`);
   if (profile.reloadsAfterLoss7d > 0) lines.push(`Reloaded within 3 hours of a loss ${profile.reloadsAfterLoss7d} time${profile.reloadsAfterLoss7d === 1 ? "" : "s"} this week.`);
 
   const headline = triggered
-    ? `You realised ${usd(realizedLossUsdc)} in losses in the last 24 hours. Your rule pauses top-ups for ${hours(policy.lossCooldownSecs)}.`
+    ? `You realised ${usd(realizedLossUsdc)} in losses in the last 24 hours. Your rule pauses new capital for ${hours(policy.lossCooldownSecs)}.`
     : `Realised losses in the last 24 hours: ${usd(realizedLossUsdc)}, below your ${usd(policy.lossTriggerUsdc)} trigger.`;
 
   const evidence: EvidenceBundle = {
@@ -138,6 +165,11 @@ export function assess(profile: BehaviourProfile, policy: PolicyView, now: numbe
       signatures: s.signatures,
     })),
     policy: { lossTriggerUsdc: policy.lossTriggerUsdc.toString(), lossCooldownSecs: policy.lossCooldownSecs.toString() },
+    // Only when the venue reading is the one the verdict rests on: otherwise a
+    // reachable-or-not venue would change the hash of identical evidence.
+    ...(venueDominates
+      ? { venue: { source: "hyperliquid" as const, network: venue!.network, account: venue!.account, realisedLossUsdc: venueLoss.toString(), fills: venue!.fills, lastFillAt: venue!.lastFillAt } }
+      : {}),
   };
 
   return {

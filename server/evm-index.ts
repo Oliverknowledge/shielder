@@ -8,19 +8,22 @@
  *
  *   SHIELD_CHAIN=evm bun run server/evm-index.ts
  *
- * Config comes from the environment or .shield/demo-state.evm.json.
+ * Config comes from the environment or .shield/demo-state.evm.<network>.json.
  */
 import { createPublicClient, createWalletClient, getAddress, http, parseAbiItem, parseEventLogs, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { Store, type VerdictRecord } from "./store";
 import { deriveProfile, serialize, type BehaviourProfile, type Flow } from "./behaviour";
-import { assess, REASON_LABEL, type Assessment, type PolicyView } from "./policy";
-import { analyseHyperliquid, type HlNetwork } from "./hyperliquid";
+import { assess, REASON_LABEL, type Assessment, type PolicyView, type VenueLoss } from "./policy";
+import { analyseHyperliquid, fetchFills, type HlNetwork } from "./hyperliquid";
+import { describeSubstreams, resolveSubstreams } from "./substreams-config";
+import { runSubstreamsSource } from "./substreams-source";
 import { SHIELD_VAULT_ABI } from "../client/abi/ShieldVault";
 import { MOCK_USDC_ABI } from "../client/abi/MockUSDC";
 import { MOCK_CORE_DEPOSIT_ABI } from "../client/abi/MockCoreDepositWallet";
 import { evmCalls, readProposals, readRegistry, readVault, viemChain, type EvmConfig } from "../client/evm";
+import { evmNetworkName, readEvmState } from "../client/evm-state";
 import { evidenceHashOf, toHex } from "../client/verdict";
 import { OwnerKind, type ProposalView, type RegistryView, type VaultView } from "../client/views";
 
@@ -29,25 +32,39 @@ import { OwnerKind, type ProposalView, type RegistryView, type VaultView } from 
 // ---------------------------------------------------------------------
 const STATE_DIR = process.env.SHIELD_STATE_DIR ?? ".shield";
 const PORT = Number(process.env.SHIELD_PORT ?? 8787);
-const POLL_MS = Number(process.env.SHIELD_POLL_MS ?? 4000);
-const demoState = existsSync(`${STATE_DIR}/demo-state.evm.json`) ? (JSON.parse(readFileSync(`${STATE_DIR}/demo-state.evm.json`, "utf8")) as Record<string, string | number>) : {};
-const RPC_URL = process.env.EVM_RPC_URL ?? String(demoState.rpcUrl ?? "http://127.0.0.1:8545");
-const CHAIN_ID = Number(process.env.EVM_CHAIN_ID ?? demoState.chainId ?? 31337);
-const VAULT = getAddress(process.env.SHIELD_VAULT_ADDRESS ?? String(demoState.vault ?? "")) as Address;
-const USDC = getAddress(process.env.USDC_ADDRESS ?? String(demoState.usdc ?? "")) as Address;
-const CORE_MOCK = (process.env.CORE_DEPOSIT_MOCK ?? demoState.coreDeposit) ? (getAddress(String(process.env.CORE_DEPOSIT_MOCK ?? demoState.coreDeposit)) as Address) : null;
-const START_BLOCK = BigInt(process.env.EVM_START_BLOCK ?? demoState.startBlock ?? 0);
-const NETWORK = CHAIN_ID === 999 ? "hyperevm" : CHAIN_ID === 998 ? "hyperevm-testnet" : CHAIN_ID === 31337 ? "anvil" : `evm-${CHAIN_ID}`;
+// Chain first, because the demo state file is keyed by network.
+const legacyState = existsSync(`${STATE_DIR}/demo-state.evm.json`) ? (JSON.parse(readFileSync(`${STATE_DIR}/demo-state.evm.json`, "utf8")) as Record<string, string | number>) : {};
+const CHAIN_ID = Number(process.env.EVM_CHAIN_ID || legacyState.chainId || 31337);
+const demoState = readEvmState(STATE_DIR, evmNetworkName(CHAIN_ID)) as Record<string, string | number>;
+const RPC_URL = process.env.EVM_RPC_URL || String(demoState.rpcUrl ?? "http://127.0.0.1:8545");
+const VAULT = getAddress(process.env.SHIELD_VAULT_ADDRESS || String(demoState.vault ?? "")) as Address;
+const USDC = getAddress(process.env.USDC_ADDRESS || String(demoState.usdc ?? "")) as Address;
+const CORE_MOCK = (process.env.CORE_DEPOSIT_MOCK || demoState.coreDeposit) ? (getAddress(String(process.env.CORE_DEPOSIT_MOCK || demoState.coreDeposit)) as Address) : null;
+const START_BLOCK = BigInt(process.env.EVM_START_BLOCK || demoState.startBlock || 0);
+const NETWORK = evmNetworkName(CHAIN_ID);
 const IS_ANVIL = CHAIN_ID === 31337;
 const DEMO_ENABLED = (process.env.SHIELD_DEMO ?? (NETWORK === "hyperevm" ? "0" : "1")) === "1";
 const MONITOR_ENABLED = (process.env.SHIELD_MONITOR ?? "1") === "1";
 const HL_NETWORK: HlNetwork | null = CHAIN_ID === 999 ? "mainnet" : CHAIN_ID === 998 ? "testnet" : null;
-const LOG_CHUNK = CHAIN_ID === 998 || CHAIN_ID === 999 ? 50n : 50_000n;
+const IS_HYPEREVM = CHAIN_ID === 998 || CHAIN_ID === 999;
+// The public HyperEVM RPC caps eth_getLogs at 50 blocks and meters requests by
+// weight, so a long catch-up bursts straight into "rate limited". There the
+// indexer polls slower, walks a bounded window per poll, spaces the chunk
+// requests out, and backs off when the node pushes back (see `rpc` below).
+const LOG_CHUNK = IS_HYPEREVM ? 50n : 50_000n;
+const POLL_MS = Number(process.env.SHIELD_POLL_MS || (IS_HYPEREVM ? 15000 : 4000));
+const RPC_GAP_MS = Number(process.env.EVM_RPC_GAP_MS || (IS_HYPEREVM ? 500 : 0));
+const MAX_BLOCKS_PER_POLL = BigInt(process.env.EVM_MAX_BLOCKS_PER_POLL || (IS_HYPEREVM ? 100 : 10_000_000));
+// The Graph indexes HyperEVM mainnet only (`hyper-evm` in the networks registry): the
+// Substreams source is used there when a Graph Market token is configured; Anvil and
+// the testnet fall back to RPC log indexing.
+const SUBSTREAMS = resolveSubstreams("hyperevm");
+const SUBSTREAMS_ACTIVE = CHAIN_ID === 999 && !!SUBSTREAMS.token;
 
 // Anvil's public dev keys, never secrets. On real networks the keys must come from the environment.
-const VERIFIER_KEY = (process.env.SHIELD_EVM_VERIFIER_KEY ?? (IS_ANVIL ? "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6" : "")) as Hex;
-const RELAYER_KEY = (process.env.SHIELD_EVM_RELAYER_KEY ?? (IS_ANVIL ? "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a" : "")) as Hex;
-const EXECUTION_KEY = (process.env.EVM_EXECUTION_KEY ?? (IS_ANVIL ? "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" : "")) as Hex;
+const VERIFIER_KEY = (process.env.SHIELD_EVM_VERIFIER_KEY || (IS_ANVIL ? "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6" : "")) as Hex;
+const RELAYER_KEY = (process.env.SHIELD_EVM_RELAYER_KEY || (IS_ANVIL ? "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a" : "")) as Hex;
+const EXECUTION_KEY = (process.env.EVM_EXECUTION_KEY || (IS_ANVIL ? "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" : "")) as Hex;
 
 const cfg: EvmConfig = { rpcUrl: RPC_URL, chainId: CHAIN_ID, vault: VAULT, usdc: USDC };
 const chain = viemChain(cfg);
@@ -56,6 +73,7 @@ const verifier = VERIFIER_KEY ? privateKeyToAccount(VERIFIER_KEY) : null;
 const relayer = RELAYER_KEY ? privateKeyToAccount(RELAYER_KEY) : null;
 const execution = EXECUTION_KEY ? privateKeyToAccount(EXECUTION_KEY) : null;
 const log = (msg: string) => console.log(`[${new Date().toISOString()}] ${msg}`);
+log(describeSubstreams(SUBSTREAMS) + (SUBSTREAMS.token && !SUBSTREAMS_ACTIVE ? ` (not used on ${NETWORK}: The Graph indexes HyperEVM mainnet only)` : ""));
 
 mkdirSync(STATE_DIR, { recursive: true });
 const store = new Store(`${STATE_DIR}/server-state.${NETWORK}.json`);
@@ -77,8 +95,17 @@ interface View {
   lastSyncAt: number;
 }
 const views = new Map<string, View>();
-const known = new Set<string>();
-const source = { mode: "rpc" as const, connected: false, headSlot: null as string | null, error: null as string | null, endpoint: RPC_URL };
+// Vaults are discovered from VaultInitialized logs, but the discovery cursor is
+// persisted: on a restart the initialization block is already behind it, so seed
+// the set from what the store already knows or the vault would go missing.
+const known = new Set<string>(store.vaultKeys());
+const source: { mode: "substreams" | "rpc"; connected: boolean; headSlot: string | null; error: string | null; endpoint: string } = {
+  mode: SUBSTREAMS_ACTIVE ? "substreams" : "rpc",
+  connected: false,
+  headSlot: null,
+  error: null,
+  endpoint: SUBSTREAMS_ACTIVE ? SUBSTREAMS.endpoint : RPC_URL,
+};
 
 const policyView = (v: VaultView): PolicyView => ({
   vault: v.authority,
@@ -90,11 +117,61 @@ const policyView = (v: VaultView): PolicyView => ({
 });
 
 const TRANSFER = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const isRateLimited = (e: unknown) => /rate limit|32005|exceeds defined limit/i.test(e instanceof Error ? e.message : String(e));
+
+/** One RPC read, retried with exponential backoff while the node says "rate limited". */
+async function rpc<T>(fn: () => Promise<T>, attempts = 5): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (i >= attempts - 1 || !isRateLimited(e)) throw e;
+      await sleep(500 * 2 ** i);
+    }
+  }
+}
+
+/**
+ * The venue's own 24h realised PnL for a registered HyperCore destination.
+ *
+ * Capital deposited into a Hyperliquid account and lost there never comes back
+ * to the vault, so log indexing alone would report a loss of zero. Hyperliquid's
+ * public API is the only honest source for that, and it is used for nothing
+ * else: HyperEVM is never presented as knowing what happened on HyperCore.
+ * Cached briefly so the monitor loop does not hammer the venue.
+ */
+const venueLossCache = new Map<string, { at: number; value: VenueLoss | null }>();
+async function venueLossFor(account: string): Promise<VenueLoss | null> {
+  if (!HL_NETWORK) return null;
+  const key = account.toLowerCase();
+  const hit = venueLossCache.get(key);
+  const nowMs = Date.now();
+  if (hit && nowMs - hit.at < 30_000) return hit.value;
+  let value: VenueLoss | null = null;
+  try {
+    const since = nowMs - 86_400_000;
+    const fills = (await fetchFills(HL_NETWORK, account)).filter((f) => f.time >= since);
+    let net = 0;
+    let lastFillAt: number | null = null;
+    for (const f of fills) {
+      net += Number(f.closedPnl) - Number(f.fee);
+      lastFillAt = Math.max(lastFillAt ?? 0, Math.floor(f.time / 1000));
+    }
+    value = { source: "hyperliquid", network: HL_NETWORK, account, realisedLossUsdc: net < 0 ? BigInt(Math.round(-net * 1e6)) : 0n, fills: fills.length, lastFillAt };
+  } catch {
+    value = null; // venue unreachable: fall back to flow evidence only, never guess
+  }
+  venueLossCache.set(key, { at: nowMs, value });
+  return value;
+}
+
 const blockTimes = new Map<bigint, number>();
 async function blockTime(n: bigint): Promise<number> {
   const hit = blockTimes.get(n);
   if (hit !== undefined) return hit;
-  const b = await pub.getBlock({ blockNumber: n });
+  const b = await rpc(() => pub.getBlock({ blockNumber: n }));
   const t = Number(b.timestamp);
   blockTimes.set(n, t);
   return t;
@@ -108,9 +185,12 @@ const labelOf = (hex: Hex) => {
 
 async function getLogsChunked<T>(fetchRange: (from: bigint, to: bigint) => Promise<T[]>, from: bigint, to: bigint): Promise<T[]> {
   const out: T[] = [];
+  let first = true;
   for (let a = from; a <= to; a += LOG_CHUNK) {
     const b = a + LOG_CHUNK - 1n < to ? a + LOG_CHUNK - 1n : to;
-    out.push(...(await fetchRange(a, b)));
+    if (!first && RPC_GAP_MS) await sleep(RPC_GAP_MS);
+    first = false;
+    out.push(...(await rpc(() => fetchRange(a, b))));
   }
   return out;
 }
@@ -170,10 +250,10 @@ async function syncFlows(key: string, authority: Address, registry: RegistryView
 
 async function syncVault(authority: Address, head?: bigint): Promise<View | null> {
   const key = authority.toLowerCase();
-  const r = await readVault(pub, cfg, authority);
+  const r = await rpc(() => readVault(pub, cfg, authority));
   if (!r) return null;
-  const [proposals, registry] = await Promise.all([readProposals(pub, cfg, authority), readRegistry(pub, cfg, authority)]);
-  const h = head ?? (await pub.getBlockNumber());
+  const [proposals, registry] = await Promise.all([rpc(() => readProposals(pub, cfg, authority)), rpc(() => readRegistry(pub, cfg, authority))]);
+  const h = head ?? (await rpc(() => pub.getBlockNumber()));
   try {
     await syncFlows(key, authority, registry, h);
     source.connected = true;
@@ -186,7 +266,9 @@ async function syncVault(authority: Address, head?: bigint): Promise<View | null
   const now = Math.floor(Date.now() / 1000);
   const rec = store.vault(key);
   const profile = deriveProfile(key, rec.flows, now);
-  const assessment = assess(profile, policyView(r.vault), now, rec.lastVerdictLossAt);
+  const venueAccount = registry.find((x) => x.kind === OwnerKind.Execution && x.active && x.route === 1)?.owner ?? null;
+  const venue = venueAccount ? await venueLossFor(venueAccount) : null;
+  const assessment = assess(profile, policyView(r.vault), now, rec.lastVerdictLossAt, venue);
   const view: View = { key, vault: r.vault, balance: r.balance, proposals, registry, profile, assessment, lastSyncAt: now };
   views.set(key, view);
   return view;
@@ -267,19 +349,31 @@ async function monitorVault(view: View): Promise<VerdictRecord | null> {
 // ---------------------------------------------------------------------
 // Main loop
 // ---------------------------------------------------------------------
+/** Never ask for more than MAX_BLOCKS_PER_POLL blocks at once: a cold start far
+ *  behind the chain head then catches up over several polls instead of one burst. */
+function clampHead(chainHead: bigint): bigint {
+  let oldest: bigint | null = null;
+  for (const k of ["__discover", ...known]) {
+    const c = BigInt(cursors[k] ?? START_BLOCK.toString());
+    if (oldest === null || c < oldest) oldest = c;
+  }
+  if (oldest === null || chainHead - oldest <= MAX_BLOCKS_PER_POLL) return chainHead;
+  return oldest + MAX_BLOCKS_PER_POLL;
+}
+
 let running = false;
 async function tick() {
   if (running) return;
   running = true;
   try {
-    const head = await pub.getBlockNumber();
+    const head = clampHead(await rpc(() => pub.getBlockNumber()));
     await discoverVaults(head);
     for (const key of known) {
       try {
         const view = await syncVault(getAddress(key), head);
         if (view) {
           const rec = await monitorVault(view);
-          if (rec?.relayed) await syncVault(getAddress(key));
+          if (rec?.relayed) await syncVault(getAddress(key), head);
         }
       } catch (e) {
         log(`[${key.slice(0, 8)}] ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
@@ -294,6 +388,42 @@ async function tick() {
     running = false;
   }
 }
+if (SUBSTREAMS_ACTIVE) {
+  // Live flows from The Graph (HyperEVM mainnet). The RPC log sync keeps running for
+  // events and as a cross-check; store.addFlows dedups by tx hash + kind + amount.
+  const abort = new AbortController();
+  const anyCursor = store.vaultKeys().map((k) => store.vault(k).substreamsCursor).find(Boolean) ?? null;
+  runSubstreamsSource(
+    {
+      token: SUBSTREAMS.token,
+      endpoint: SUBSTREAMS.endpoint,
+      spkgPath: SUBSTREAMS.spkg,
+      module: "map_vault_flows",
+      startBlock: START_BLOCK,
+      cursor: anyCursor,
+      onFlows: (flows, cursor, block) => {
+        const byVault = new Map<string, Flow[]>();
+        for (const f of flows) byVault.set(f.vault.toLowerCase(), [...(byVault.get(f.vault.toLowerCase()) ?? []), f]);
+        for (const [vault, list] of byVault) {
+          known.add(vault);
+          store.addFlows(vault, list);
+        }
+        for (const k of store.vaultKeys()) store.vault(k).substreamsCursor = cursor;
+        source.headSlot = block.toString();
+        if (flows.length) store.touch();
+      },
+      onUndo: (lastValid) => log(`substreams undo to block ${lastValid}`),
+      onStatus: (st) => {
+        source.connected = st.connected;
+        source.error = st.error ?? null;
+        if (st.headSlot !== undefined) source.headSlot = st.headSlot.toString();
+      },
+      log,
+    },
+    abort.signal
+  ).catch((e) => log(`substreams source stopped: ${e}`));
+}
+
 setInterval(tick, POLL_MS);
 void tick();
 
@@ -339,13 +469,19 @@ Bun.serve({
         rpcUrl: RPC_URL,
         programId: VAULT,
         source,
-        substreamsEndpoint: CHAIN_ID === 999 ? "hyperevm.substreams.pinax.network:443" : "hyperevm.substreams.pinax.network:443 (mainnet only)",
-        spkg: "substreams-evm/shield-evm-behavioral-memory",
+        substreamsEndpoint: SUBSTREAMS.endpoint,
+        substreamsAvailable: CHAIN_ID === 999 ? "yes" : "no: The Graph indexes HyperEVM mainnet only",
+        substreamsToken: SUBSTREAMS.token ? SUBSTREAMS.tokenSource : "none",
+        spkg: SUBSTREAMS.spkg,
         monitor: { enabled: MONITOR_ENABLED && !!verifier, verifier: verifier?.address ?? null },
         demo: DEMO_ENABLED,
         vaults: [...known],
         usdcMint: USDC,
-        executionWallet: execution?.address ?? null,
+        executionWallet: execution?.address ?? (demoState.executionWallet ? String(demoState.executionWallet) : null),
+        // Which vault this stack was set up for. Several can exist on one
+        // contract, and signing in with the wrong key shows a real but empty
+        // one, which looks like a broken app.
+        demoAuthority: demoState.authority ? String(demoState.authority) : null,
         evm: { vault: VAULT, usdc: USDC, coreDepositMock: CORE_MOCK, chainId: CHAIN_ID, rpcUrl: RPC_URL },
       });
     }
