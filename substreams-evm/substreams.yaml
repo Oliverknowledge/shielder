@@ -39,7 +39,7 @@ modules:
     blockFilter:
       module: ethereum_common:index_events
       query:
-        params: true
+        string: "evt_addr:0xcdb6d631a00857584e70a21d800f51c5776302fe"
     output:
       type: proto:shield.evm.v1.ShieldEvents
 
@@ -63,7 +63,7 @@ modules:
     blockFilter:
       module: ethereum_common:index_events
       query:
-        params: true
+        string: "evt_addr:0xcdb6d631a00857584e70a21d800f51c5776302fe || evt_addr:0x2b3370ee501b4a559b57d449569354196457d8ab"
     output:
       type: proto:shield.evm.v1.VaultFlows
 

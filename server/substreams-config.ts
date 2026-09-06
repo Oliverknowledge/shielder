@@ -69,7 +69,10 @@ export function resolveSubstreams(stack: SubstreamsStack, env: NodeJS.ProcessEnv
   const spkg = clean(env[`SUBSTREAMS_${upper}_SPKG`]) || (stack === "solana" ? clean(env.SHIELD_SPKG) : "") || DEFAULT_SPKGS[stack];
 
   const tokenExpiresAt = token ? jwtExpiry(token) : null;
-  if (token && tokenExpiresAt === null) warnings.push("SUBSTREAMS_API_TOKEN does not look like a JWT");
+  // Not every Graph provider issues a JWT: the Market's HyperEVM endpoint
+  // accepts an opaque key, and calling that "not a JWT" reads as "your token is
+  // wrong" when it authenticates fine. Only say what is actually known.
+  if (token && tokenExpiresAt === null) warnings.push("SUBSTREAMS_API_TOKEN is not a JWT, so its expiry cannot be checked (opaque keys are valid at some providers)");
   if (tokenExpiresAt !== null && tokenExpiresAt * 1000 < Date.now()) warnings.push("Graph Market JWT has expired");
 
   return { stack, endpoint, token, tokenSource, spkg, tokenExpiresAt, warnings };

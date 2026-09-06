@@ -33,11 +33,15 @@ describe("substreams config", () => {
     expect(resolveSubstreams("hyperevm", env).endpoint).toBe("hyperevm.substreams.pinax.network:443");
   });
 
-  test("expired or malformed tokens are flagged, and the token never appears in the description", () => {
+  test("an expired JWT is flagged; an opaque key is noted but not called wrong", () => {
     const expired = resolveSubstreams("solana", { SUBSTREAMS_API_TOKEN: jwt(1) });
     expect(expired.warnings).toContain("Graph Market JWT has expired");
     expect(jwtExpiry("not-a-jwt")).toBeNull();
-    expect(resolveSubstreams("solana", { SUBSTREAMS_API_TOKEN: "abc" }).warnings[0]).toContain("does not look like a JWT");
+    // Some Graph providers issue opaque keys that authenticate fine, so this
+    // must read as "expiry unknown", never as "your token is wrong".
+    const opaque = resolveSubstreams("solana", { SUBSTREAMS_API_TOKEN: "abc" }).warnings[0];
+    expect(opaque).toContain("expiry cannot be checked");
+    expect(opaque).not.toContain("does not look like");
     expect(describeSubstreams(expired)).not.toContain(expired.token);
     expect(resolveSubstreams("solana", {}).tokenSource).toBe("none");
   });
