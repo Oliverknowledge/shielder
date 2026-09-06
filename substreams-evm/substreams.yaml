@@ -3,6 +3,7 @@ package:
   name: shield_evm_behavioral_memory
   version: v0.1.0
   url: https://github.com/Oliverknowledge/shiedler
+  doc: ./README.md
   description: ShieldVault.sol (HyperEVM / any EVM) — typed event decoding composed on the ethereum-common foundational block index, USDC-return detection, capital-flow classification across the vault boundary, and per-vault behavioural totals. One pipeline shape reused across chains (see ../substreams for Solana).
 
 imports:

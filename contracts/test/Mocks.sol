@@ -41,4 +41,17 @@ contract MockCoreDepositWallet {
         coreBalance[recipient] += amount;
         emit Deposit(recipient, amount, destinationDex);
     }
+
+    // --- demo-only simulation of HyperCore behaviour (not in Circle's contract) ---
+    /// The account withdraws from HyperCore to its own EVM address (Core→EVM credits the same address).
+    function withdrawToEvm(uint256 amount) external {
+        require(coreBalance[msg.sender] >= amount, "core balance");
+        coreBalance[msg.sender] -= amount;
+        require(usdc.transfer(msg.sender, amount), "push");
+    }
+    /// A trading loss settles against the account's HyperCore balance (USDC stays in the venue).
+    function settleLoss(address account, uint256 amount) external {
+        require(coreBalance[account] >= amount, "core balance");
+        coreBalance[account] -= amount;
+    }
 }

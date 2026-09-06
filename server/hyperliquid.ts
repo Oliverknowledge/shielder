@@ -195,7 +195,8 @@ export function summarise(address: string, network: HlNetwork, sessions: HlSessi
   const reloadDelays = sessions.filter((s) => s.firstLossAt && s.firstReloadAfterLossAt).map((s) => (s.firstReloadAfterLossAt! - s.firstLossAt!) / 60000);
   const sessionsWithReloadAfterLoss = sessions.filter((s) => s.reloadsAfterLoss > 0).length;
   const sessionsWithTwoPlusReloads = sessions.filter((s) => s.reloads >= 2).length;
-  const typical = median(sessions.filter((s) => s.deployed > 0).map((s) => s.deployed));
+  const depositSessions = sessions.filter((s) => s.deployed > 0);
+  const typical = depositSessions.length >= 3 ? median(depositSessions.map((s) => s.deployed)) : null;
   const largest = losing[0] ? { pnl: losing[0].realisedPnl, deployed: losing[0].deployed, openedAt: losing[0].openedAt } : null;
 
   let insight: string | null = null;
@@ -207,7 +208,9 @@ export function summarise(address: string, network: HlNetwork, sessions: HlSessi
     } else if (largest && sessions.filter((s) => s.deployed > 0).length >= 3 && typical !== null) {
       insight = `Your typical session deploys ${usd(typical)}. Your largest losing session cost ${usd(largest.pnl)}.`;
     } else if (largest) {
-      insight = `Your largest losing session cost ${usd(largest.pnl)}, out of ${usd(deposited)} you've deposited in total.`;
+      insight = Math.abs(largest.pnl) <= deposited
+        ? `Your largest losing session cost ${usd(largest.pnl)}, out of ${usd(deposited)} you've deposited in total.`
+        : `Your largest losing session cost ${usd(largest.pnl)}, more than everything you've ever deposited (${usd(deposited)}).`;
     } else if (typical !== null) {
       insight = `Your typical session deploys ${usd(typical)} across ${sessions.length} sessions.`;
     }
