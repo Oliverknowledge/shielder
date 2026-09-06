@@ -40,7 +40,7 @@ export function Welcome() {
   return (
     <main className="page page-narrow fade-in">
       <div style={{ padding: "36px 0 28px" }}>
-        <p className="eyebrow" style={{ marginBottom: 14 }}>Self-custodial · Solana</p>
+        <p className="eyebrow" style={{ marginBottom: 14 }}>Self-custodial · {CHAIN === "evm" ? "Hyperliquid · HyperEVM" : "Solana"}</p>
         <h1 className="display" style={{ maxWidth: "14ch" }}>
           Wallets protect your keys. <span className="serif" style={{ fontStyle: "italic", fontWeight: 400 }}>Shield protects you from your own decisions.</span>
         </h1>

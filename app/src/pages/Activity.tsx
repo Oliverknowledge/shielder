@@ -18,7 +18,7 @@ interface Item {
 }
 
 export function Activity() {
-  const { server, serverError, serverLoading, wallets, vault, vaultKey, now } = useShield();
+  const { server, serverError, serverLoading, wallets, vault, vaultKey, now, chain } = useShield();
   const attempts = useAttempts(vaultKey);
   const labelOf = (owner: string) => wallets.find((w) => w.owner === owner)?.label ?? short(owner);
 
@@ -62,7 +62,7 @@ export function Activity() {
       <div className="page-head">
         <p className="eyebrow">Activity</p>
         <h1>Proof of everything Shield did</h1>
-        <p>Every line is a Solana transaction you can open. A blocked top-up never moved money, but the rejection is on-chain too.</p>
+        <p>Every line is a {chain === "evm" ? "HyperEVM" : "Solana"} transaction you can open. A blocked top-up never moved money, but the rejection is on-chain too.</p>
       </div>
 
       {vault && Number(vault.cooldownUntil) > now && (

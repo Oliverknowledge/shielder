@@ -7,14 +7,15 @@ import { Landing } from "./pages/Landing";
 import { Setup } from "./pages/Setup";
 import { Overview } from "./pages/Overview";
 import { TopUp } from "./pages/TopUp";
+import { Trade } from "./pages/Trade";
 import { Behaviour } from "./pages/Behaviour";
 import { Protection } from "./pages/Protection";
 import { Activity } from "./pages/Activity";
 import { short } from "./lib/format";
 
 const TABS = [
-  { to: "/", label: "Overview", icon: "home" as const },
-  { to: "/top-up", label: "Top up", icon: "topup" as const },
+  { to: "/", label: "Home", icon: "home" as const },
+  { to: "/trade", label: "Trade", icon: "trade" as const },
   { to: "/behaviour", label: "Behaviour", icon: "behaviour" as const },
   { to: "/protection", label: "Protection", icon: "protection" as const },
   { to: "/activity", label: "Activity", icon: "activity" as const },
@@ -116,6 +117,7 @@ function Shell() {
         <Route path="/setup" element={signer ? <Setup /> : <Navigate to="/welcome" replace />} />
         <Route path="/" element={gate(<Overview />)} />
         <Route path="/top-up" element={gate(<TopUp />)} />
+        <Route path="/trade" element={gate(<Trade />)} />
         <Route path="/behaviour" element={gate(<Behaviour />)} />
         <Route path="/protection" element={gate(<Protection />)} />
         <Route path="/activity" element={gate(<Activity />)} />
@@ -128,7 +130,7 @@ function Shell() {
             <NavLink key={t.to} to={t.to} end={t.to === "/"} className={({ isActive }) => (isActive ? "active" : "")}>
               <Icon name={t.icon} />
               <span>{t.label}</span>
-              {t.to === "/top-up" && cooldownActive && <span className="dot" aria-label="Top-ups paused" />}
+              {t.to === "/trade" && cooldownActive && <span className="dot" aria-label="Funding paused" />}
             </NavLink>
           ))}
         </nav>

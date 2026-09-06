@@ -56,7 +56,7 @@ export function describeEvent(e: EventJson, labelOf: (owner: string) => string, 
     case "Deposited":
       return { title: `Deposited ${usd(s("amount"))}`, body: `Treasury now ${usd(s("newBalance"))}`, tone: "protect", category: "Deposit", amount: { text: `+${usd(s("amount"))}`, tone: "protect" } };
     case "RegistrationChanged":
-      return { title: `${d.active ? "Added" : "Removed"} ${d.kind === 1 ? "cold" : "trading"} wallet ${s("label") || labelOf(s("owner"))}`, body: d.active ? "Shield can now send here" : "Shield can no longer send here", tone: d.active ? "neutral" : "protect", category: "Wallet" };
+      return { title: `${d.active ? "Added" : "Removed"} ${Number(d.kind) === 1 ? "cold" : "trading"} wallet ${s("label") || labelOf(s("owner"))}`, body: d.active ? "Shield can now send here" : "Shield can no longer send here", tone: d.active ? "neutral" : "protect", category: "Wallet" };
     case "PolicyTightened":
     {
       const parts: string[] = [];

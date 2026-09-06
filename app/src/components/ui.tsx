@@ -244,7 +244,7 @@ export function EmptyState({ title, body, action }: { title: string; body?: stri
   );
 }
 
-export type IconName = "home" | "topup" | "behaviour" | "protection" | "activity" | "shield" | "arrow" | "check" | "lock" | "pause" | "x" | "clock" | "bolt" | "external" | "back";
+export type IconName = "home" | "topup" | "behaviour" | "protection" | "activity" | "shield" | "arrow" | "check" | "lock" | "pause" | "x" | "clock" | "bolt" | "external" | "back" | "trade";
 
 export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
@@ -279,5 +279,7 @@ export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
       return <svg {...common}><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" /></svg>;
     case "external":
       return <svg {...common}><path d="M14 4h6v6" /><path d="M20 4 10 14" /><path d="M18 13v6H5V6h6" /></svg>;
+    case "trade":
+      return <svg {...common}><path d="M4 19V5" /><path d="M4 19h16" /><path d="M8 15v-4" /><path d="M12 15V8" /><path d="M16 15v-6" /></svg>;
   }
 }
