@@ -1,9 +1,10 @@
 /**
  * The Graph / Substreams source: streams `map_vault_flows` from a Graph
- * Market endpoint (devnet.sol.streamingfast.io:443 by default) using the
- * official JS SDK, keeps a resumable cursor, and hands flows to the
- * server. This is the load-bearing data path; `rpc-source.ts` is the
- * fallback when no SUBSTREAMS_API_TOKEN is configured.
+ * Market endpoint using the official JS SDK, keeps a resumable cursor, and
+ * hands flows to the server. Both packages (Solana `substreams/`, HyperEVM
+ * `substreams-evm/`) emit the same Flow shape, so one source serves both
+ * stacks; endpoint and token come from `substreams-config.ts`. The RPC
+ * indexers are the fallback when no Graph Market token is configured.
  */
 import { readFileSync } from "node:fs";
 import { Package } from "@substreams/core/proto";
@@ -34,8 +35,10 @@ const KIND_MAP: Record<string, FlowKind> = {
 };
 
 interface FlowJson {
-  slot?: string | number;
-  signature?: string;
+  slot?: string | number; // Solana
+  block?: string | number; // EVM
+  signature?: string; // Solana
+  txHash?: string; // EVM
   blockTime?: string | number;
   vault?: string;
   kind?: string;
@@ -49,8 +52,8 @@ export function flowsFromMapOutput(json: { flows?: FlowJson[] }): Flow[] {
   return (json.flows ?? [])
     .filter((f) => f.kind && KIND_MAP[f.kind])
     .map((f) => ({
-      slot: Number(f.slot ?? 0),
-      signature: f.signature ?? "",
+      slot: Number(f.slot ?? f.block ?? 0),
+      signature: f.signature ?? f.txHash ?? "",
       blockTime: Number(f.blockTime ?? 0),
       vault: f.vault ?? "",
       kind: KIND_MAP[f.kind!],

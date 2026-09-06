@@ -30,7 +30,8 @@ block time. The store keeps whole-history totals; the app keeps windows.
 # toolchain: rustup target add wasm32-unknown-unknown; brew install bufbuild/buf/buf; substreams CLI >= 1.22
 substreams build                                   # -> shield-behavioral-memory-v0.2.0.spkg
 
-substreams auth                                    # The Graph Market key -> SUBSTREAMS_API_TOKEN
+# JWT: SUBSTREAMS_API_TOKEN in .env (shared with substreams-evm); endpoint SUBSTREAMS_SOLANA_ENDPOINT
+bun run substreams:solana <slot>                   # or the raw CLI below
 substreams run substreams.yaml map_vault_flows \
   -e devnet.sol.streamingfast.io:443 -s <slot> -t +200 -o jsonl
 substreams gui substreams.yaml map_behavioral_profiles -e devnet.sol.streamingfast.io:443 -s <slot>

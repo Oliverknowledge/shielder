@@ -76,10 +76,12 @@ export class Store {
 
   addFlows(key: string, flows: Flow[]): number {
     const rec = this.vault(key);
-    const seen = new Set(rec.flows.map((f) => `${f.signature}:${f.kind}:${f.counterparty}:${f.amount}`));
+    // Case-insensitive id so an EVM flow seen via RPC (checksummed) and via Substreams (lowercase) is one flow.
+    const idOf = (f: Flow) => `${f.signature}:${f.kind}:${f.counterparty}:${f.amount}`.toLowerCase();
+    const seen = new Set(rec.flows.map(idOf));
     let added = 0;
     for (const f of flows) {
-      const id = `${f.signature}:${f.kind}:${f.counterparty}:${f.amount}`;
+      const id = idOf(f);
       if (seen.has(id)) continue;
       seen.add(id);
       rec.flows.push(f);

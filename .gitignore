@@ -42,3 +42,9 @@ contracts/broadcast/
 substreams-evm/*.spkg
 substreams-evm/target/
 substreams-evm/src/abi_shield_vault.rs
+
+# Local env files carry the Graph Market JWT and signing keys (never commit)
+.env
+.env.*
+!.env.example
+.substreams.env

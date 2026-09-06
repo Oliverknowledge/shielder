@@ -48,6 +48,7 @@ import { syncVaultViaRpc, type ActivityEvent } from "./rpc-source";
 import { Store, type VerdictRecord } from "./store";
 import { runSubstreamsSource } from "./substreams-source";
 import { toHex, verdictFromJson, verdictToJson, type VerdictJson } from "../client/verdict";
+import { describeSubstreams, resolveSubstreams } from "./substreams-config";
 
 // ---------------------------------------------------------------------
 // Config
@@ -57,9 +58,10 @@ const RPC_URL = process.env.SHIELD_RPC_URL ?? "http://127.0.0.1:8899";
 const PORT = Number(process.env.SHIELD_PORT ?? 8787);
 const STATE_DIR = process.env.SHIELD_STATE_DIR ?? ".shield";
 const POLL_MS = Number(process.env.SHIELD_POLL_MS ?? 4000);
-const SUBSTREAMS_TOKEN = process.env.SUBSTREAMS_API_TOKEN ?? "";
-const SUBSTREAMS_ENDPOINT = process.env.SUBSTREAMS_ENDPOINT ?? "devnet.sol.streamingfast.io:443";
-const SUBSTREAMS_SPKG = process.env.SHIELD_SPKG ?? "substreams/shield-behavioral-memory-v0.2.0.spkg";
+const SUBSTREAMS = resolveSubstreams("solana");
+const SUBSTREAMS_TOKEN = SUBSTREAMS.token;
+const SUBSTREAMS_ENDPOINT = SUBSTREAMS.endpoint;
+const SUBSTREAMS_SPKG = SUBSTREAMS.spkg;
 const SUBSTREAMS_START_SLOT = BigInt(process.env.SUBSTREAMS_START_SLOT ?? "0");
 const NETWORK = RPC_URL.includes("devnet") ? "devnet" : RPC_URL.includes("mainnet") ? "mainnet-beta" : "localnet";
 const DEMO_ENABLED = (process.env.SHIELD_DEMO ?? (NETWORK === "mainnet-beta" ? "0" : "1")) === "1";
@@ -68,6 +70,7 @@ const MONITOR_ENABLED = (process.env.SHIELD_MONITOR ?? "1") === "1";
 const connection = new Connection(RPC_URL, "confirmed");
 const store = new Store(`${STATE_DIR}/server-state.${NETWORK}.json`);
 const log = (msg: string) => console.log(`[${new Date().toISOString()}] ${msg}`);
+log(describeSubstreams(SUBSTREAMS));
 
 function loadKeypair(path: string): Keypair | null {
   if (!existsSync(path)) return null;

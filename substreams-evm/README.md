@@ -15,14 +15,23 @@ map_behavioral_profiles deltas -> BehavioralProfiles
 ```
 
 Build: `substreams build` (Rust + wasm32 target; Foundry's ABI is copied to
-`abi/ShieldVault.json`). Run against The Graph Market (needs a key):
+`abi/ShieldVault.json`). Run against The Graph Market with the shared JWT in
+`.env` (`SUBSTREAMS_API_TOKEN`; endpoint `SUBSTREAMS_HYPEREVM_ENDPOINT`,
+default `hyperevm.substreams.pinax.network:443`, HyperEVM mainnet only):
 
 ```bash
-substreams run substreams.yaml map_vault_flows -e hyperevm.substreams.pinax.network:443 \
-  -s <vault deploy block> -t +200 \
+bun run substreams:hyperevm                  # last 20 blocks, proves auth + package load
+bun run substreams:hyperevm <deploy block> +200   # with EVM_CHAIN_ID=999, SHIELD_VAULT_ADDRESS, USDC_ADDRESS set
+# equivalent raw CLI:
+SUBSTREAMS_API_TOKEN=<jwt> substreams run substreams.yaml map_vault_flows \
+  -e hyperevm.substreams.pinax.network:443 -s <vault deploy block> -t +200 \
   -p map_shield_events="evt_addr:<vault>" \
   -p map_vault_flows="evt_addr:<vault> || evt_addr:<native usdc>"
 ```
+
+`server/evm-index.ts` consumes the same module through `@substreams/core`
+when `EVM_CHAIN_ID=999` and the JWT is set (`/api/health` → `source.mode:
+"substreams"`).
 
 Output `Flow` messages carry the same fields the Solana package emits, so
 `server/behaviour.ts`, `server/policy.ts` and the Chainlink CRE workflow
