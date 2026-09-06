@@ -118,20 +118,48 @@ Why: both Graph prizes require live data from a Graph provider.
 
 Keep the terminal output for the submission.
 
-## 4. Chainlink API key (5 min) → CRE simulation evidence
+## 4. Chainlink: install the `cre` CLI (10 min) → the bounty's named evidence
 
-- https://app.chain.link → Account → API key (or `cre login`).
+`CRE_API_KEY` is set and the confidential evaluation already runs against the
+live vault. What is missing is the CLI itself: `cre` is a separate Go binary,
+not on npm or Homebrew, so `cre workflow simulate` cannot run here.
 
-```bash
-export CRE_API_KEY=<key>
-echo "SHIELD_EVM_VERIFIER_KEY=<the verifier key the vault pins>" >> cre/.env
-cre workflow simulate cre/shield-risk --target staging-settings --non-interactive --trigger-index 0 --http-payload '{"vault":"<authority address>"}' -R cre -e cre/.env
+Already proven without it — the same `evaluateVault` function, the same signed
+output, on the live deployment:
+
+```
+[USER LOG] Enclave evaluation: vault=0x9872f09D… realisedLoss24h=70000000
+           trigger=50000000 triggered=true actionable=true
+[USER LOG] Verdict #1 relayed on-chain: 0x0c4387ce…
 ```
 
-Expected: the TEE banner, `[USER LOG] Enclave evaluation … triggered=true actionable=true`,
-`Verdict #N relayed on-chain: 0x…`. Run the server with `SHIELD_MONITOR=0` so the
-enclave is the only signer. (The identical function already runs locally:
-`bun run cre/shield-risk/dryrun.ts --evm <authority>`.)
+Verdict #1 attested $70, the deployed vault accepted it (block 63578192), and
+it armed a 12-hour cooldown that then blocked the next release on-chain.
+
+That evidence comes from `dryrun.ts`, which stands plain `fetch` in for the
+enclave's HTTP capability and `cre/.env` in for the Vault DON. The bounty asks
+for a simulation **through the CRE CLI** or a live deployment, so this is
+strong but not literally what was asked. To close it:
+
+1. Install the `cre` CLI from Chainlink's docs (docs.chain.link/cre) — check
+   whether Confidential Workflows access has to be granted to your account
+   first (docs.chain.link/cre/account/confidential-workflows-access).
+2. Then, with the loss standing on the vault and `SHIELD_MONITOR=0` so the
+   enclave is the only signer:
+
+```bash
+SHIELD_MONITOR=0 bun run server:evm &
+cre workflow simulate cre/shield-risk --target staging-settings --non-interactive \
+  --trigger-index 0 --http-payload '{"vault":"0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006"}' \
+  -R cre -e cre/.env
+```
+
+Expect the TEE banner (`Trigger requested TEE Execution … AWS Nitro`) on top of
+the same two `[USER LOG]` lines. `cre/.env` already signs with the key this
+vault pins (`0x4A41Fa3d…`), so a verdict it produces will be accepted.
+
+Note a verdict only lands when there is a *new* loss: nonce 1 is used, so stage
+another one (release, then send back less than you released) before re-running.
 
 ## 5. Solana devnet (optional, 10 min) → the v0 stack live
 

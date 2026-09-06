@@ -9,10 +9,12 @@
  */
 import { readFileSync, existsSync } from "node:fs";
 import { evaluateVault, type EnclaveIO } from "./evaluate";
+import { evmNetworkName, readEvmState } from "../../client/evm-state";
 
 const evm = process.argv.includes("--evm");
 const positional = process.argv.slice(2).filter((a) => !a.startsWith("--"));
-const vault = positional[0] ?? (evm ? JSON.parse(readFileSync(".shield/demo-state.evm.json", "utf-8")).authority : JSON.parse(readFileSync(".shield/demo-state.localnet.json", "utf-8")).vault);
+const evmState = evm ? readEvmState(".shield", evmNetworkName(Number(process.env.EVM_CHAIN_ID || 998))) : null;
+const vault = positional[0] ?? (evm ? String(evmState?.authority ?? "") : JSON.parse(readFileSync(".shield/demo-state.localnet.json", "utf-8")).vault);
 const deliver = !process.argv.includes("--no-deliver");
 const config = JSON.parse(readFileSync(new URL(evm ? "./config.evm.json" : "./config.staging.json", import.meta.url), "utf-8")) as {
   shieldApiUrl: string;
@@ -23,10 +25,10 @@ const config = JSON.parse(readFileSync(new URL(evm ? "./config.evm.json" : "./co
   chainId?: number;
 };
 if (evm) {
-  // point at the local Anvil deployment written by scripts/anvil-demo.ts
-  const st = JSON.parse(readFileSync(".shield/demo-state.evm.json", "utf-8")) as { vault: string; chainId: number };
-  config.programId = st.vault;
-  config.chainId = st.chainId;
+  // whichever EVM the state file was written for: Anvil or the live HyperEVM vault
+  if (!evmState?.vault) throw new Error("no EVM state: run bootstrap:evm (Anvil) or bootstrap:hyperevm first");
+  config.programId = evmState.vault;
+  config.chainId = evmState.chainId!;
 }
 
 // cre/.env → secrets (mirrors what the CLI simulator does)
