@@ -7,7 +7,7 @@ import { useShield, NETWORK, IS_MAINNET, CHAIN } from "../lib/shield";
 import { CapitalBar, Dot, Icon } from "../components/ui";
 
 export function Welcome() {
-  const { signer, vault, loading, connectDemo, privy } = useShield();
+  const { signer, vault, vaultKnown, loading, connectDemo, privy, health } = useShield();
   const wallet = useWallet();
   const [showDemo, setShowDemo] = useState(false);
   const [demoJson, setDemoJson] = useState("");
@@ -17,7 +17,10 @@ export function Welcome() {
     if (wallet.wallet && !wallet.connected && !wallet.connecting) void wallet.connect().catch(() => null);
   }, [wallet.wallet]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (signer && !loading) return <Navigate to={vault ? "/" : "/setup"} replace />;
+  // Wait for a completed chain read: sending someone to onboarding because the
+  // RPC was slow would offer to create a vault they already have.
+  if (signer && !loading && vaultKnown) return <Navigate to={vault ? "/" : "/setup"} replace />;
+  if (signer && !vaultKnown) return <main className="page page-narrow fade-in" style={{ paddingTop: 48 }}><p className="dim">Reading your vault…</p></main>;
 
   const installed = wallet.wallets.filter((w) => w.readyState === WalletReadyState.Installed || w.readyState === WalletReadyState.Loadable);
 
@@ -112,7 +115,12 @@ export function Welcome() {
               </button>
             ) : (
               <div className="stack-s fade-in">
-                <p className="tiny muted">{CHAIN === "evm" ? "Paste a hex private key (an Anvil dev key on the local demo). Kept in this tab's session only. Never do this with a real key." : "Paste a Solana CLI keypair JSON (the 64-number array). Kept in this tab's session only. Never do this with a real key."}</p>
+                <p className="tiny muted">{CHAIN === "evm" ? "Paste a hex private key. Kept in this tab's session only. Never do this with a real key." : "Paste a Solana CLI keypair JSON (the 64-number array). Kept in this tab's session only. Never do this with a real key."}</p>
+                {health?.demoAuthority && (
+                  <p className="tiny muted">
+                    This stack is set up for the vault owned by <span className="mono">{health.demoAuthority}</span>. Another key will show its own vault, which may be empty.
+                  </p>
+                )}
                 <textarea className="input mono" rows={3} value={demoJson} onChange={(e) => setDemoJson(e.target.value)} placeholder={CHAIN === "evm" ? "0x…" : "[12,34,…]"} />
                 {demoError && <p className="tiny c-blocked">{demoError}</p>}
                 <div className="row">

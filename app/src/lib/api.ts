@@ -13,6 +13,8 @@ export interface ServerHealth {
   vaults: string[];
   usdcMint: string | null;
   executionWallet: string | null;
+  /** The vault this stack was bootstrapped for, so the demo-key box can name it. */
+  demoAuthority?: string | null;
   chain?: "solana" | "evm";
   evm?: { vault: string; usdc: string; coreDepositMock?: string | null; chainId: number; rpcUrl: string } | null;
 }

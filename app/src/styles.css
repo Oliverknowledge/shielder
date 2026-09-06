@@ -413,7 +413,7 @@ textarea.input { min-height: 84px; resize: vertical; }
 .hold-protect { background: #185c40; }
 
 /* ---------------- reset (90 seconds) ---------------- */
-.reset-screen { position: fixed; inset: 0; z-index: 45; background: var(--paper); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+.reset-screen { position: fixed; inset: 0; z-index: 55; background: var(--paper); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
 .reset-ring { position: relative; width: 168px; height: 168px; margin: 8px auto 0; }
 .reset-ring svg { transform: rotate(-90deg); }
 .reset-ring .t { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 44px; font-weight: 600; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
@@ -444,3 +444,35 @@ textarea.input { min-height: 84px; resize: vertical; }
 .morning .btn-secondary { background: transparent; color: var(--paper); border-color: rgba(247,246,242,0.35); }
 .morning .btn-secondary:hover { background: rgba(247,246,242,0.1); }
 .morning .btn-protect { background: var(--protect-2); color: var(--ink); }
+
+/* --- Home: the mental model. Protected capital, the Shield, the bankroll. --- */
+.split { display: grid; grid-template-columns: 1fr auto 1fr; gap: 20px; align-items: center; }
+.split-side { min-width: 0; }
+.split-side .k { font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+.split-side .v { font-size: clamp(30px, 5.4vw, 46px); line-height: 1.05; font-weight: 600; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; margin-top: 8px; }
+.split-side .s { font-size: 13px; color: var(--ink-3); margin-top: 6px; }
+.split-side.trading .v { color: var(--ink-2); }
+.split-mid { display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--ink-3); }
+.split-mid .bar { width: 1px; height: 22px; background: var(--line); }
+.split-mid .tag { font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
+@media (max-width: 700px) {
+  .split { grid-template-columns: 1fr; gap: 14px; }
+  .split-mid { flex-direction: row; gap: 10px; }
+  .split-mid .bar { width: 22px; height: 1px; }
+}
+
+/* --- Connected venue --- */
+.venue-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.venue-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 14px 20px; margin-top: 16px; }
+.venue-stats .k { font-size: 12px; color: var(--ink-3); }
+.venue-stats .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+
+/* --- What happened: the factual session timeline --- */
+.wh { display: grid; grid-template-columns: auto 1fr; gap: 0 14px; }
+.wh-time { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink-3); padding: 10px 0; white-space: nowrap; }
+.wh-body { padding: 10px 0; border-left: 1px solid var(--line); padding-left: 18px; position: relative; }
+.wh-body::before { content: ""; position: absolute; left: -4.5px; top: 16px; width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); }
+.wh-body.hit::before { background: var(--blocked); }
+.wh-body.good::before { background: var(--protect); }
+.wh-body .t { font-weight: 600; }
+.wh-body .b { font-size: 13px; color: var(--ink-3); margin-top: 2px; }

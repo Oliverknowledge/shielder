@@ -28,6 +28,15 @@ export const RPC_URL: string = (import.meta.env.VITE_SHIELD_RPC_URL as string | 
 export const API_URL: string = (import.meta.env.VITE_SHIELD_API as string | undefined) ?? "http://localhost:8787";
 export const EVM_CHAIN_ID = Number((import.meta.env.VITE_EVM_CHAIN_ID as string | undefined) ?? 31337);
 
+/**
+ * The public HyperEVM RPC meters requests by weight, and one vault read is
+ * several eth_calls. Polling it as fast as a local chain gets the app rate
+ * limited, so it backs off there; the server does the same (server/evm-index.ts).
+ */
+const IS_PUBLIC_HYPEREVM = EVM_CHAIN_ID === 998 || EVM_CHAIN_ID === 999;
+const CHAIN_POLL_MS = IS_PUBLIC_HYPEREVM ? 20_000 : 4_000;
+const SERVER_POLL_MS = IS_PUBLIC_HYPEREVM ? 6_000 : 4_000;
+
 /** Human network name for the badge. */
 export const NETWORK: string = CHAIN === "evm"
   ? (EVM_CHAIN_ID === 999 ? "hyperevm" : EVM_CHAIN_ID === 998 ? "hyperevm-testnet" : EVM_CHAIN_ID === 31337 ? "anvil" : `evm-${EVM_CHAIN_ID}`)
@@ -52,6 +61,8 @@ export interface ShieldData {
   walletUsdc: bigint | null;
   usdc: string | null;
   loading: boolean;
+  /** True once a chain read has actually completed. Until then "no vault" is unknown, not false. */
+  vaultKnown: boolean;
   server: VaultPayload | null;
   health: ServerHealth | null;
   serverError: string | null;
@@ -147,12 +158,16 @@ function Inner({ children }: { children: ReactNode }) {
   const [wallets, setWallets] = useState<WalletBalanceView[]>([]);
   const [walletUsdc, setWalletUsdc] = useState<bigint | null>(null);
   const [loading, setLoading] = useState(true);
+  const [vaultKnown, setVaultKnown] = useState(false);
   const [server, setServer] = useState<VaultPayload | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [serverLoading, setServerLoading] = useState(true);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const inflight = useRef(false);
   const vaultExistsRef = useRef(false);
+  const vaultKnownRef = useRef(false);
+  const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshRef = useRef<(() => Promise<void>) | null>(null);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
@@ -161,6 +176,8 @@ function Inner({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     if (!engine || !signer) {
+      vaultKnownRef.current = false;
+      setVaultKnown(false);
       setVault(null);
       setLoading(CHAIN === "evm" && !engine && !!signer); // still waiting for config
       return;
@@ -170,6 +187,8 @@ function Inner({ children }: { children: ReactNode }) {
     try {
       const snap = await engine.read(signer);
       vaultExistsRef.current = !!snap.vault;
+      vaultKnownRef.current = true;
+      setVaultKnown(true);
       setVault(snap.vault);
       setBalance(snap.balance);
       setProposals(snap.proposals);
@@ -177,7 +196,12 @@ function Inner({ children }: { children: ReactNode }) {
       setWallets(snap.wallets);
       setWalletUsdc(snap.walletUsdc);
     } catch (e) {
+      // Transient RPC failures (rate limiting, a dropped connection) must not
+      // wipe the vault the user is looking at: keep the last good snapshot.
       console.warn("refresh failed", e);
+      // Nothing to show yet: retry soon rather than waiting out a poll that is
+      // paced for a healthy connection.
+      if (!vaultKnownRef.current) retry.current = setTimeout(() => void refreshRef.current?.(), 2500);
     } finally {
       inflight.current = false;
       setLoading(false);
@@ -206,13 +230,16 @@ function Inner({ children }: { children: ReactNode }) {
     setLoading(true);
     setServerLoading(true);
     void refresh().then(() => refreshServer());
-    const a = setInterval(() => void refresh(), 4000);
-    const b = setInterval(() => void refreshServer(), 4000);
+    const a = setInterval(() => void refresh(), CHAIN_POLL_MS);
+    const b = setInterval(() => void refreshServer(), SERVER_POLL_MS);
     return () => {
       clearInterval(a);
       clearInterval(b);
+      if (retry.current) clearTimeout(retry.current);
     };
   }, [refresh, refreshServer]);
+
+  refreshRef.current = refresh;
 
   const connectDemo = useCallback((secret: number[] | string) => {
     if (CHAIN === "solana") {
@@ -267,6 +294,7 @@ function Inner({ children }: { children: ReactNode }) {
     walletUsdc,
     usdc,
     loading,
+    vaultKnown,
     server,
     health,
     serverError,

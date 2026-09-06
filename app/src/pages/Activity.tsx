@@ -18,7 +18,7 @@ interface Item {
 }
 
 export function Activity() {
-  const { server, serverError, serverLoading, wallets, vault, vaultKey, now, chain } = useShield();
+  const { server, serverError, serverLoading, wallets, vault, vaultKey, now, chain, network } = useShield();
   const attempts = useAttempts(vaultKey);
   const labelOf = (owner: string) => wallets.find((w) => w.owner === owner)?.label ?? short(owner);
 
@@ -34,14 +34,14 @@ export function Activity() {
       const why =
         a.reason === "CooldownActive"
           ? vault && vault.cooldownReason === COOLDOWN_REASON.SELF_PAUSE
-            ? "You had paused top-ups"
+            ? "You had paused new capital"
             : "Loss cooldown was active"
           : a.reason === "VelocityThresholdExceeded"
             ? "Over your daily limit"
             : a.reason === "ProtectedFloorBreached"
               ? "Would have breached your floor"
               : a.reason ?? "Rejected by the vault";
-      out.push({ ts: a.ts, key: `attempt-${a.ts}-${a.amount}`, title: `Top-up of ${usd(a.amount)} to ${a.destinationLabel} blocked`, body: `${why} · the money never left the treasury`, tone: "blocked", category: "Blocked", sig: a.sig, amount: { text: usd(a.amount), tone: "blocked" } });
+      out.push({ ts: a.ts, key: `attempt-${a.ts}-${a.amount}`, title: `Release of ${usd(a.amount)} to ${a.destinationLabel} blocked`, body: `${why} · the money never left the treasury`, tone: "blocked", category: "Blocked", sig: a.sig, amount: { text: usd(a.amount), tone: "blocked" } });
     }
     return out.sort((x, y) => y.ts - x.ts);
   }, [server?.events, attempts, wallets, vault, now]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -62,12 +62,12 @@ export function Activity() {
       <div className="page-head">
         <p className="eyebrow">Activity</p>
         <h1>Proof of everything Shield did</h1>
-        <p>Every line is a {chain === "evm" ? "HyperEVM" : "Solana"} transaction you can open. A blocked top-up never moved money, but the rejection is on-chain too.</p>
+        <p>Every line is a {network === "anvil" ? "local" : chain === "evm" ? "HyperEVM" : "Solana"} transaction you can open. A blocked release never moved money, but the rejection is on-chain too.</p>
       </div>
 
       {vault && Number(vault.cooldownUntil) > now && (
         <div className="strip strip-blocked" style={{ marginBottom: 20 }}>
-          <div className="grow">Top-ups paused until <b>{clockTime(Number(vault.cooldownUntil), now)}</b>{vault.cooldownReason === COOLDOWN_REASON.RISK_VERDICT ? " by your loss rule" : " by you"}.</div>
+          <div className="grow">New capital paused until <b>{clockTime(Number(vault.cooldownUntil), now)}</b>{vault.cooldownReason === COOLDOWN_REASON.RISK_VERDICT ? " by your loss rule" : " by you"}.</div>
         </div>
       )}
 

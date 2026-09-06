@@ -5,25 +5,27 @@ import { usd, ago, dateTime, short, timeOnly, dayLabel, hoursLabel } from "../li
 import { OwnerKind } from "../../../client/views";
 import { getJson, type EvidenceJson, type HlProfileJson } from "../lib/api";
 import { usePrefs } from "../lib/prefs";
+import { VENUE_NAME, HL_NET } from "../lib/venue";
+import { Link } from "react-router-dom";
 
 const KIND_LABEL: Record<string, string> = {
-  TOP_UP_INSTANT: "Top-up",
-  TOP_UP_GATED: "Top-up after the pause",
-  COLD_TRANSFER: "To cold wallet",
+  TOP_UP_INSTANT: "Released to trading",
+  TOP_UP_GATED: "Released after the wait",
+  COLD_TRANSFER: "To safe wallet",
   FULL_EXIT: "Exit",
   RETURN: "Came back",
   DEPOSIT: "Deposit",
 };
 
 export function Behaviour() {
-  const { server, serverError, serverLoading, wallets, vault, now, signer } = useShield();
+  const { server, serverError, serverLoading, wallets, vault, now, signer, chain } = useShield();
   const toast = useToast();
   const [prefs] = usePrefs(signer?.address ?? null);
   const [hl, setHl] = useState<HlProfileJson | null>(null);
   useEffect(() => {
     let cancelled = false;
     if (!prefs.hyperliquidAddress) { setHl(null); return; }
-    getJson<HlProfileJson>(`${API_URL}/api/hyperliquid/${prefs.hyperliquidAddress}?network=mainnet`).then((p) => { if (!cancelled) setHl(p); }).catch(() => null);
+    getJson<HlProfileJson>(`${API_URL}/api/hyperliquid/${prefs.hyperliquidAddress}?network=${HL_NET}`).then((p) => { if (!cancelled) setHl(p); }).catch(() => null);
     return () => { cancelled = true; };
   }, [prefs.hyperliquidAddress]);
   const [evidence, setEvidence] = useState<EvidenceJson | null>(null);
@@ -46,7 +48,7 @@ export function Behaviour() {
         ) : (
         <div className="panel">
           <p style={{ fontWeight: 600 }}>Behaviour needs the Shield server</p>
-          <p className="small dim" style={{ marginTop: 4 }}>It isn't reachable{serverError ? ` (${serverError})` : ""}. Your rules keep working without it; this page reads your trading wallet's history from the indexer.</p>
+          <p className="small dim" style={{ marginTop: 4 }}>It isn't reachable{serverError ? ` (${serverError})` : ""}. Your rules keep working without it; this page reads your trading history from the indexer and from the venue.</p>
         </div>
         )}
       </main>
@@ -88,12 +90,12 @@ export function Behaviour() {
         {sent === 0n ? (
           <>
             <h2 className="title-l">Nothing has left the treasury yet.</h2>
-            <p className="lead" style={{ marginTop: 8 }}>Once you top up, Shield watches what your trading wallet sends back and turns it into your loss rule's evidence.</p>
+            <p className="lead" style={{ marginTop: 8 }}>Once capital is released, Shield watches what comes back and what {VENUE_NAME} settles, and turns both into your loss rule's evidence.</p>
           </>
         ) : (
           <>
             <h2 className="title-l">
-              You sent <span className="num">{usd(sent)}</span> to {tradingLabel}. <span className={`num ${returned >= sent ? "c-protect" : "c-blocked"}`}>{usd(returned)}</span> came back.
+              You released <span className="num">{usd(sent)}</span> to {tradingLabel}. <span className={`num ${returned >= sent ? "c-protect" : "c-blocked"}`}>{usd(returned)}</span> came back.
             </h2>
             <div style={{ marginTop: 20 }}>
               <div className="capital" style={{ height: 18 }} role="img" aria-label={`Came back ${usd(returned)}, still out ${usd(open)}, lost ${usd(lost)}`}>
@@ -120,8 +122,8 @@ export function Behaviour() {
       {hl && hl.totals.sessions > 0 && (
         <section className="section">
           <div className="section-head">
-            <h2>Your pattern on Hyperliquid</h2>
-            <span className="tiny muted">{short(hl.address, 6)} · mainnet · read from the venue</span>
+            <h2>Your pattern on {VENUE_NAME}</h2>
+            <span className="tiny muted">{short(hl.address, 6)} · {HL_NET} · read from {VENUE_NAME}</span>
           </div>
           {hl.insight && <div className="quote-box" style={{ marginBottom: 14 }}>{hl.insight}</div>}
           <div className="stat-grid">
@@ -159,17 +161,23 @@ export function Behaviour() {
           {Number(p.medianTopUp30d) > 0 && (
             <div className="notice">
               <Dot tone="neutral" />
-              <span>Your typical top-up is {usd(p.medianTopUp30d)}. {usd(p.velocity24h)} went to trading in the last 24 hours.</span>
+              <span>Your typical release is {usd(p.medianTopUp30d)}. {usd(p.velocity24h)} went to trading in the last 24 hours.</span>
             </div>
           )}
         </div>
+        {(p.reloadsAfterLoss7d > 0 || p.lossStreak >= 2 || (hl?.worstSessionsWithReload.withReload ?? 0) >= 2) && (
+          <div className="row wrap" style={{ marginTop: 14, gap: 8 }}>
+            <Link to="/protection" className="btn btn-protect btn-sm">Protect me from this</Link>
+            <span className="tiny muted">Tightening a rule applies the moment you ask.</span>
+          </div>
+        )}
         {server.verdicts.length > 0 && (
           <div className="list list-tight" style={{ marginTop: 16 }}>
             {server.verdicts.slice(0, 5).map((v) => (
               <div key={v.verdict.nonce} className="list-row">
                 <div style={{ minWidth: 0 }}>
                   <div className="small"><b>Verdict #{v.verdict.nonce}</b> · {usd(v.verdict.realizedLossUsdc)} attested · {v.source === "cre" ? "Chainlink CRE enclave" : "Shield monitor"}</div>
-                  <div className="tiny muted">{ago(v.issuedAt, now)}{v.signature ? <> · <ExplorerLink sig={v.signature} /></> : v.error ? ` · ${v.error}` : ""}{vault ? ` · paused top-ups for ${hoursLabel(vault.lossCooldownSecs)}` : ""}</div>
+                  <div className="tiny muted">{ago(v.issuedAt, now)}{v.signature ? <> · <ExplorerLink sig={v.signature} /></> : v.error ? ` · ${v.error}` : ""}{vault ? ` · paused new capital for ${hoursLabel(vault.lossCooldownSecs)}` : ""}</div>
                 </div>
                 <button className="btn btn-ghost btn-sm" onClick={() => void openEvidence(v.verdict.evidenceHash)}>Evidence</button>
               </div>
@@ -192,7 +200,7 @@ export function Behaviour() {
                     {labelOf(s.wallet)} · {dayLabel(s.openedAt, now)} {timeOnly(s.openedAt)}{s.realised && s.lastActivityAt !== s.openedAt ? ` → ${timeOnly(s.lastActivityAt)}` : ""}
                   </div>
                   <div className="small dim">
-                    Sent {usd(s.sent)} in {s.topUps} top-up{s.topUps === 1 ? "" : "s"} · {s.realised ? `${usd(s.returned)} came back` : "nothing back yet"}
+                    Released {usd(s.sent)} in {s.topUps} move{s.topUps === 1 ? "" : "s"} · {s.realised ? `${usd(s.returned)} came back` : "nothing back yet"}
                   </div>
                   <div className="tiny muted">{s.signatures.length > 0 && <ExplorerLink sig={s.signatures[s.signatures.length - 1]} />}</div>
                 </div>
@@ -228,7 +236,8 @@ export function Behaviour() {
       </section>
 
       <p className="tiny muted" style={{ marginTop: 32 }}>
-        {server.source.mode === "substreams" ? `Live from The Graph Substreams · ${server.source.endpoint}` : "Indexed from Solana RPC. The Graph Substreams package streams the same flows when a Graph Market key is configured."}
+        Vault flows above: {server.source.mode === "substreams" ? `live from The Graph Substreams · ${server.source.endpoint}` : `indexed from ${server.network === "anvil" ? "Anvil" : chain === "evm" ? "HyperEVM" : "Solana"} logs at ${server.source.endpoint}. The Graph Substreams package streams the same flows where the network is indexed.`}
+        {hl ? ` Fills, positions and PnL above: read from ${VENUE_NAME}'s own API — HyperEVM never sees them.` : ""}
       </p>
 
       <Sheet open={!!evidence} onClose={() => setEvidence(null)} title="Evidence behind the verdict">

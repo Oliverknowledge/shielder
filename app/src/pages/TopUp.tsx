@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { GetMeSafe, ResetScreen } from "../components/Safety";
+import { WhatHappened } from "../components/WhatHappened";
+import { useVenue } from "../lib/venue";
 import { usePrefs } from "../lib/prefs";
 import { useAttempts } from "../lib/attempts";
 import { useShield, ShieldTxError } from "../lib/shield";
@@ -22,8 +24,9 @@ const card = {
   transition: { duration: 0.22, ease: [0.2, 0.8, 0.2, 1] as const },
 };
 
-export function TopUp() {
-  const { vault, balance, wallets, proposals, server, now, signer, vaultKey, actions } = useShield();
+export function AddFunds() {
+  const { vault, balance, wallets, proposals, server, now, signer, vaultKey, actions, chain } = useShield();
+  const venue = useVenue();
   const { run, busy } = useAction();
   const executionWallets = wallets.filter((w) => w.kind === OwnerKind.Execution && w.active);
   const [dest, setDest] = useState<string>(executionWallets[0]?.owner ?? "");
@@ -35,6 +38,7 @@ export function TopUp() {
   const [safeOpen, setSafeOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
+  const [whatOpen, setWhatOpen] = useState(false);
   const [prefs] = usePrefs(signer?.address ?? null);
   const attempts = useAttempts(vaultKey);
 
@@ -57,6 +61,12 @@ export function TopUp() {
   const destLabel = destWallet?.label ?? "your trading wallet";
 
   const chips = [100, 250, 500, 1000, 2000].filter((c) => usdcToRaw(c) <= balance);
+
+  // While the loss rule is holding, this screen leads with the block rather
+  // than an amount field the vault would refuse. It is the current on-chain
+  // state, not a replayed rejection: the signature only shows for a real one.
+  const lastAttempt = attempts.find((a) => a.ts >= now - 86400) ?? null;
+  const shown = blocked ?? (cooldownActive && byRule ? { reason: "CooldownActive" as ShieldErrorName, sig: lastAttempt?.sig ?? null, amount: lastAttempt ? BigInt(lastAttempt.amount) : 0n } : null);
 
   const submit = async () => {
     if (!destWallet || amountRaw <= 0n) return;
@@ -108,21 +118,16 @@ export function TopUp() {
     }
   };
 
-  const extendPause = async (hours: number) => {
-    const base = Math.max(Number(vault.cooldownUntil), now);
-    await run(`Pause extended by ${hours} hours`, actions.tighten({ pauseTopUpsUntil: BigInt(base + hours * 3600) })).catch(() => null);
-  };
-
   const preview = (() => {
     if (amountRaw <= 0n) {
-      if (cooldownActive) return { tone: "blocked", icon: "lock" as const, text: <>Top-ups are paused until <b>{clockTime(Number(vault.cooldownUntil), now)}</b>{byRule ? " by your loss rule" : " by you"}.</> };
+      if (cooldownActive) return { tone: "blocked", icon: "lock" as const, text: <>New capital is paused until <b>{clockTime(Number(vault.cooldownUntil), now)}</b>{byRule ? " by your loss rule" : " by you"}.</> };
       const can = remainingToday < headroom ? remainingToday : headroom;
       if (can === 0n) return { tone: "neutral", icon: "clock" as const, text: <>Nothing can move right now: {remainingToday === 0n ? "today's limit is used up" : "everything above your floor is out"}.</> };
       return { tone: "neutral", icon: "check" as const, text: <><b>{usd(can)}</b> available today · instant below {usd(decision.instantThreshold)}.</> };
     }
     if (decision.path === "instant") return { tone: "protect", icon: "check" as const, text: <>Moves instantly. <span className="muted">{usd(remainingToday - amountRaw)} of today's limit left after this.</span></> };
-    if (decision.path === "gated") return { tone: "pending", icon: "clock" as const, text: <>Large top-up: waits <b>30 minutes</b> before it can move. Your treasury stays protected until then.</> };
-    if (decision.reason === "CooldownActive") return { tone: "blocked", icon: "lock" as const, text: <>Will be blocked: top-ups are paused until <b>{clockTime(Number(vault.cooldownUntil), now)}</b>.</> };
+    if (decision.path === "gated") return { tone: "pending", icon: "clock" as const, text: <>Large release: waits <b>30 minutes</b> before it can move. Your treasury stays protected until then.</> };
+    if (decision.reason === "CooldownActive") return { tone: "blocked", icon: "lock" as const, text: <>Will be blocked: new capital is paused until <b>{clockTime(Number(vault.cooldownUntil), now)}</b>.</> };
     if (decision.reason === "VelocityThresholdExceeded") return { tone: "blocked", icon: "lock" as const, text: <>Over today's limit: only <b>{usd(remainingToday)}</b> of your {usd(vault.velocityThreshold)} is left.</> };
     if (decision.reason === "ProtectedFloorBreached") return { tone: "blocked", icon: "lock" as const, text: <>Would breach your floor: only <b>{usd(headroom)}</b> sits above {usd(vault.protectedFloor)}.</> };
     return { tone: "blocked", icon: "lock" as const, text: <>Will be blocked.</> };
@@ -132,9 +137,9 @@ export function TopUp() {
     return (
       <main className="page page-narrow fade-in">
         <div className="page-head">
-          <p className="eyebrow">Top up</p>
-          <h1>No trading wallet yet</h1>
-          <p>Shield can only send to wallets you've registered. Add your trading wallet under Protection; it becomes usable after the {hoursLabel(vault.loosenCooldownSecs)} wait.</p>
+          <p className="eyebrow">Add trading funds</p>
+          <h1>No trading account yet</h1>
+          <p>Shield can only release to accounts you've registered. Add your Hyperliquid account under Protection; it becomes usable after the {hoursLabel(vault.loosenCooldownSecs)} wait.</p>
         </div>
         <Link to="/protection" className="btn">Go to Protection</Link>
       </main>
@@ -144,8 +149,8 @@ export function TopUp() {
   return (
     <main className="page page-narrow fade-in">
       <div className="page-head">
-        <p className="eyebrow">Top up</p>
-        <h1>Refill {destLabel}</h1>
+        <p className="eyebrow">Add trading funds</p>
+        <h1>Release capital to {destLabel}</h1>
       </div>
 
       <section className="card">
@@ -153,22 +158,24 @@ export function TopUp() {
       </section>
 
       <AnimatePresence mode="wait">
-        {blocked ? (
+        {shown ? (
           <motion.section key="blocked" className="card card-tone-blocked" style={{ marginTop: 16 }} {...card}>
             <div className="row" style={{ gap: 8 }}>
               <Dot tone="blocked" />
-              <span className="eyebrow c-blocked">Top-up blocked</span>
+              <span className="eyebrow c-blocked">Release blocked</span>
             </div>
-            {blocked.reason === "CooldownActive" && byRule ? (
+            {shown.reason === "CooldownActive" && byRule ? (
               <>
                 <h2 className="not-tonight" style={{ marginTop: 12 }}>Not tonight.</h2>
                 <p className="lead" style={{ marginTop: 10, color: "var(--ink)" }}>You decided this before you started trading.</p>
               </>
             ) : (
-              <h2 className="title-l" style={{ marginTop: 10 }}>{usd(blocked.amount)} stays protected.</h2>
+              <h2 className="title-l" style={{ marginTop: 10 }}>{usd(shown.amount)} stays protected.</h2>
             )}
-            <BlockedReason reason={blocked.reason} amount={blocked.amount} />
-            <SessionFacts amount={blocked.amount} reason={blocked.reason} attemptsToday={attempts.filter((a) => a.ts >= now - 86400).length} />
+            <BlockedReason reason={shown.reason} amount={shown.amount} />
+            <YourRule reason={shown.reason} />
+            <p className="title-l" style={{ marginTop: 18 }}>{usd(balance)} is still protected.</p>
+            <SessionFacts amount={shown.amount} reason={shown.reason} attemptsToday={attempts.filter((a) => a.ts >= now - 86400).length} />
             {prefs.calmMessage && (
               <div style={{ marginTop: 18 }}>
                 <p className="eyebrow" style={{ marginBottom: 8 }}>You left yourself this</p>
@@ -177,17 +184,17 @@ export function TopUp() {
             )}
             <LossEvidence />
             <div className="row wrap" style={{ marginTop: 18, gap: 8 }}>
-              <button className="btn" onClick={() => setSafeOpen(true)}>Get me safe</button>
-              <Link to="/behaviour" className="btn btn-secondary">See what happened</Link>
+              <button className="btn" onClick={() => setSafeOpen(true)}>End my session</button>
+              <button className="btn btn-secondary" onClick={() => setWhatOpen(true)}>See what happened</button>
               <button className="btn btn-secondary" onClick={() => setMoreOpen(true)}>Protect me more</button>
             </div>
             <div className="row wrap" style={{ marginTop: 10, gap: 8 }}>
               <button className="btn btn-ghost btn-sm" onClick={() => setResetOpen(true)}>I still really want to trade</button>
               <button className="btn btn-ghost btn-sm" onClick={() => { setBlocked(null); setPhase("idle"); }}>Back</button>
             </div>
-            {blocked.sig && (
+            {shown.sig && (
               <p className="tiny muted" style={{ marginTop: 12 }}>
-                Rejected by the vault program on-chain · <ExplorerLink sig={blocked.sig} />
+                Rejected on-chain by the vault {chain === "evm" ? "contract" : "program"} · <ExplorerLink sig={shown.sig} />
               </p>
             )}
           </motion.section>
@@ -210,11 +217,14 @@ export function TopUp() {
             <div className="row" style={{ gap: 14 }}>
               <span className="check-circle"><Icon name="check" size={22} /></span>
               <div>
-                <h2 className="title">Sent {usd(sent)} to {destLabel}</h2>
+                <h2 className="title">Released {usd(sent)} to {destLabel}</h2>
                 <p className="dim" style={{ marginTop: 2 }}>{usd(remainingToday)} of today's limit left. Trade well.</p>
               </div>
             </div>
-            <button className="btn btn-ghost" style={{ marginTop: 14 }} onClick={() => { setPhase("idle"); setAmount(""); }}>Top up again</button>
+            <div className="row wrap" style={{ marginTop: 14, gap: 8 }}>
+              <a className="btn btn-secondary" href={venue.url} target="_blank" rel="noreferrer">Open {venue.label} <Icon name="external" size={16} /></a>
+              <button className="btn btn-ghost" onClick={() => { setPhase("idle"); setAmount(""); }}>Add more</button>
+            </div>
           </motion.section>
         ) : (
           <motion.section key="form" className="card" style={{ marginTop: 16 }} {...card}>
@@ -238,7 +248,7 @@ export function TopUp() {
                 <div className="grow">{preview.text}</div>
               </div>
               <button className="btn btn-lg btn-block" disabled={!!busy || amountRaw <= 0n || !destWallet || (!!pendingTopUp && decision.path === "gated")} onClick={() => void submit()}>
-                {busy ? "Confirming…" : amountRaw > 0n ? (decision.path === "gated" ? `Schedule ${usd(amountRaw)}` : `Top up ${usd(amountRaw)}`) : "Top up"}
+                {busy ? "Confirming…" : amountRaw > 0n ? (decision.path === "gated" ? `Schedule ${usd(amountRaw)}` : `Release ${usd(amountRaw)}`) : "Add funds"}
               </button>
               {pendingTopUp && decision.path === "gated" && <p className="tiny muted" style={{ textAlign: "center" }}>One scheduled top-up at a time. Cancel the pending one first.</p>}
             </div>
@@ -246,7 +256,7 @@ export function TopUp() {
         )}
       </AnimatePresence>
 
-      {pendingTopUp && pendingTopUp.action.kind === "topUp" && !scheduled && !blocked && (
+      {pendingTopUp && pendingTopUp.action.kind === "topUp" && !scheduled && !shown && (
         <section className="panel" style={{ marginTop: 16 }}>
           <div className="row-between wrap">
             <div style={{ minWidth: 0 }}>
@@ -267,10 +277,11 @@ export function TopUp() {
       )}
 
       <GetMeSafe open={safeOpen} onClose={() => setSafeOpen(false)} context="blocked" />
+      <WhatHappened open={whatOpen} onClose={() => setWhatOpen(false)} />
       <ProtectMore open={moreOpen} onClose={() => setMoreOpen(false)} />
-      <AnimatePresence>{resetOpen && <ResetScreen open={resetOpen} onClose={() => setResetOpen(false)} attempted={blocked?.amount ?? amountRaw} onStopForTonight={() => { setResetOpen(false); setSafeOpen(true); }} />}</AnimatePresence>
+      <AnimatePresence>{resetOpen && <ResetScreen open={resetOpen} onClose={() => setResetOpen(false)} attempted={shown?.amount ?? amountRaw} onStopForTonight={() => { setResetOpen(false); setSafeOpen(true); }} />}</AnimatePresence>
 
-      {!blocked && phase !== "done" && (
+      {!shown && phase !== "done" && (
         <p className="tiny muted" style={{ marginTop: 14, textAlign: "center" }}>
           {usd(remainingToday)} of today's {usd(vault.velocityThreshold)} left · {usd(headroom)} above your floor
           {server && Number(server.profile.windows.h24.realisedLoss) > 0 ? ` · ${usd(server.profile.windows.h24.realisedLoss)} lost in the last 24h (trigger ${usd(vault.lossTriggerUsdc)})` : ""}
@@ -304,7 +315,8 @@ function BlockedReason({ reason, amount }: { reason: ShieldErrorName | null; amo
   }
   if (reason === "VelocityThresholdExceeded") {
     const velocity = rollingVelocity(vault, BigInt(now));
-    return lead(<>You've already sent <b className="num">{usd(velocity)}</b> to trading in the last 24 hours. Your limit is {usd(vault.velocityThreshold)}, however it's split.</>);
+    if (velocity === 0n) return lead(<>Your daily reload is <b className="num">{usd(vault.velocityThreshold)}</b>. You asked for {usd(amount)}, which is more than that in one go.</>);
+    return lead(<>You've already released <b className="num">{usd(velocity)}</b> to trading in the last 24 hours. Your limit is {usd(vault.velocityThreshold)}, however it's split.</>);
   }
   if (reason === "ProtectedFloorBreached") {
     return lead(<>{usd(amount)} would take your treasury below the <b className="num">{usd(vault.protectedFloor)}</b> you chose to protect. Lowering the floor waits {hoursLabel(vault.loosenCooldownSecs)}.</>);
@@ -341,19 +353,47 @@ function LossEvidence() {
   );
 }
 
-function SessionFacts({ amount, reason, attemptsToday }: { amount: bigint; reason: ShieldErrorName | null; attemptsToday: number }) {
-  const { vault, balance, wallets, server, now } = useShield();
+/** The rule in the user's own terms, so the block reads as their decision rather than the app's. */
+function YourRule({ reason }: { reason: ShieldErrorName | null }) {
+  const { vault } = useShield();
   if (!vault) return null;
-  const bankroll = wallets.filter((w) => w.kind === OwnerKind.Execution && w.active).reduce((a, w) => a + (w.usdc ?? 0n), 0n);
+  const text =
+    reason === "CooldownActive" && vault.cooldownReason === COOLDOWN_REASON.RISK_VERDICT
+      ? `After ${usd(vault.lossTriggerUsdc)} of losses, don't release additional trading capital for ${hoursLabel(vault.lossCooldownSecs)}.`
+      : reason === "CooldownActive"
+        ? "When I pause funding, it ends by time and nothing else."
+        : reason === "VelocityThresholdExceeded"
+          ? `Release at most ${usd(vault.velocityThreshold)} in any 24 hours, however I split it.`
+          : reason === "ProtectedFloorBreached"
+            ? `Never let the treasury go below ${usd(vault.protectedFloor)}.`
+            : null;
+  if (!text) return null;
+  return (
+    <div style={{ marginTop: 18 }}>
+      <p className="eyebrow" style={{ marginBottom: 8 }}>Your rule</p>
+      <div className="quote-box">{text}</div>
+    </div>
+  );
+}
+
+function SessionFacts({ amount, reason, attemptsToday }: { amount: bigint; reason: ShieldErrorName | null; attemptsToday: number }) {
+  const { vault, balance, server, now } = useShield();
+  const venue = useVenue();
+  if (!vault) return null;
+  const equity = venue.bankroll;
   const h24 = server?.profile.windows.h24;
   const sent = h24 ? BigInt(h24.sent) : 0n;
   const back = h24 ? BigInt(h24.returned) : 0n;
   const net = back - sent;
   return (
     <div className="fact-grid" style={{ marginTop: 18 }}>
-      {sent > 0n && <div><div className="k">Sent to trading today</div><div className="v">{usd(sent)}</div></div>}
-      <div><div className="k">In your trading wallet now</div><div className="v">{usd(bankroll)}</div></div>
-      {sent > 0n && <div><div className="k">Net session flow</div><div className="v" style={{ color: net < 0n ? "var(--blocked)" : "var(--protect)" }}>{usd(net, { sign: true })}</div></div>}
+      {sent > 0n && <div><div className="k">Started with</div><div className="v">{usd(sent)}</div></div>}
+      <div><div className="k">Trading equity now</div><div className="v">{equity === null ? "—" : usd(equity)}</div></div>
+      {venue.state === "live" && venue.session ? (
+        <div><div className="k">Session result</div><div className="v" style={{ color: venue.session.closedPnl < 0 ? "var(--blocked)" : "var(--protect)" }}>{usd(venue.session.closedPnl, { sign: true })}</div></div>
+      ) : sent > 0n ? (
+        <div><div className="k">Session result</div><div className="v" style={{ color: net < 0n ? "var(--blocked)" : "var(--protect)" }}>{usd(net, { sign: true })}</div></div>
+      ) : null}
       <div><div className="k">Still protected</div><div className="v c-protect">{usd(balance)}</div></div>
       {reason === "CooldownActive" && (
         <div style={{ gridColumn: "1 / -1" }}>

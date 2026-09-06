@@ -14,15 +14,38 @@ export interface EvmEngineConfig extends EvmConfig {
 
 const HL_INFO = { mainnet: "https://api.hyperliquid.xyz/info", testnet: "https://api.hyperliquid-testnet.xyz/info" };
 
+/**
+ * What a HyperCore destination is actually holding.
+ *
+ * A unified Hyperliquid account reports a perps `accountValue` of 0 and keeps
+ * its collateral as spot balances, so the perps summary alone reads $0 for an
+ * account with money in it. Equity is the perps value plus the spot balances
+ * priced at the venue's own mids; a token with no mid is left out rather than
+ * guessed at.
+ */
 async function hyperCoreAccountValue(network: "mainnet" | "testnet", user: string): Promise<bigint | null> {
-  try {
-    const res = await fetch(HL_INFO[network], { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "clearinghouseState", user }) });
-    const j = (await res.json()) as { marginSummary?: { accountValue?: string } };
-    const v = Number(j.marginSummary?.accountValue ?? NaN);
-    return Number.isFinite(v) ? BigInt(Math.round(v * 1_000_000)) : null;
-  } catch {
-    return null;
+  const post = async <T>(body: unknown): Promise<T | null> => {
+    try {
+      const res = await fetch(HL_INFO[network], { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      return res.ok ? ((await res.json()) as T) : null;
+    } catch {
+      return null;
+    }
+  };
+  const [perps, spot, mids] = await Promise.all([
+    post<{ marginSummary?: { accountValue?: string } }>({ type: "clearinghouseState", user }),
+    post<{ balances?: Array<{ coin: string; total: string }> }>({ type: "spotClearinghouseState", user }),
+    post<Record<string, string>>({ type: "allMids" }),
+  ]);
+  if (!perps && !spot) return null;
+  let value = Number(perps?.marginSummary?.accountValue ?? 0);
+  for (const b of spot?.balances ?? []) {
+    const total = Number(b.total);
+    if (!total) continue;
+    const mid = b.coin === "USDC" ? 1 : Number(mids?.[b.coin] ?? NaN);
+    if (Number.isFinite(mid)) value += total * mid;
   }
+  return Number.isFinite(value) ? BigInt(Math.round(value * 1_000_000)) : null;
 }
 
 export function evmEngine(cfg: EvmEngineConfig, demoKey: () => Hex | null, provider: () => EIP1193Provider | null): Engine {
@@ -38,6 +61,19 @@ export function evmEngine(cfg: EvmEngineConfig, demoKey: () => Hex | null, provi
     return createWalletClient({ account: signer.address as Address, chain, transport: custom(p) });
   };
 
+  /** Retry a read while the public RPC says "rate limited"; other errors bubble. */
+  const rpc = async <T,>(fn: () => Promise<T>, attempts = 5): Promise<T> => {
+    for (let i = 0; ; i++) {
+      try {
+        return await fn();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (i >= attempts - 1 || !/rate limit|32005|exceeds defined limit/i.test(msg)) throw e;
+        await new Promise((r) => setTimeout(r, Math.min(4000, 600 * 2 ** i)));
+      }
+    }
+  };
+
   return {
     chain: "evm",
     network,
@@ -46,10 +82,10 @@ export function evmEngine(cfg: EvmEngineConfig, demoKey: () => Hex | null, provi
     isValidAddress: (s) => isAddress(s),
     async read(signer): Promise<VaultSnapshot> {
       const authority = signer.address as Address;
-      const r = await readVault(pub, cfg, authority);
+      const r = await rpc(() => readVault(pub, cfg, authority));
       const walletUsdc = await readUsdcBalance(pub, cfg, authority).catch(() => null);
       if (!r) return { vault: null, balance: 0n, proposals: [], registry: [], wallets: [], walletUsdc };
-      const [proposals, registry] = await Promise.all([readProposals(pub, cfg, authority), readRegistry(pub, cfg, authority)]);
+      const [proposals, registry] = await Promise.all([rpc(() => readProposals(pub, cfg, authority)), rpc(() => readRegistry(pub, cfg, authority))]);
       const wallets = await Promise.all(
         registry.map(async (e) => {
           let usdc: bigint | null = null;

@@ -21,14 +21,14 @@ export interface RuleDef {
 }
 
 export const RULES: RuleDef[] = [
-  { key: "floor", name: "Protected floor", kind: "usd", strictIsHigher: true, current: (v) => rawToNumber(v.protectedFloor), before: "Never let a top-up take my treasury below ", after: ".", why: "Only a full exit, after its delay, can go under the floor." },
-  { key: "daily", name: "Daily top-up limit", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.velocityThreshold), before: "Send at most ", after: " to trading wallets in any 24 hours.", why: "Added up across every top-up. Splitting them doesn't help." },
-  { key: "lossTrigger", name: "Loss trigger", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.lossTriggerUsdc), before: "After I lose ", after: " or more in a day, block new top-ups.", why: "Measured by what actually comes back from your trading wallet, on-chain." },
-  { key: "lossCooldown", name: "Pause after losses", kind: "hours", strictIsHigher: true, current: (v) => Number(v.lossCooldownSecs) / 3600, before: "Keep top-ups blocked for ", after: " after that.", why: "The vault sets the length itself; the monitor can't choose it." },
-  { key: "threshold", name: "Large top-up pause", kind: "pct", strictIsHigher: false, current: (v) => v.topUpThresholdBps / 100, before: "Make any single top-up worth ", after: " of the treasury or more wait 30 minutes.", why: "A short pause before big moves. Cancel it any time." },
-  { key: "cap", name: "Instant cold-wallet cap", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.emergencyCap), before: "Let up to ", after: " move to my cold wallet instantly, even during a cooldown.", why: "Larger amounts take the exit path." },
+  { key: "floor", name: "Protected floor", kind: "usd", strictIsHigher: true, current: (v) => rawToNumber(v.protectedFloor), before: "Never let a release take my treasury below ", after: ".", why: "Only a full exit, after its delay, can go under the floor." },
+  { key: "daily", name: "Daily reload", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.velocityThreshold), before: "Release at most ", after: " to my trading account in any 24 hours.", why: "Added up across every release. Splitting them doesn't help." },
+  { key: "lossTrigger", name: "Loss trigger", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.lossTriggerUsdc), before: "After I lose ", after: " or more in a day, release no new capital.", why: "Measured from what comes back on-chain and from what the venue itself settled." },
+  { key: "lossCooldown", name: "Pause after losses", kind: "hours", strictIsHigher: true, current: (v) => Number(v.lossCooldownSecs) / 3600, before: "Keep new capital blocked for ", after: " after that.", why: "The vault sets the length itself; the monitor can't choose it." },
+  { key: "threshold", name: "Large release pause", kind: "pct", strictIsHigher: false, current: (v) => v.topUpThresholdBps / 100, before: "Make any single release worth ", after: " of the treasury or more wait 30 minutes.", why: "A short pause before big moves. Cancel it any time." },
+  { key: "cap", name: "Instant safe-wallet cap", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.emergencyCap), before: "Let up to ", after: " move to my safe wallet instantly, even during a cooldown.", why: "Larger amounts take the exit path." },
   { key: "loosenDelay", name: "Weakening delay", kind: "hours", strictIsHigher: true, current: (v) => Number(v.loosenCooldownSecs) / 3600, before: "Make any weakening of these rules wait ", after: ".", why: "Never less than 1 hour. Tightening never waits." },
-  { key: "exitDelay", name: "Exit delay", kind: "days", strictIsHigher: true, current: (v) => Number(v.fullExitCooldownSecs) / 86400, before: "Make leaving Shield take ", after: ".", why: "Your whole balance goes to a cold wallet you registered. Cancel any time before." },
+  { key: "exitDelay", name: "Exit delay", kind: "days", strictIsHigher: true, current: (v) => Number(v.fullExitCooldownSecs) / 86400, before: "Make leaving Shield take ", after: ".", why: "Your whole balance goes to a safe wallet you registered. Cancel any time before." },
 ];
 
 export const ruleByKey = (k: RuleKey): RuleDef => RULES.find((r) => r.key === k)!;
@@ -66,14 +66,14 @@ export function describeLoosen(p: LoosenParams, v: VaultState | null): ChangeLin
   const lines: ChangeLine[] = [];
   const cur = (k: RuleKey) => (v ? fmtRule(ruleByKey(k), ruleByKey(k).current(v)) : null);
   if (p.newProtectedFloor !== undefined) lines.push({ name: "Protected floor", from: cur("floor"), to: usd(p.newProtectedFloor) });
-  if (p.newVelocityThreshold !== undefined) lines.push({ name: "Daily top-up limit", from: cur("daily"), to: usd(p.newVelocityThreshold) });
-  if (p.newTopUpThresholdBps !== undefined) lines.push({ name: "Large top-up pause", from: cur("threshold"), to: `${p.newTopUpThresholdBps / 100}%` });
+  if (p.newVelocityThreshold !== undefined) lines.push({ name: "Daily reload", from: cur("daily"), to: usd(p.newVelocityThreshold) });
+  if (p.newTopUpThresholdBps !== undefined) lines.push({ name: "Large release pause", from: cur("threshold"), to: `${p.newTopUpThresholdBps / 100}%` });
   if (p.newLossTriggerUsdc !== undefined) lines.push({ name: "Loss trigger", from: cur("lossTrigger"), to: usd(p.newLossTriggerUsdc) });
   if (p.newLossCooldownSecs !== undefined) lines.push({ name: "Pause after losses", from: cur("lossCooldown"), to: hoursLabel(p.newLossCooldownSecs) });
-  if (p.newEmergencyCap !== undefined) lines.push({ name: "Instant cold-wallet cap", from: cur("cap"), to: usd(p.newEmergencyCap) });
+  if (p.newEmergencyCap !== undefined) lines.push({ name: "Instant safe-wallet cap", from: cur("cap"), to: usd(p.newEmergencyCap) });
   if (p.newLoosenCooldownSecs !== undefined) lines.push({ name: "Weakening delay", from: cur("loosenDelay"), to: hoursLabel(p.newLoosenCooldownSecs) });
   if (p.newFullExitCooldownSecs !== undefined) lines.push({ name: "Exit delay", from: cur("exitDelay"), to: hoursLabel(p.newFullExitCooldownSecs) });
   if (p.newRiskVerifier !== undefined) lines.push(p.newRiskVerifier === null ? { name: "Monitor", from: "on", to: "off" } : { name: "Monitor", from: null, to: short(p.newRiskVerifier) });
-  if (p.registerOwner) lines.push({ name: p.registerKind === OwnerKind.Cold ? "New cold wallet" : "New trading wallet", from: null, to: p.registerLabel || short(p.registerOwner) });
+  if (p.registerOwner) lines.push({ name: p.registerKind === OwnerKind.Cold ? "New safe wallet" : "New trading account", from: null, to: p.registerLabel || short(p.registerOwner) });
   return lines.length ? lines : [{ name: "Rule change", from: null, to: "" }];
 }
