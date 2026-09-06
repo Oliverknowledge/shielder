@@ -18,17 +18,29 @@ export interface RuleDef {
   before: string;
   after: string;
   why: string;
+  /**
+   * The largest value the app will submit, in the rule's own unit.
+   *
+   * Tightening is instant and irreversible except through the loosen path, and
+   * ShieldVault.sol bounds only the loss cooldown (30 days). Nothing in the
+   * contract stops someone setting a weakening delay or an exit delay of a
+   * thousand years, which would silently destroy the one promise Shield makes
+   * unconditionally: that you can always get your money out. The contract
+   * cannot be changed, so the app refuses to be the instrument.
+   */
+  max?: number;
+  maxWhy?: string;
 }
 
 export const RULES: RuleDef[] = [
   { key: "floor", name: "Protected floor", kind: "usd", strictIsHigher: true, current: (v) => rawToNumber(v.protectedFloor), before: "Never let a release take my treasury below ", after: ".", why: "Only a full exit, after its delay, can go under the floor." },
   { key: "daily", name: "Daily reload", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.velocityThreshold), before: "Release at most ", after: " to my trading account in any 24 hours.", why: "Added up across every release. Splitting them doesn't help." },
   { key: "lossTrigger", name: "Loss trigger", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.lossTriggerUsdc), before: "After I lose ", after: " or more in a day, release no new capital.", why: "Measured from what comes back on-chain and from what the venue itself settled." },
-  { key: "lossCooldown", name: "Pause after losses", kind: "hours", strictIsHigher: true, current: (v) => Number(v.lossCooldownSecs) / 3600, before: "Keep new capital blocked for ", after: " after that.", why: "The vault sets the length itself; the monitor can't choose it." },
+  { key: "lossCooldown", name: "Pause after losses", kind: "hours", strictIsHigher: true, current: (v) => Number(v.lossCooldownSecs) / 3600, before: "Keep new capital blocked for ", after: " after that.", why: "The vault sets the length itself; the monitor can't choose it.", max: 720, maxWhy: "The contract refuses anything over 30 days." },
   { key: "threshold", name: "Large release pause", kind: "pct", strictIsHigher: false, current: (v) => v.topUpThresholdBps / 100, before: "Make any single release worth ", after: " of the treasury or more wait 30 minutes.", why: "A short pause before big moves. Cancel it any time." },
   { key: "cap", name: "Instant safe-wallet cap", kind: "usd", strictIsHigher: false, current: (v) => rawToNumber(v.emergencyCap), before: "Let up to ", after: " move to my safe wallet instantly, even during a cooldown.", why: "Larger amounts take the exit path." },
-  { key: "loosenDelay", name: "Weakening delay", kind: "hours", strictIsHigher: true, current: (v) => Number(v.loosenCooldownSecs) / 3600, before: "Make any weakening of these rules wait ", after: ".", why: "Never less than 1 hour. Tightening never waits." },
-  { key: "exitDelay", name: "Exit delay", kind: "days", strictIsHigher: true, current: (v) => Number(v.fullExitCooldownSecs) / 86400, before: "Make leaving Shield take ", after: ".", why: "Your whole balance goes to a safe wallet you registered. Cancel any time before." },
+  { key: "loosenDelay", name: "Weakening delay", kind: "hours", strictIsHigher: true, current: (v) => Number(v.loosenCooldownSecs) / 3600, before: "Make any weakening of these rules wait ", after: ".", why: "Never less than 1 hour. Tightening never waits.", max: 168, maxWhy: "Capped at 7 days. A longer wait would also apply to shortening it again, so a slip here is not undoable." },
+  { key: "exitDelay", name: "Exit delay", kind: "days", strictIsHigher: true, current: (v) => Number(v.fullExitCooldownSecs) / 86400, before: "Make leaving Shield take ", after: ".", why: "Your whole balance goes to a safe wallet you registered. Cancel any time before.", max: 30, maxWhy: "Capped at 30 days, so that leaving is always something you can actually wait out." },
 ];
 
 export const ruleByKey = (k: RuleKey): RuleDef => RULES.find((r) => r.key === k)!;

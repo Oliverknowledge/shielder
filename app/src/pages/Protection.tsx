@@ -125,7 +125,8 @@ export function Protection() {
 
   const editValue = Number(value);
   const editCur = editing ? editing.current(vault) : 0;
-  const editValid = editing !== null && value !== "" && Number.isFinite(editValue) && editValue !== editCur && editValue >= 0;
+  const editOverMax = editing?.max !== undefined && Number.isFinite(editValue) && editValue > editing.max;
+  const editValid = editing !== null && value !== "" && Number.isFinite(editValue) && editValue !== editCur && editValue >= 0 && !editOverMax;
   const editStricter = editing ? isStricter(editing, editCur, editValue) : false;
 
   return (
@@ -303,7 +304,14 @@ export function Protection() {
             <Field label={`New value${editing.kind === "usd" ? "" : editing.kind === "pct" ? " (% of treasury)" : editing.kind === "hours" ? " (hours)" : " (days)"}`}>
               {editing.kind === "usd" ? <MoneyInput value={value} onChange={setValue} autoFocus /> : <input className="input" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value.replace(/[^0-9.]/g, ""))} autoFocus />}
             </Field>
-            {editValid ? (
+            {editOverMax && editing.max !== undefined ? (
+              <div className="banner banner-blocked small row" style={{ gap: 10, alignItems: "flex-start" }}>
+                <Icon name="clock" size={18} />
+                <span>
+                  <b>Too long. The most Shield will set is {fmtRule(editing, editing.max)}.</b> {editing.maxWhy}
+                </span>
+              </div>
+            ) : editValid ? (
               <>
                 <div className="change-pair">
                   <span className="from">{fmtRule(editing, editCur)}</span>

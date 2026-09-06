@@ -44,7 +44,16 @@ const START_BLOCK = BigInt(process.env.EVM_START_BLOCK || demoState.startBlock |
 const NETWORK = evmNetworkName(CHAIN_ID);
 const IS_ANVIL = CHAIN_ID === 31337;
 const DEMO_ENABLED = (process.env.SHIELD_DEMO ?? (NETWORK === "hyperevm" ? "0" : "1")) === "1";
-const MONITOR_ENABLED = (process.env.SHIELD_MONITOR ?? "1") === "1";
+/**
+ * The in-process monitor signs the same EIP-712 verdict the Chainlink
+ * confidential workflow signs, with the same key, and relays it the same way.
+ * Left on by default it quietly does the enclave's job — it armed a cooldown on
+ * the live testnet vault before the enclave was ever asked — which makes the
+ * confidential workflow look decorative and makes "only the enclave can sign"
+ * false. On Anvil it stays on, because the local demo has no enclave and the
+ * loop has to close. On a real network it is opt-in: the verdict comes from CRE.
+ */
+const MONITOR_ENABLED = (process.env.SHIELD_MONITOR ?? (IS_ANVIL ? "1" : "0")) === "1";
 const HL_NETWORK: HlNetwork | null = CHAIN_ID === 999 ? "mainnet" : CHAIN_ID === 998 ? "testnet" : null;
 const IS_HYPEREVM = CHAIN_ID === 998 || CHAIN_ID === 999;
 // The public HyperEVM RPC caps eth_getLogs at under 200 blocks and meters
