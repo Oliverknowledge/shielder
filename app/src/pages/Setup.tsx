@@ -7,7 +7,7 @@
  * account they paste is both the history Shield learns from and the only place
  * released capital can go.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import { useShield, API_URL, IS_MAINNET } from "../lib/shield";
@@ -39,6 +39,8 @@ interface Draft {
 
 export function Setup() {
   const { signer, vault, vaultKnown, loading, health, walletUsdc, refresh, actions, engine, usdc, chain } = useShield();
+  const vaultRef = useRef(vault);
+  vaultRef.current = vault;
   const isPubkey = (s: string) => !!engine && engine.isValidAddress(s);
   const navigate = useNavigate();
   const toast = useToast();
@@ -58,6 +60,7 @@ export function Setup() {
     monitor: true,
   });
   const [activated, setActivated] = useState(false);
+  const [partial, setPartial] = useState<string | null>(null);
   const [deposited, setDeposited] = useState(false);
   const [faucetBusy, setFaucetBusy] = useState(false);
   const [prefs, setPrefs] = usePrefs(signer?.address ?? null);
@@ -67,6 +70,7 @@ export function Setup() {
   const [connected, setConnected] = useState(false);
 
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
+  const vaultExistsNow = () => !!vaultRef.current;
   const n = (s: string) => Number(s || 0);
 
   /**
@@ -171,9 +175,18 @@ export function Setup() {
     setActivated(true);
     try {
       await run("Shield activated", tx);
+      setPartial(null);
       await refresh();
-    } catch {
-      setActivated(false);
+    } catch (e) {
+      // The batch is vault-then-destinations. If the vault landed and a
+      // registration did not, going back to step one is wrong: the vault
+      // exists and cannot be created twice. Say what happened instead.
+      await refresh();
+      if (vaultExistsNow()) {
+        setPartial(e instanceof Error ? e.message : String(e));
+      } else {
+        setActivated(false);
+      }
     }
   };
 
@@ -415,6 +428,16 @@ export function Setup() {
                 </div>
               </div>
             </div>
+            {partial && (
+              <div className="card card-tone-pending stack-s">
+                <p style={{ fontWeight: 600 }}>Your vault was created, but a destination wasn't registered.</p>
+                <p className="small dim">
+                  The vault itself is on-chain and yours; only the follow-up transaction failed ({partial}). Add the account under
+                  Protection — while the treasury is empty that applies instantly.
+                </p>
+                <button className="btn btn-block" onClick={() => navigate("/protection")}>Add it in Protection</button>
+              </div>
+            )}
             {!activated ? (
               <div className="card stack">
                 <div className="notice-list">

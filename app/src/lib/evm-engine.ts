@@ -126,7 +126,21 @@ export function evmEngine(cfg: EvmEngineConfig, demoKey: () => Hex | null, provi
       const wc = walletClient(signer);
       const account = wc.account!;
       let last: Hex | null = null;
+      let confirmedAt: bigint | null = null;
       for (const call of prepared.calls) {
+        // A batch like activate() is [initializeVault, registerOwner, ...],
+        // where each call's precondition is created by the one before. The
+        // public RPC is load balanced, so a receipt can be confirmed by one
+        // node while eth_call is served by another that is a block behind —
+        // and registerOwner against a vault that node cannot see yet reverts
+        // Unauthorized. Wait for the reader to catch up before simulating.
+        if (confirmedAt !== null) {
+          for (let i = 0; i < 12; i++) {
+            const head = await rpc(() => pub.getBlockNumber()).catch(() => null);
+            if (head !== null && head >= confirmedAt) break;
+            await new Promise((r) => setTimeout(r, 500));
+          }
+        }
         // Simulate first: a revert is the contract's own decision, shown without a signature prompt.
         try {
           await pub.call({ account: account.address, to: call.to, data: call.data, value: call.value });
@@ -148,6 +162,7 @@ export function evmEngine(cfg: EvmEngineConfig, demoKey: () => Hex | null, provi
         const hash = await wc.sendTransaction({ account, chain, to: call.to, data: call.data, value: call.value });
         const rcpt = await pub.waitForTransactionReceipt({ hash });
         if (rcpt.status !== "success") throw new ShieldTxError("Transaction reverted on-chain", null, [], hash);
+        confirmedAt = rcpt.blockNumber;
         last = hash;
       }
       return last ?? "";
