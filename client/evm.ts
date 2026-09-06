@@ -49,15 +49,34 @@ export const ANVIL_CHAIN_ID = 31337;
 export const HYPEREVM_MAINNET_ID = 999;
 export const HYPEREVM_TESTNET_ID = 998;
 
+/**
+ * Multicall3, at the canonical CREATE2 address it holds on every chain that
+ * has it. Verified deployed on both HyperEVM networks.
+ *
+ * Reading a vault is eleven contract calls: the vault, three proposal slots,
+ * the registry owner list, an entry and a USDC balance per destination, plus
+ * the authority's own balance. Issued one at a time against the public
+ * HyperEVM RPC that is enough to trip its rate limit, and a rate-limited read
+ * is indistinguishable from a vault that does not exist. Batched, the same
+ * refresh is two requests.
+ */
+export const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11" as const;
+const CHAINS_WITH_MULTICALL3 = new Set<number>([HYPEREVM_MAINNET_ID, HYPEREVM_TESTNET_ID]);
+
 export function viemChain(cfg: EvmConfig): ViemChain {
   const name = cfg.chainId === HYPEREVM_MAINNET_ID ? "HyperEVM" : cfg.chainId === HYPEREVM_TESTNET_ID ? "HyperEVM Testnet" : cfg.chainId === ANVIL_CHAIN_ID ? "Anvil" : `EVM ${cfg.chainId}`;
   const symbol = cfg.chainId === HYPEREVM_MAINNET_ID || cfg.chainId === HYPEREVM_TESTNET_ID ? "HYPE" : "ETH";
   return {
     id: cfg.chainId,
     name,
+    testnet: cfg.chainId !== HYPEREVM_MAINNET_ID,
     nativeCurrency: { name: symbol, symbol, decimals: 18 },
     rpcUrls: { default: { http: [cfg.rpcUrl] } },
-    blockExplorers: cfg.chainId === HYPEREVM_MAINNET_ID ? { default: { name: "HyperEVMScan", url: "https://hyperevmscan.io" } } : undefined,
+    blockExplorers:
+      cfg.chainId === HYPEREVM_MAINNET_ID ? { default: { name: "HyperEVMScan", url: "https://hyperevmscan.io" } }
+      : cfg.chainId === HYPEREVM_TESTNET_ID ? { default: { name: "HyperEVM Testnet", url: "https://explore-testnet.hyperpc.app" } }
+      : undefined,
+    ...(CHAINS_WITH_MULTICALL3.has(cfg.chainId) ? { contracts: { multicall3: { address: MULTICALL3 } } } : {}),
   };
 }
 
@@ -91,10 +110,8 @@ type RawVault = {
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 
-export async function readVault(client: PublicClient, cfg: EvmConfig, authority: Address): Promise<{ vault: VaultView; balance: bigint } | null> {
-  const raw = (await client.readContract({ address: cfg.vault, abi: SHIELD_VAULT_ABI, functionName: "getVault", args: [authority] })) as RawVault;
-  if (!raw.exists) return null;
-  const vault: VaultView = {
+function vaultViewOf(raw: RawVault, cfg: EvmConfig, authority: Address): VaultView {
+  return {
     chain: "evm",
     address: cfg.vault,
     authority,
@@ -121,7 +138,12 @@ export async function readVault(client: PublicClient, cfg: EvmConfig, authority:
     proposalNonceCounter: raw.proposalNonceCounter,
     createdAt: raw.createdAt,
   };
-  return { vault, balance: raw.balance };
+}
+
+export async function readVault(client: PublicClient, cfg: EvmConfig, authority: Address): Promise<{ vault: VaultView; balance: bigint } | null> {
+  const raw = (await client.readContract({ address: cfg.vault, abi: SHIELD_VAULT_ABI, functionName: "getVault", args: [authority] })) as RawVault;
+  if (!raw.exists) return null;
+  return { vault: vaultViewOf(raw, cfg, authority), balance: raw.balance };
 }
 
 export async function readRegistry(client: PublicClient, cfg: EvmConfig, authority: Address): Promise<RegistryView[]> {
@@ -129,7 +151,7 @@ export async function readRegistry(client: PublicClient, cfg: EvmConfig, authori
   const entries = await Promise.all(
     owners.map(async (owner) => {
       const e = (await client.readContract({ address: cfg.vault, abi: SHIELD_VAULT_ABI, functionName: "getRegistryEntry", args: [authority, owner] })) as { kind: number; route: number; active: boolean; registeredAt: bigint; label: Hex };
-      return { owner, kind: Number(e.kind) as OwnerKind, route: Number(e.route) as Route, active: e.active, registeredAt: e.registeredAt, label: label(e.label) } satisfies RegistryView;
+      return registryViewOf(owner, e);
     })
   );
   return entries;
@@ -163,21 +185,87 @@ function loosenView(r: RawLoosen): LoosenView {
   return v;
 }
 
+type RawProposal = {
+  exists: boolean; category: number; action: number; nonce: bigint; createdAt: bigint; executeAfter: bigint; expiry: bigint; configVersionAtCreation: bigint; destinationOwner: Address; amount: bigint; reservedBucketIndex: number; loosen: RawLoosen;
+};
+
+function proposalViewOf(p: RawProposal, authority: Address, category: 0 | 1 | 2): ProposalView | null {
+  if (!p.exists) return null;
+  const action: ProposalView["action"] =
+    p.action === 0 ? { kind: "loosen", params: loosenView(p.loosen) }
+    : p.action === 1 ? { kind: "topUp", destinationOwner: p.destinationOwner, amount: p.amount }
+    : p.action === 2 ? { kind: "uninstallVault", destinationOwner: p.destinationOwner }
+    : { kind: "coldTransferAboveCap", destinationOwner: p.destinationOwner, amount: p.amount };
+  return { id: `${authority.toLowerCase()}:${category}:${p.nonce}`, category: category as ProposalKind, action, nonce: p.nonce, createdAt: p.createdAt, executeAfter: p.executeAfter, expiry: p.expiry, configVersionAtCreation: p.configVersionAtCreation };
+}
+
+const PROPOSAL_CATEGORIES = [0, 1, 2] as const;
+
+function registryViewOf(owner: Address, e: { kind: number; route: number; active: boolean; registeredAt: bigint; label: Hex }): RegistryView {
+  return { owner, kind: Number(e.kind) as OwnerKind, route: Number(e.route) as Route, active: e.active, registeredAt: e.registeredAt, label: label(e.label) };
+}
+
 export async function readProposals(client: PublicClient, cfg: EvmConfig, authority: Address): Promise<ProposalView[]> {
   const out: ProposalView[] = [];
-  for (const category of [0, 1, 2] as const) {
-    const p = (await client.readContract({ address: cfg.vault, abi: SHIELD_VAULT_ABI, functionName: "getProposal", args: [authority, category] })) as {
-      exists: boolean; category: number; action: number; nonce: bigint; createdAt: bigint; executeAfter: bigint; expiry: bigint; configVersionAtCreation: bigint; destinationOwner: Address; amount: bigint; reservedBucketIndex: number; loosen: RawLoosen;
-    };
-    if (!p.exists) continue;
-    const action: ProposalView["action"] =
-      p.action === 0 ? { kind: "loosen", params: loosenView(p.loosen) }
-      : p.action === 1 ? { kind: "topUp", destinationOwner: p.destinationOwner, amount: p.amount }
-      : p.action === 2 ? { kind: "uninstallVault", destinationOwner: p.destinationOwner }
-      : { kind: "coldTransferAboveCap", destinationOwner: p.destinationOwner, amount: p.amount };
-    out.push({ id: `${authority.toLowerCase()}:${category}:${p.nonce}`, category: category as ProposalKind, action, nonce: p.nonce, createdAt: p.createdAt, executeAfter: p.executeAfter, expiry: p.expiry, configVersionAtCreation: p.configVersionAtCreation });
+  for (const category of PROPOSAL_CATEGORIES) {
+    const p = (await client.readContract({ address: cfg.vault, abi: SHIELD_VAULT_ABI, functionName: "getProposal", args: [authority, category] })) as RawProposal;
+    const view = proposalViewOf(p, authority, category);
+    if (view) out.push(view);
   }
   return out;
+}
+
+/** Everything one refresh of the app needs from the chain. */
+export interface VaultBundle {
+  vault: VaultView;
+  balance: bigint;
+  proposals: ProposalView[];
+  registry: RegistryView[];
+  /** USDC held by the authority and by each registered destination, keyed lowercase. */
+  usdc: Record<string, bigint>;
+}
+
+/** Whether this chain can serve a bundle in two requests instead of eleven. */
+export function supportsBundledReads(cfg: EvmConfig): boolean {
+  return CHAINS_WITH_MULTICALL3.has(cfg.chainId);
+}
+
+/**
+ * Read a whole vault through Multicall3: one request for the vault, its three
+ * proposal slots and its destination list; a second for each destination's
+ * entry and USDC balance. Returns `null` when the vault does not exist — the
+ * same signal `readVault` gives — so callers cannot confuse "no vault" with
+ * "the RPC refused us", which is the failure this exists to prevent.
+ */
+export async function readVaultBundle(client: PublicClient, cfg: EvmConfig, authority: Address): Promise<VaultBundle | null> {
+  const vault = { address: cfg.vault, abi: SHIELD_VAULT_ABI } as const;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mc = (contracts: unknown[]) => client.multicall({ allowFailure: false, contracts: contracts as any, multicallAddress: MULTICALL3 });
+
+  const [rawVault, ...rest] = (await mc([
+    { ...vault, functionName: "getVault", args: [authority] },
+    ...PROPOSAL_CATEGORIES.map((c) => ({ ...vault, functionName: "getProposal", args: [authority, c] })),
+    { ...vault, functionName: "getRegistryOwners", args: [authority] },
+    { address: cfg.usdc, abi: MOCK_USDC_ABI, functionName: "balanceOf", args: [authority] },
+  ])) as [RawVault, RawProposal, RawProposal, RawProposal, readonly Address[], bigint];
+
+  if (!rawVault.exists) return null;
+  const [p0, p1, p2, owners, authorityUsdc] = rest as [RawProposal, RawProposal, RawProposal, readonly Address[], bigint];
+  const proposals = [p0, p1, p2].map((p, i) => proposalViewOf(p, authority, PROPOSAL_CATEGORIES[i]!)).filter((p): p is ProposalView => p !== null);
+
+  const usdc: Record<string, bigint> = { [authority.toLowerCase()]: authorityUsdc };
+  let registry: RegistryView[] = [];
+  if (owners.length > 0) {
+    const second = (await mc([
+      ...owners.map((o) => ({ ...vault, functionName: "getRegistryEntry", args: [authority, o] })),
+      ...owners.map((o) => ({ address: cfg.usdc, abi: MOCK_USDC_ABI, functionName: "balanceOf", args: [o] })),
+    ])) as unknown[];
+    registry = owners.map((o, i) => registryViewOf(o, second[i] as { kind: number; route: number; active: boolean; registeredAt: bigint; label: Hex }));
+    owners.forEach((o, i) => {
+      usdc[o.toLowerCase()] = second[owners.length + i] as bigint;
+    });
+  }
+  return { vault: vaultViewOf(rawVault, cfg, authority), balance: rawVault.balance, proposals, registry, usdc };
 }
 
 export async function readUsdcBalance(client: PublicClient, cfg: EvmConfig, who: Address): Promise<bigint> {

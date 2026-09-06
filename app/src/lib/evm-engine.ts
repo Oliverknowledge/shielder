@@ -1,7 +1,7 @@
 import { createPublicClient, createWalletClient, custom, http, isAddress, type Address, type EIP1193Provider, type Hex, type WalletClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { MOCK_CORE_DEPOSIT_ABI } from "../../../client/abi/MockCoreDepositWallet";
-import { evmCalls, readProposals, readRegistry, readUsdcBalance, readVault, shieldErrorFromRevert, viemChain, type EvmConfig } from "../../../client/evm";
+import { evmCalls, readProposals, readRegistry, readUsdcBalance, readVault, readVaultBundle, shieldErrorFromRevert, supportsBundledReads, viemChain, type EvmConfig } from "../../../client/evm";
 import { Route } from "../../../client/views";
 import { ShieldTxError, type Actions, type Engine, type PreparedTx, type Signer, type VaultSnapshot } from "./engine";
 
@@ -82,23 +82,45 @@ export function evmEngine(cfg: EvmEngineConfig, demoKey: () => Hex | null, provi
     isValidAddress: (s) => isAddress(s),
     async read(signer): Promise<VaultSnapshot> {
       const authority = signer.address as Address;
-      const r = await rpc(() => readVault(pub, cfg, authority));
-      const walletUsdc = await readUsdcBalance(pub, cfg, authority).catch(() => null);
-      if (!r) return { vault: null, balance: 0n, proposals: [], registry: [], wallets: [], walletUsdc };
-      const [proposals, registry] = await Promise.all([rpc(() => readProposals(pub, cfg, authority)), rpc(() => readRegistry(pub, cfg, authority))]);
+
+      // Where Multicall3 exists, one refresh is two requests rather than eleven.
+      // On the public HyperEVM RPC that is the difference between a screen that
+      // loads and one that sits on "Reading your vault" until the rate limiter
+      // relents. Chains without it keep the one-call-at-a-time path.
+      const bundle = supportsBundledReads(cfg) ? await rpc(() => readVaultBundle(pub, cfg, authority)) : undefined;
+      const usdcOf = (who: string): bigint | null => bundle?.usdc[who.toLowerCase()] ?? null;
+
+      let base: { vault: VaultSnapshot["vault"]; balance: bigint; proposals: VaultSnapshot["proposals"]; registry: VaultSnapshot["registry"] } | null;
+      let walletUsdc: bigint | null;
+      if (bundle !== undefined) {
+        walletUsdc = usdcOf(authority);
+        base = bundle && { vault: bundle.vault, balance: bundle.balance, proposals: bundle.proposals, registry: bundle.registry };
+      } else {
+        const r = await rpc(() => readVault(pub, cfg, authority));
+        walletUsdc = await readUsdcBalance(pub, cfg, authority).catch(() => null);
+        if (!r) base = null;
+        else {
+          const [proposals, registry] = await Promise.all([rpc(() => readProposals(pub, cfg, authority)), rpc(() => readRegistry(pub, cfg, authority))]);
+          base = { vault: r.vault, balance: r.balance, proposals, registry };
+        }
+      }
+      if (!base) return { vault: null, balance: 0n, proposals: [], registry: [], wallets: [], walletUsdc };
+
+      // HyperCore destinations hold their balance off the EVM entirely, so those
+      // are the one read the batch cannot answer.
       const wallets = await Promise.all(
-        registry.map(async (e) => {
+        base.registry.map(async (e) => {
           let usdc: bigint | null = null;
           if (e.kind === 0 && e.route === Route.HyperCore) {
             if (cfg.coreDepositMock) usdc = (await pub.readContract({ address: cfg.coreDepositMock, abi: MOCK_CORE_DEPOSIT_ABI, functionName: "coreBalance", args: [e.owner as Address] }).catch(() => null)) as bigint | null;
             else if (cfg.hyperliquidNetwork) usdc = await hyperCoreAccountValue(cfg.hyperliquidNetwork, e.owner);
           } else {
-            usdc = await readUsdcBalance(pub, cfg, e.owner as Address).catch(() => null);
+            usdc = bundle !== undefined ? usdcOf(e.owner) : await readUsdcBalance(pub, cfg, e.owner as Address).catch(() => null);
           }
           return { owner: e.owner, label: e.label, kind: e.kind, route: e.route, active: e.active, usdc };
         })
       );
-      return { vault: r.vault, balance: r.balance, proposals, registry, wallets, walletUsdc };
+      return { vault: base.vault, balance: base.balance, proposals: base.proposals, registry: base.registry, wallets, walletUsdc };
     },
     actions(signer): Actions {
       const authority = signer.address as Address;
@@ -142,8 +164,12 @@ export function evmEngine(cfg: EvmEngineConfig, demoKey: () => Hex | null, provi
           }
         }
         // Simulate first: a revert is the contract's own decision, shown without a signature prompt.
+        // The retry matters more here than on any read. Without it a metered-RPC
+        // "rate limited" arrives as a thrown error, is indistinguishable from a
+        // revert, and the user is told the vault rejected a transaction it never
+        // saw — mid-demo, before the wallet ever prompts.
         try {
-          await pub.call({ account: account.address, to: call.to, data: call.data, value: call.value });
+          await rpc(() => pub.call({ account: account.address, to: call.to, data: call.data, value: call.value }));
         } catch (e) {
           const name = shieldErrorFromRevert(e);
           let recorded: string | null = null;
@@ -160,7 +186,9 @@ export function evmEngine(cfg: EvmEngineConfig, demoKey: () => Hex | null, provi
           throw new ShieldTxError(name ? `Rejected by the vault: ${name}` : e instanceof Error ? e.message : "Transaction failed", name, [], recorded);
         }
         const hash = await wc.sendTransaction({ account, chain, to: call.to, data: call.data, value: call.value });
-        const rcpt = await pub.waitForTransactionReceipt({ hash });
+        // The transaction is already broadcast; a rate-limited receipt poll must
+        // not be reported as a failure, or the user retries something that landed.
+        const rcpt = await rpc(() => pub.waitForTransactionReceipt({ hash }));
         if (rcpt.status !== "success") throw new ShieldTxError("Transaction reverted on-chain", null, [], hash);
         confirmedAt = rcpt.blockNumber;
         last = hash;
