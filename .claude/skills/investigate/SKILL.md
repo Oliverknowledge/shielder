@@ -1,1 +1,0 @@
-/Users/oliverstevenson/conductor/repos/shiedler/.claude/skills/gstack/investigate/SKILL.md

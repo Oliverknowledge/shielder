@@ -1,1 +1,0 @@
-/Users/oliverstevenson/conductor/repos/shiedler/.claude/skills/gstack/setup-gbrain/SKILL.md

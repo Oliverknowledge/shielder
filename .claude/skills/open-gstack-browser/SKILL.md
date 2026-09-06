@@ -1,1 +1,0 @@
-/Users/oliverstevenson/conductor/repos/shiedler/.claude/skills/gstack/open-gstack-browser/SKILL.md
