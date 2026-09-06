@@ -9,6 +9,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { PrivyProvider, usePrivy, useWallets } from "@privy-io/react-auth";
 import type { EIP1193Provider } from "viem";
+import { viemChain } from "../../../client/evm";
 
 export const PRIVY_APP_ID: string | undefined = (import.meta.env.VITE_PRIVY_APP_ID as string | undefined) || undefined;
 
@@ -30,7 +31,11 @@ function Bridge({ children }: { children: ReactNode }) {
   const { ready, authenticated, login, logout, user } = usePrivy();
   const { wallets } = useWallets();
   const [provider, setProvider] = useState<EIP1193Provider | null>(null);
+  // Prefer the wallet Privy created. "wallet" is an enabled login method, so a
+  // user can also connect an external one through Privy — that still works, but
+  // it is not an embedded wallet and the UI must not imply it is.
   const embedded = wallets.find((w) => w.walletClientType === "privy") ?? wallets[0];
+  const isEmbedded = embedded?.walletClientType === "privy";
   useEffect(() => {
     let cancelled = false;
     if (!embedded) { setProvider(null); return; }
@@ -42,23 +47,21 @@ function Bridge({ children }: { children: ReactNode }) {
     ready,
     authenticated,
     address: authenticated ? (embedded?.address ?? null) : null,
-    label: user?.email?.address ?? (embedded?.walletClientType === "privy" ? "Privy wallet" : embedded?.walletClientType ?? "Privy"),
+    label: isEmbedded ? (user?.email?.address ?? "embedded wallet") : `${embedded?.walletClientType ?? "external"} wallet`,
     provider,
     login,
     logout,
-  }), [ready, authenticated, embedded?.address, embedded?.walletClientType, user?.email?.address, provider, login, logout]);
+  }), [ready, authenticated, embedded?.address, isEmbedded, embedded?.walletClientType, user?.email?.address, provider, login, logout]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function MaybePrivy({ children, chainId, rpcUrl }: { children: ReactNode; chainId: number; rpcUrl: string }) {
   if (!PRIVY_APP_ID) return <Ctx.Provider value={noop}>{children}</Ctx.Provider>;
-  const symbol = chainId === 999 || chainId === 998 ? "HYPE" : "ETH";
-  const chain = {
-    id: chainId,
-    name: chainId === 999 ? "HyperEVM" : chainId === 998 ? "HyperEVM Testnet" : `EVM ${chainId}`,
-    nativeCurrency: { name: symbol, symbol, decimals: 18 },
-    rpcUrls: { default: { http: [rpcUrl] } },
-  };
+  // The same chain definition the engine signs against, so Privy's confirmation
+  // modal knows this is a testnet and which explorer to offer. Two hand-written
+  // copies of a chain object drift, and the one Privy holds is the one the user
+  // actually sees.
+  const chain = viemChain({ rpcUrl, chainId });
   return (
     <PrivyProvider
       appId={PRIVY_APP_ID}

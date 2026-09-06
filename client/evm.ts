@@ -63,7 +63,9 @@ export const HYPEREVM_TESTNET_ID = 998;
 export const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11" as const;
 const CHAINS_WITH_MULTICALL3 = new Set<number>([HYPEREVM_MAINNET_ID, HYPEREVM_TESTNET_ID]);
 
-export function viemChain(cfg: EvmConfig): ViemChain {
+/** Only the chain identity matters here, so callers that have no vault yet (the
+ *  Privy provider at boot) can build the same chain object the engine signs with. */
+export function viemChain(cfg: Pick<EvmConfig, "chainId" | "rpcUrl">): ViemChain {
   const name = cfg.chainId === HYPEREVM_MAINNET_ID ? "HyperEVM" : cfg.chainId === HYPEREVM_TESTNET_ID ? "HyperEVM Testnet" : cfg.chainId === ANVIL_CHAIN_ID ? "Anvil" : `EVM ${cfg.chainId}`;
   const symbol = cfg.chainId === HYPEREVM_MAINNET_ID || cfg.chainId === HYPEREVM_TESTNET_ID ? "HYPE" : "ETH";
   return {
