@@ -2,28 +2,31 @@
  * Shield EVM demo driver (Anvil / HyperEVM testnet with the mock CoreDepositWallet).
  *
  *   bun run client/evm-demo.ts scoreboard
- *   bun run client/evm-demo.ts top-up <usd>        # Alex → Axiom's HyperCore account (through the vault rules)
- *   bun run client/evm-demo.ts loss <usd>          # DEMO: Axiom's trading loses <usd> on HyperCore (mock settle)
- *   bun run client/evm-demo.ts return <usd>        # DEMO: Axiom withdraws <usd> Core→EVM and sends it back to the vault
+ *   bun run client/evm-demo.ts top-up <usd>        # vault → the registered venue account (through the vault rules)
+ *   bun run client/evm-demo.ts loss <usd>          # DEMO (Anvil only): the venue account loses <usd> on HyperCore
+ *   bun run client/evm-demo.ts return <usd>        # DEMO (Anvil only): <usd> comes back Core→EVM to the vault
  *   bun run client/evm-demo.ts pause <hours>       # self-pause (tighten)
  *   bun run client/evm-demo.ts loosen daily=3000   # weakening change (waits 24h)
  *   bun run client/evm-demo.ts cancel <rule-change|top-up|full-exit>
  *
- * Reads .shield/demo-state.evm.json written by scripts/anvil-demo.ts.
+ * Reads .shield/demo-state.evm.<network>.json written by scripts/anvil-demo.ts
+ * or scripts/hyperevm-bootstrap.ts.
  */
 import { createPublicClient, createWalletClient, http, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { readFileSync } from "node:fs";
 import { SHIELD_VAULT_ABI } from "./abi/ShieldVault";
 import { MOCK_USDC_ABI } from "./abi/MockUSDC";
 import { MOCK_CORE_DEPOSIT_ABI } from "./abi/MockCoreDepositWallet";
 import { evmCalls, readProposals, readRegistry, readVault, shieldErrorFromRevert, viemChain, type EvmConfig } from "./evm";
 import { evaluateTopUp, rollingVelocity, usdcToRaw } from "./views";
+import { evmNetworkName, readEvmState } from "./evm-state";
 
-const state = JSON.parse(readFileSync(".shield/demo-state.evm.json", "utf8")) as { rpcUrl: string; chainId: number; vault: Address; usdc: Address; coreDeposit: Address; authority: Address; executionWallet: Address; coldWallet: Address };
+const network = evmNetworkName(Number(process.env.EVM_CHAIN_ID || 31337));
+const state = readEvmState(".shield", network) as unknown as { rpcUrl: string; chainId: number; vault: Address; usdc: Address; coreDeposit: Address | null; authority: Address; executionWallet: Address; coldWallet: Address };
+if (!state.vault) throw new Error(`no Shield state for ${network}: run bootstrap:evm (Anvil) or bootstrap:hyperevm first`);
 const KEYS = {
-  alex: (process.env.EVM_DEMO_KEY ?? "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80") as Hex,
-  axiom: (process.env.EVM_EXECUTION_KEY ?? "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d") as Hex,
+  alex: (process.env.EVM_DEMO_KEY || "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80") as Hex,
+  venue: (process.env.EVM_EXECUTION_KEY || "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d") as Hex,
 };
 const cfg: EvmConfig = { rpcUrl: state.rpcUrl, chainId: state.chainId, vault: state.vault, usdc: state.usdc };
 const chain = viemChain(cfg);
@@ -53,7 +56,7 @@ async function scoreboard() {
   const now = BigInt(Math.floor(Date.now() / 1000));
   const reg = await readRegistry(pub, cfg, state.authority);
   const props = await readProposals(pub, cfg, state.authority);
-  const core = (await pub.readContract({ address: state.coreDeposit, abi: MOCK_CORE_DEPOSIT_ABI, functionName: "coreBalance", args: [state.executionWallet] })) as bigint;
+  const core = state.coreDeposit ? ((await pub.readContract({ address: state.coreDeposit, abi: MOCK_CORE_DEPOSIT_ABI, functionName: "coreBalance", args: [state.executionWallet] })) as bigint) : null;
   console.log(`\nShield vault ${state.vault} (${chain.name}) · authority ${state.authority}`);
   console.log(`  Protected balance      ${fmt(r.balance)}  (floor ${fmt(v.protectedFloor)})`);
   console.log(`  Daily top-up limit     ${fmt(v.velocityThreshold)} / 24h · used ${fmt(rollingVelocity(v, now))}`);
@@ -61,7 +64,7 @@ async function scoreboard() {
   console.log(`  Loss rule              >= ${fmt(v.lossTriggerUsdc)} realised in 24h -> pause ${Number(v.lossCooldownSecs) / 3600}h`);
   console.log(`  Cooldown               ${now < v.cooldownUntil ? `ACTIVE (${v.cooldownReason === 2 ? "loss rule" : "self-pause"}) until ${new Date(Number(v.cooldownUntil) * 1000).toLocaleString()}` : "none"}`);
   console.log(`  Config version         ${v.configVersion}   verdicts applied ${v.lastVerdictNonce}`);
-  console.log(`  Axiom on HyperCore     ${fmt(core)} (mock)`);
+  console.log(`  Venue account          ${core === null ? "real HyperCore (read it on app.hyperliquid.xyz)" : `${fmt(core)} (mock CoreDepositWallet)`}`);
   for (const e of reg) console.log(`    ${e.kind === 1 ? "cold     " : "execution"} ${e.owner} "${e.label}" route=${e.route === 1 ? "hypercore" : "evm"}${e.active ? "" : " (removed)"}`);
   for (const p of props) console.log(`  Pending ${["rule change", "top-up", "full exit"][p.category]} #${p.nonce}: executes ${new Date(Number(p.executeAfter) * 1000).toLocaleString()} — ${JSON.stringify(p.action, (_k, x) => (typeof x === "bigint" ? x.toString() : x))}`);
 }
@@ -76,16 +79,24 @@ async function topUp(usd: number) {
   await send(d.path === "gated" ? "top-up proposed (gated path)" : "instant top-up → HyperCore", KEYS.alex, call.to, call.data);
 }
 
+/** The mock CoreDepositWallet only exists on Anvil: on a real network the loss is real. */
+function requireMockCore(cmd: string): Address {
+  if (!state.coreDeposit) throw new Error(`\`${cmd}\` simulates a HyperCore settlement through the mock deposit wallet, which only exists on Anvil.\nOn ${network} the loss is real: trade the venue account down, then send USDC back to the vault from it.`);
+  return state.coreDeposit;
+}
+
 async function loss(usd: number) {
+  const core = requireMockCore("loss");
   const { encodeFunctionData } = await import("viem");
-  await send(`Axiom loses ${fmt(usdcToRaw(usd))} on HyperCore (mock settle)`, KEYS.axiom, state.coreDeposit, encodeFunctionData({ abi: MOCK_CORE_DEPOSIT_ABI, functionName: "settleLoss", args: [state.executionWallet, usdcToRaw(usd)] }));
+  await send(`the venue account loses ${fmt(usdcToRaw(usd))} (mock settle)`, KEYS.venue, core, encodeFunctionData({ abi: MOCK_CORE_DEPOSIT_ABI, functionName: "settleLoss", args: [state.executionWallet, usdcToRaw(usd)] }));
 }
 
 async function ret(usd: number) {
+  const core = requireMockCore("return");
   const { encodeFunctionData } = await import("viem");
   const amount = usdcToRaw(usd);
-  await send(`Axiom withdraws ${fmt(amount)} HyperCore → EVM`, KEYS.axiom, state.coreDeposit, encodeFunctionData({ abi: MOCK_CORE_DEPOSIT_ABI, functionName: "withdrawToEvm", args: [amount] }));
-  await send(`Axiom returns ${fmt(amount)} to the vault`, KEYS.axiom, state.usdc, encodeFunctionData({ abi: MOCK_USDC_ABI, functionName: "transfer", args: [state.vault, amount] }));
+  await send(`venue account withdraws ${fmt(amount)} HyperCore → EVM`, KEYS.venue, core, encodeFunctionData({ abi: MOCK_CORE_DEPOSIT_ABI, functionName: "withdrawToEvm", args: [amount] }));
+  await send(`${fmt(amount)} returned to the vault`, KEYS.venue, state.usdc, encodeFunctionData({ abi: MOCK_USDC_ABI, functionName: "transfer", args: [state.vault, amount] }));
 }
 
 async function pause(hours: number) {
