@@ -8,7 +8,7 @@ import { RULES, paramFor, fmtRule, isStricter, describeLoosen, type RuleDef } fr
 import { ProposalKind, OwnerKind, Route, COOLDOWN_REASON, usdcToRaw } from "../../../client/views";
 
 export function Protection() {
-  const { vault, proposals, registry, wallets, signer, now, health, actions, engine, chain } = useShield();
+  const { vault, balance, proposals, registry, wallets, signer, now, health, actions, engine, chain } = useShield();
   const { run, busy } = useAction();
   const toast = useToast();
   const [editing, setEditing] = useState<RuleDef | null>(null);
@@ -68,11 +68,24 @@ export function Protection() {
     await run("Change applied", actions.executeRuleChange(ruleChange.action.params.registerOwner)).catch(() => null);
   };
 
+  // The vault itself allows instant registration while it holds nothing —
+  // registerOwner only reverts with VaultFundedUseDelayedPath once funded.
+  // Making an empty vault wait 24h to add the account it was just set up for
+  // is friction the contract never asked for.
+  const registrationIsInstant = balance === 0n;
+
   const addDestination = async () => {
     const owner = addAddr.trim();
     if (!engine.isValidAddress(owner)) return toast.err("That doesn't look like a valid address.");
+    const kind = addKind;
+    const route = kind === OwnerKind.Execution && chain === "evm" ? Route.HyperCore : Route.Evm;
+    const label = addLabel || (kind === OwnerKind.Cold ? "Safe wallet" : "Hyperliquid");
     try {
-      await run(`New wallet scheduled: usable in ${loosenWait}`, actions.proposeLoosen({ registerOwner: owner, registerKind: addKind, registerRoute: addKind === OwnerKind.Execution && chain === "evm" ? Route.HyperCore : Route.Evm, registerLabel: addLabel || (addKind === OwnerKind.Cold ? "Safe wallet" : "Hyperliquid") }));
+      if (registrationIsInstant) {
+        await run(`${label} added`, actions.registerOwner({ owner, kind, route, label }));
+      } else {
+        await run(`New destination scheduled: usable in ${loosenWait}`, actions.proposeLoosen({ registerOwner: owner, registerKind: kind, registerRoute: route, registerLabel: label }));
+      }
       setAddOpen(false);
       setAddAddr("");
       setAddLabel("");
@@ -331,11 +344,18 @@ export function Protection() {
           <Field label="Label">
             <input className="input" value={addLabel} onChange={(e) => setAddLabel(e.target.value.slice(0, 24))} placeholder={addKind === OwnerKind.Cold ? "Safe wallet" : "Hyperliquid"} />
           </Field>
-          <div className="banner banner-pending small row" style={{ gap: 10, alignItems: "flex-start" }}>
-            <Icon name="clock" size={18} />
-            <span><b>Usable in {loosenWait}.</b> A new destination is a weakening change. This is what protects you from "send it to this recovery address" messages.</span>
-          </div>
-          <button className="btn btn-block" disabled={!!busy || !addAddr.trim()} onClick={() => void addDestination()}>Schedule</button>
+          {registrationIsInstant ? (
+            <div className="banner banner-protect small row" style={{ gap: 10, alignItems: "flex-start" }}>
+              <Icon name="bolt" size={18} />
+              <span><b>Applies instantly.</b> Your treasury is empty, so there is nothing to protect yet. Once you deposit, adding a destination becomes a {loosenWait} wait.</span>
+            </div>
+          ) : (
+            <div className="banner banner-pending small row" style={{ gap: 10, alignItems: "flex-start" }}>
+              <Icon name="clock" size={18} />
+              <span><b>Usable in {loosenWait}.</b> A new destination is a weakening change. This is what protects you from "send it to this recovery address" messages.</span>
+            </div>
+          )}
+          <button className={`btn btn-block${registrationIsInstant ? " btn-protect" : ""}`} disabled={!!busy || !addAddr.trim()} onClick={() => void addDestination()}>{registrationIsInstant ? "Add" : "Schedule"}</button>
         </div>
       </Sheet>
 
