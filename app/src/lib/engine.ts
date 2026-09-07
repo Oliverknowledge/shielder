@@ -5,7 +5,7 @@
 import type { TransactionInstruction } from "@solana/web3.js";
 import type { EvmCall } from "../../../client/evm";
 import type { InitView, RegistrationInput } from "../../../client/solana-adapter";
-import type { Chain, LoosenView, ProposalKind, ProposalView, RegistryView, ShieldErrorName, TightenView, VaultView, WalletBalanceView } from "../../../client/views";
+import type { Chain, LadderProposalView, LoosenView, ProposalKind, ProposalView, RegistryView, ShieldErrorName, TightenView, VaultView, WalletBalanceView } from "../../../client/views";
 
 export type PreparedTx = { chain: "solana"; ixs: TransactionInstruction[] } | { chain: "evm"; calls: EvmCall[] };
 
@@ -22,6 +22,8 @@ export interface VaultSnapshot {
   registry: RegistryView[];
   wallets: WalletBalanceView[];
   walletUsdc: bigint | null;
+  /** v3 (EVM only): a pending ladder change, if any. */
+  ladderProposal?: LadderProposalView | null;
 }
 
 export interface Actions {
@@ -40,6 +42,12 @@ export interface Actions {
   proposeColdTransferAboveCap(dest: string, amount: bigint): PreparedTx;
   proposeUninstallVault(dest: string): PreparedTx;
   executeFullExit(dest: string): PreparedTx;
+  /** v3 risk ladder (EVM only; Solana v0 has no ladder and these throw). */
+  commitLadder(ladderHash: string, reducedVelocityThreshold: bigint, tierResetSecs: bigint): PreparedTx;
+  setReducedTier(): PreparedTx;
+  proposeLadderChange(ladderHash: string, reducedVelocityThreshold: bigint, tierResetSecs: bigint, resetTier: boolean): PreparedTx;
+  executeLadderChange(): PreparedTx;
+  cancelLadderChange(): PreparedTx;
 }
 
 export class ShieldTxError extends Error {

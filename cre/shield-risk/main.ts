@@ -46,6 +46,9 @@ export const configSchema = z.object({
   chain: z.enum(["solana", "evm"]).optional(),
   /** EIP-712 domain chain id; required when `chain` is "evm". */
   chainId: z.number().optional(),
+  /** v3 ladder: the enclave reads secret `<prefix><vault lowercase>` holding the user's
+   *  private thresholds. Absent secret = no ladder = only the public loss rule applies. */
+  ladderSecretPrefix: z.string().optional(),
 });
 type Config = z.infer<typeof configSchema>;
 

@@ -1,8 +1,9 @@
 {
   "shieldApiUrl": "http://localhost:8788",
-  "programId": "0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006",
+  "programId": "0xDaA8B6a85391d54397c3847F006a49A16d0F37b3",
   "chain": "evm",
   "chainId": 998,
   "secretId": "SHIELD_EVM_VERIFIER_KEY",
-  "deliver": true
+  "deliver": true,
+  "ladderSecretPrefix": "LADDER_"
 }

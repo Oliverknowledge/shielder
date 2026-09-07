@@ -10,12 +10,15 @@ was read back from HyperEVM testnet with `cast` before being written down.
 ## What Shield is
 
 Shield is a self-custodial commitment vault on HyperEVM. The contract is
-`ShieldVault.sol` v2, deployed at **`0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006`**
+`ShieldVault.sol` v3, deployed at **`0xDaA8B6a85391d54397c3847F006a49A16d0F37b3`**
 on **HyperEVM testnet, chain id 998** (deploy tx
-`0xab4e5d6af3b6b74649fd522a8255fc8606ac60d1072b3c34ced5896ea53db6a8`, block
-63626253, deployer `0x05a7a130869a793719BB6B341009ea3B70588DCb`; `VERSION()` reads 2).
-v1 (`0xcdB6d631…`, 2026-09-06) had three defects our own gauntlet found; they
-are fixed in v2 and the v1 tests that pinned them are now regressions. It has no
+`0x70a98bffe313a28fcdc9d0989ea691ca3c3e6dedf0bcc2b454d107292176234b`, block
+63634061, deployer `0x05a7a130869a793719BB6B341009ea3B70588DCb`; `VERSION()` reads 3).
+v3 adds the **risk ladder**: NORMAL / REDUCED / LOCKED, written while calm; a
+verifier verdict can only move a vault down it, to a rung the user pre-wrote;
+the threshold that selects REDUCED is private (salted hash on chain, plaintext
+only in the Chainlink enclave); moving back up early waits and must be
+reconfirmed. v1 and v2 are superseded and stay on chain as history. It has no
 owner, no proxy and no upgrade path: once deployed, nobody — including us — can
 change the rules or move the money.
 
@@ -99,12 +102,18 @@ weak evidence of changing outcomes — is set out with citations in
 
 ## What the contract actually enforces
 
-Read `contracts/src/ShieldVault.sol`; verified by 49 Foundry tests
-(`cd contracts && forge test` → 49 passed; `forge install foundry-rs/forge-std --no-git` first):
+Read `contracts/src/ShieldVault.sol`; verified by 64 Foundry tests
+(`cd contracts && forge test` → 64 passed; `forge install foundry-rs/forge-std --no-git` first):
 41 invariants, 6 regressions in `contracts/test/FixedDefects.t.sol` for the three
-v1 defects (each test's comment records what v1 did), and 2 in
-`contracts/test/Isolation.t.sol` for reentrancy and per-vault registry isolation.
+v1 defects, 2 in `contracts/test/Isolation.t.sol` for reentrancy and registry
+isolation, and 15 in `contracts/test/Ladder.t.sol` for the v3 risk ladder.
 
+- **The risk ladder (v3).** Three rungs the user writes while calm. REDUCED
+  lowers the 24h release budget to a pre-written allowance and expires on the
+  user's clock; LOCKED is the loss cooldown. A verdict may only descend the
+  ladder, only against the committed ladder hash, and never to NORMAL; the user
+  can drop a rung instantly and climb back only after the delay with a
+  reconfirmation. The drawdown threshold that selects REDUCED is never on chain.
 - **Protected floor.** A balance the vault will not release for trading at all.
 - **Rolling 24h release limit,** accumulated across six 4-hour buckets
   (`NUM_VELOCITY_BUCKETS = 6`, `BUCKET_LEN_SECS = 4 hours`), so four $500
@@ -387,19 +396,20 @@ cast receipt 0x94960d1f937a3e36e1b16e69922a2579e77b584ed25b2ced044da7991fe889be 
 cast receipt 0x2e411cea49a5c8edff69dddb7376aca1b5c2eee9f92be1fcb12f78733676bb35 --rpc-url $RPC
 
 # live vault state
-cast call 0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006 \
-  "getVault(address)" 0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006 --rpc-url $RPC
+cast call 0xDaA8B6a85391d54397c3847F006a49A16d0F37b3 \
+  "currentTier(address)(uint8)" 0xaA8cfBd03CD4e043228bCCe42b5adD98866F7D8b --rpc-url $RPC   # 1 = REDUCED
 ```
 
-Off-chain: `cd contracts && forge test` (49 passed: 41 invariants, 6 fixed-defect regressions, 2 isolation),
+Off-chain: `cd contracts && forge test` (64 passed: 41 invariants, 6 fixed-defect regressions, 2 isolation, 15 ladder),
 `docs/evidence/cre-simulate.txt`, `docs/evidence/substreams-live.txt`.
 
 Live vaults on chain id 998, all on the one contract:
 
 | Authority | What it is | State |
 |---|---|---|
-| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | demo vault (v2) | $70 balance, $50 floor, $10 per 24h, $3 loss trigger, 12h pause |
-| `0x751D1e26d79FeffE95F8a8662aB7A022780ED023` | the CRE demo vault (v2) | $10 deposited, $5 released, $1 returned; $3 loss trigger; **verdict #1 applied** after a real $7.12 venue loss (tx `0xa02e2fcb…`, block 63626813); in a 12h loss cooldown |
+| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | demo vault (v3) | $60 balance, $40 floor, $12 per 24h, $7 loss trigger, 12h; ladder committed (REDUCED budget $5) |
+| `0x751D1e26d79FeffE95F8a8662aB7A022780ED023` | the CRE demo vault (v3) | $10, $3 loss trigger; LOCKED today by the public rule after the trading account's real $7.35 loss (`0xd62796c5…`) |
+| `0xaA8cfBd03CD4e043228bCCe42b5adD98866F7D8b` | the ladder demo vault (v3) | $5, $4/day; released $2.50 at NORMAL; **REDUCED by the enclave** against its private ladder (tx `0x089727…`), budget now $3 |
 | `0x83144b99D89947703714Ee9aA3A3614985041D2B` | the Privy embedded wallet | its v1 vault: $45 balance, $10 floor, $50 deposited, $5 released to HyperCore (txs above). Holds $20 test USDC for an on-camera deposit on v2 |
 
 ---
@@ -417,7 +427,7 @@ Traders do not lose their money to hacks. They lose it in the ten minutes after 
 
 Shield does not have to argue that this is the pattern. Setup reads your real Hyperliquid history before it proposes a single rule and shows you your own numbers — how many sessions you have had, your typical session size, your largest losing session, and how many sessions included a reload made while you were already down — with one sentence generated from the same data: "3 of your 4 largest losing sessions involved another reload." Your rules are then proposed from those numbers, not from a template.
 
-Shield is a self-custodial commitment vault deployed at 0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006 on HyperEVM testnet (chain id 998), with no owner, no proxy and no upgrade path. It is not a trading venue and does not replace Hyperliquid: you trade on Hyperliquid exactly as you do now, and Shield holds the capital behind the account, releasing it under rules you wrote while calm — a protected floor, a rolling 24-hour release limit, a pause on large moves, and a loss rule that reads the venue's own settled PnL where the venue answers, and what came back from it where it does not.
+Shield is a self-custodial commitment vault deployed at 0xDaA8B6a85391d54397c3847F006a49A16d0F37b3 on HyperEVM testnet (chain id 998), with no owner, no proxy and no upgrade path. It is not a trading venue and does not replace Hyperliquid: you trade on Hyperliquid exactly as you do now, and Shield holds the capital behind the account, releasing it under rules you wrote while calm — a protected floor, a rolling 24-hour release limit, a pause on large moves, and a loss rule that reads the venue's own settled PnL where the venue answers, and what came back from it where it does not.
 
 The asymmetry is the whole product. Moving toward safety is instant: lower a limit, raise the floor, pause yourself, and it takes effect in that block. Expanding risk waits 24 hours and has to be confirmed again afterwards, and any tightening in between cancels it. Leaving Shield entirely waits 7 days. Emergency transfers to your own cold wallet, up to a cap you set yourself, are never blocked by a cooldown or by the risk monitor. That shape is not invented: instant to tighten, delayed to loosen, with a confirmation at the end of the wait, is what gambling regulators across 30 European countries converged on, and is specified almost word for word by UK Gambling Commission RTS 12D.
 
@@ -429,7 +439,7 @@ You sign in with an email through Privy, and the embedded wallet it creates is t
 # PASTE — how it's made (technical)
 
 ```
-Contract. ShieldVault.sol v2 at 0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006 on HyperEVM testnet, chain id 998 (deploy tx 0xab4e5d6af3b6b74649fd522a8255fc8606ac60d1072b3c34ced5896ea53db6a8, block 63626253; VERSION() = 2). Immutable: no owner, no proxy, no upgrade path. One contract, many vaults, keyed by authority address. Money leaves through five paths only — instant top-up, matured top-up, instant cold transfer under the user's emergency cap, matured cold transfer, matured full exit — each gated by a protected floor, a rolling 24h limit accumulated over six 4-hour buckets, a large-move threshold, and cooldowns. v1 of this contract had three defects our own gauntlet found (an idle gap re-zeroed the 24h accumulator; an aged cancellation erased unrelated spend; self-set delays were unbounded); v2 fixes all three and contracts/test/FixedDefects.t.sol pins them as regressions (docs/THREAT_MODEL.md, Known gaps 1–3). Destinations are registered once with a permanent kind (execution or cold). Tightening applies instantly and bumps configVersion, which marks every pending loosening stale, so tilt cannot pre-load an escape. A permitted release to a HyperCore destination is delivered by the contract into that address's Hyperliquid perps account through Circle's CoreDepositWallet.depositFor in the same transaction. 49 Foundry tests (cd contracts && forge test): 41 invariants, 6 fixed-defect regressions, 2 for reentrancy and registry isolation.
+Contract. ShieldVault.sol v3 at 0xDaA8B6a85391d54397c3847F006a49A16d0F37b3 on HyperEVM testnet, chain id 998 (deploy tx 0x70a98bffe313a28fcdc9d0989ea691ca3c3e6dedf0bcc2b454d107292176234b, block 63634061; VERSION() = 3). v3 adds a risk ladder (NORMAL / REDUCED / LOCKED): the reload budget ratchets down with the session under rules the user wrote while calm; the verifier may only descend it; the selecting threshold is a salted hash on chain and a secret in the enclave. Immutable: no owner, no proxy, no upgrade path. One contract, many vaults, keyed by authority address. Money leaves through five paths only — instant top-up, matured top-up, instant cold transfer under the user's emergency cap, matured cold transfer, matured full exit — each gated by a protected floor, a rolling 24h limit accumulated over six 4-hour buckets, a large-move threshold, and cooldowns. v1 of this contract had three defects our own gauntlet found (an idle gap re-zeroed the 24h accumulator; an aged cancellation erased unrelated spend; self-set delays were unbounded); v2 fixes all three and contracts/test/FixedDefects.t.sol pins them as regressions (docs/THREAT_MODEL.md, Known gaps 1–3). Destinations are registered once with a permanent kind (execution or cold). Tightening applies instantly and bumps configVersion, which marks every pending loosening stale, so tilt cannot pre-load an escape. A permitted release to a HyperCore destination is delivered by the contract into that address's Hyperliquid perps account through Circle's CoreDepositWallet.depositFor in the same transaction. 64 Foundry tests (cd contracts && forge test): 41 invariants, 6 fixed-defect regressions, 2 isolation, 15 risk-ladder.
 
 Privy (Best Financial Flow). The embedded wallet is the vault authority, not a login: ShieldVault._own() reverts for every other address. Created on login with createOnLogin: "users-without-wallets" (app/src/lib/privy.tsx:67); the app signs through its EIP-1193 provider. Wallet 0x83144b99D89947703714Ee9aA3A3614985041D2B, nonce 4 on chain. The financial flow is a $5.00 release from the vault into a Hyperliquid perps account in one transaction: 0x94960d1f937a3e36e1b16e69922a2579e77b584ed25b2ced044da7991fe889be (block 63581864) — USDC approval and transfer from the vault to CoreDepositWallet, on to the HyperCore system address 0x2000...0000, a $5.00 HyperCore credit to the registered account, and TopUpExecuted(amount=$5, instant=true, balanceAfter=$45). Supporting transactions from the same wallet: registerOwner 0x80c2a48aeeb2825fc427c2eb6b90821bc5c75fe8db38eddb3db745f55426f8f0 (block 63581683) and proposeLoosen 0xeeea692a9a7c25ada3918ceff2992c3465fff356b560b6c80a5e191cf2224b85 (block 63581938), the second of which the contract holds for 24 hours. Privy policies, quorums, session signers and Cards are not used and are not claimed.
 

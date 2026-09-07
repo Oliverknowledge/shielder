@@ -109,6 +109,19 @@ export const SHIELD_VAULT_ABI = [
  },
  {
   "type": "function",
+  "name": "CATEGORY_LADDER",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint8",
+    "internalType": "uint8"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
   "name": "CATEGORY_RULE_CHANGE",
   "inputs": [],
   "outputs": [
@@ -188,6 +201,19 @@ export const SHIELD_VAULT_ABI = [
  {
   "type": "function",
   "name": "DEFAULT_LOOSEN_COOLDOWN_SECS",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint64",
+    "internalType": "uint64"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "DEFAULT_TIER_RESET_SECS",
   "inputs": [],
   "outputs": [
    {
@@ -304,6 +330,19 @@ export const SHIELD_VAULT_ABI = [
  },
  {
   "type": "function",
+  "name": "MAX_TIER_RESET_SECS",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint64",
+    "internalType": "uint64"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
   "name": "MAX_TOP_UP_COOLDOWN_SECS",
   "inputs": [],
   "outputs": [
@@ -331,6 +370,19 @@ export const SHIELD_VAULT_ABI = [
  {
   "type": "function",
   "name": "MIN_LOOSEN_COOLDOWN_SECS",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint64",
+    "internalType": "uint64"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "MIN_TIER_RESET_SECS",
   "inputs": [],
   "outputs": [
    {
@@ -383,6 +435,45 @@ export const SHIELD_VAULT_ABI = [
  {
   "type": "function",
   "name": "ROUTE_HYPERCORE",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint8",
+    "internalType": "uint8"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "TIER_LOCKED",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint8",
+    "internalType": "uint8"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "TIER_NORMAL",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint8",
+    "internalType": "uint8"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "TIER_REDUCED",
   "inputs": [],
   "outputs": [
    {
@@ -462,9 +553,14 @@ export const SHIELD_VAULT_ABI = [
       "internalType": "uint64"
      },
      {
-      "name": "reasonCode",
+      "name": "tier",
       "type": "uint8",
       "internalType": "uint8"
+     },
+     {
+      "name": "ladderHash",
+      "type": "bytes32",
+      "internalType": "bytes32"
      },
      {
       "name": "realizedLossUsdc",
@@ -489,12 +585,42 @@ export const SHIELD_VAULT_ABI = [
  },
  {
   "type": "function",
+  "name": "cancelLadderChange",
+  "inputs": [],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
   "name": "cancelProposal",
   "inputs": [
    {
     "name": "category",
     "type": "uint8",
     "internalType": "uint8"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "commitLadder",
+  "inputs": [
+   {
+    "name": "ladderHash",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "reducedVelocityThreshold",
+    "type": "uint64",
+    "internalType": "uint64"
+   },
+   {
+    "name": "tierResetSecs",
+    "type": "uint64",
+    "internalType": "uint64"
    }
   ],
   "outputs": [],
@@ -509,6 +635,25 @@ export const SHIELD_VAULT_ABI = [
     "name": "",
     "type": "address",
     "internalType": "contract ICoreDepositWallet"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "currentTier",
+  "inputs": [
+   {
+    "name": "authority",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint8",
+    "internalType": "uint8"
    }
   ],
   "stateMutability": "view"
@@ -546,7 +691,33 @@ export const SHIELD_VAULT_ABI = [
  },
  {
   "type": "function",
+  "name": "effectiveVelocityThreshold",
+  "inputs": [
+   {
+    "name": "authority",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint64",
+    "internalType": "uint64"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
   "name": "executeFullExit",
+  "inputs": [],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "executeLadderChange",
   "inputs": [],
   "outputs": [],
   "stateMutability": "nonpayable"
@@ -564,6 +735,77 @@ export const SHIELD_VAULT_ABI = [
   "inputs": [],
   "outputs": [],
   "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "getLadderProposal",
+  "inputs": [
+   {
+    "name": "authority",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "tuple",
+    "internalType": "struct ShieldVault.LadderProposal",
+    "components": [
+     {
+      "name": "exists",
+      "type": "bool",
+      "internalType": "bool"
+     },
+     {
+      "name": "resetTier",
+      "type": "bool",
+      "internalType": "bool"
+     },
+     {
+      "name": "nonce",
+      "type": "uint64",
+      "internalType": "uint64"
+     },
+     {
+      "name": "createdAt",
+      "type": "uint64",
+      "internalType": "uint64"
+     },
+     {
+      "name": "executeAfter",
+      "type": "uint64",
+      "internalType": "uint64"
+     },
+     {
+      "name": "expiry",
+      "type": "uint64",
+      "internalType": "uint64"
+     },
+     {
+      "name": "configVersionAtCreation",
+      "type": "uint64",
+      "internalType": "uint64"
+     },
+     {
+      "name": "ladderHash",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     },
+     {
+      "name": "reducedVelocityThreshold",
+      "type": "uint64",
+      "internalType": "uint64"
+     },
+     {
+      "name": "tierResetSecs",
+      "type": "uint64",
+      "internalType": "uint64"
+     }
+    ]
+   }
+  ],
+  "stateMutability": "view"
  },
  {
   "type": "function",
@@ -935,11 +1177,6 @@ export const SHIELD_VAULT_ABI = [
       "internalType": "uint64"
      },
      {
-      "name": "lastVerdictReason",
-      "type": "uint8",
-      "internalType": "uint8"
-     },
-     {
       "name": "lastVerdictEvidence",
       "type": "bytes32",
       "internalType": "bytes32"
@@ -978,6 +1215,31 @@ export const SHIELD_VAULT_ABI = [
       "name": "balance",
       "type": "uint64",
       "internalType": "uint64"
+     },
+     {
+      "name": "ladderHash",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     },
+     {
+      "name": "reducedVelocityThreshold",
+      "type": "uint64",
+      "internalType": "uint64"
+     },
+     {
+      "name": "tierResetSecs",
+      "type": "uint64",
+      "internalType": "uint64"
+     },
+     {
+      "name": "activeTier",
+      "type": "uint8",
+      "internalType": "uint8"
+     },
+     {
+      "name": "tierUntil",
+      "type": "uint64",
+      "internalType": "uint64"
      }
     ]
    }
@@ -1014,9 +1276,14 @@ export const SHIELD_VAULT_ABI = [
       "internalType": "uint64"
      },
      {
-      "name": "reasonCode",
+      "name": "tier",
       "type": "uint8",
       "internalType": "uint8"
+     },
+     {
+      "name": "ladderHash",
+      "type": "bytes32",
+      "internalType": "bytes32"
      },
      {
       "name": "realizedLossUsdc",
@@ -1139,6 +1406,34 @@ export const SHIELD_VAULT_ABI = [
     "name": "amount",
     "type": "uint64",
     "internalType": "uint64"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "proposeLadderChange",
+  "inputs": [
+   {
+    "name": "ladderHash",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "reducedVelocityThreshold",
+    "type": "uint64",
+    "internalType": "uint64"
+   },
+   {
+    "name": "tierResetSecs",
+    "type": "uint64",
+    "internalType": "uint64"
+   },
+   {
+    "name": "resetTier",
+    "type": "bool",
+    "internalType": "bool"
    }
   ],
   "outputs": [],
@@ -1348,6 +1643,13 @@ export const SHIELD_VAULT_ABI = [
     "internalType": "address"
    }
   ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "setReducedTier",
+  "inputs": [],
   "outputs": [],
   "stateMutability": "nonpayable"
  },
@@ -1640,6 +1942,99 @@ export const SHIELD_VAULT_ABI = [
  },
  {
   "type": "event",
+  "name": "LadderChangeExecuted",
+  "inputs": [
+   {
+    "name": "vault",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "nonce",
+    "type": "uint64",
+    "indexed": false,
+    "internalType": "uint64"
+   },
+   {
+    "name": "resetTier",
+    "type": "bool",
+    "indexed": false,
+    "internalType": "bool"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "LadderChangeProposed",
+  "inputs": [
+   {
+    "name": "vault",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "nonce",
+    "type": "uint64",
+    "indexed": false,
+    "internalType": "uint64"
+   },
+   {
+    "name": "executeAfter",
+    "type": "uint64",
+    "indexed": false,
+    "internalType": "uint64"
+   },
+   {
+    "name": "resetTier",
+    "type": "bool",
+    "indexed": false,
+    "internalType": "bool"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "LadderCommitted",
+  "inputs": [
+   {
+    "name": "vault",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "ladderHash",
+    "type": "bytes32",
+    "indexed": false,
+    "internalType": "bytes32"
+   },
+   {
+    "name": "reducedVelocityThreshold",
+    "type": "uint64",
+    "indexed": false,
+    "internalType": "uint64"
+   },
+   {
+    "name": "tierResetSecs",
+    "type": "uint64",
+    "indexed": false,
+    "internalType": "uint64"
+   },
+   {
+    "name": "configVersion",
+    "type": "uint64",
+    "indexed": false,
+    "internalType": "uint64"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
   "name": "LoosenExecuted",
   "inputs": [
    {
@@ -1807,6 +2202,49 @@ export const SHIELD_VAULT_ABI = [
  },
  {
   "type": "event",
+  "name": "RiskTierChanged",
+  "inputs": [
+   {
+    "name": "vault",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "tier",
+    "type": "uint8",
+    "indexed": false,
+    "internalType": "uint8"
+   },
+   {
+    "name": "until",
+    "type": "uint64",
+    "indexed": false,
+    "internalType": "uint64"
+   },
+   {
+    "name": "verdictNonce",
+    "type": "uint64",
+    "indexed": false,
+    "internalType": "uint64"
+   },
+   {
+    "name": "ladderHash",
+    "type": "bytes32",
+    "indexed": false,
+    "internalType": "bytes32"
+   },
+   {
+    "name": "byVerifier",
+    "type": "bool",
+    "indexed": false,
+    "internalType": "bool"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
   "name": "RiskVerdictApplied",
   "inputs": [
    {
@@ -1822,7 +2260,7 @@ export const SHIELD_VAULT_ABI = [
     "internalType": "uint64"
    },
    {
-    "name": "reasonCode",
+    "name": "tier",
     "type": "uint8",
     "indexed": false,
     "internalType": "uint8"
@@ -2026,6 +2464,16 @@ export const SHIELD_VAULT_ABI = [
  {
   "type": "error",
   "name": "InvalidVerifier",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "LadderMismatch",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "NoLadder",
   "inputs": []
  },
  {

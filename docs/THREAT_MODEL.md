@@ -6,11 +6,11 @@ attacker trying to get around them. Everything else — scammers, a compromised
 Shield server, a malicious monitor — is secondary and easier.
 
 The spec below is `contracts/src/ShieldVault.sol`, deployed and immutable on
-HyperEVM testnet (chain 998) at `0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006` (v2, `VERSION() = 2`).
+HyperEVM testnet (chain 998) at `0xDaA8B6a85391d54397c3847F006a49A16d0F37b3` (v3, `VERSION() = 3`).
 Each invariant is stated as a property, then where the contract enforces it
 (`ShieldVault.sol:line`), then the test that pins it
 (`contracts/test/ShieldVault.t.sol`). `cd contracts && forge test` runs 44
-tests: those 41 invariants plus 6 regressions in `contracts/test/FixedDefects.t.sol` and 2 in `contracts/test/Isolation.t.sol`, which
+tests: those 41 invariants plus 6 regressions in `contracts/test/FixedDefects.t.sol`, 2 in `contracts/test/Isolation.t.sol` and 15 in `contracts/test/Ladder.t.sol`, which
 assert what the contract *does* and are therefore all bugs — each one is
 written up under "Known gaps" below.
 
@@ -278,13 +278,45 @@ so no external callee can be swapped after deployment.
 
 Pinned by `Isolation.t.sol:test_reentrancyThroughAHostileCoreDepositWalletIsRefused` (v2).
 
+
+### 13. (v3) The risk ladder: a verdict may only descend it, and only to a rung the user wrote
+
+`commitLadder(ladderHash, reducedVelocityThreshold, tierResetSecs)` stores a salted
+commitment to the user's private drawdown threshold, the public REDUCED budget and
+the REDUCED duration (1h–7d). `applyRiskVerdict` accepts `tier ∈ {REDUCED, LOCKED}`
+only: REDUCED requires `rv.ladderHash == v.ladderHash` and a current rung below
+REDUCED; LOCKED keeps the public `realizedLossUsdc >= lossTriggerUsdc`; a verdict
+that names NORMAL reverts. REDUCED makes every release path use
+`min(velocityThreshold, reducedVelocityThreshold)` and expires on the user's
+clock; LOCKED is the cooldown. `setReducedTier()` lets the user drop a rung
+instantly; `proposeLadderChange(resetTier=true)` + `executeLadderChange()` is the
+only way up, after `loosenCooldownSecs`, and any tightening strands it. Replacing
+the commitment is always the delayed path, because the chain cannot compare two
+hashes for strictness. Pinned by `Ladder.t.sol` (15 tests, including "a gated
+top-up proposed at NORMAL cannot execute past a REDUCED budget" and "a rogue key
+that burns the nonce range is recoverable by changing the verifier").
+
+What the ladder's privacy buys and costs: chain observers, Shield's server and
+Chainlink node operators never see the threshold; the enclave holds it; Shield's
+operators can read it if they kept the secret at creation, and the simulator is
+not real hardware. A false REDUCED is indistinguishable on chain from a true one;
+its consequence is bounded to the budget the user pre-wrote and expires on the
+clock the user set.
+
+### 14. (v3) Two fixes from the judge passes
+
+`executeRuleChange` now resets `lastVerdictNonce` when the verifier changes, so a
+compromised key that signs `nonce = 2^64-1` cannot leave a vault permanently
+unprotectable (research F). `executeTopUp` re-checks the budget in force, so a
+gated top-up reserved at NORMAL cannot execute after a drop to REDUCED (research C).
+
 ## Known gaps — properties the contract does not have
 
 Gaps 1–3 below were found by our own gauntlet in **v1**
 (`0xcdB6d631…`, deployed 2026-09-06) and are **fixed in v2**
-(`0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006`, deployed 2026-09-07, `VERSION() = 2`),
-which is what the app, the server, the Substreams filters and the CRE
-workflow now point at. Each is pinned as a regression test in
+(`0xba1Bb356…`, deployed 2026-09-07, `VERSION() = 2`) and carried into v3
+(`0xDaA8B6a85391d54397c3847F006a49A16d0F37b3`, `VERSION() = 3`), which is what
+the app, the server, the Substreams filters and the CRE workflow now point at. Each is pinned as a regression test in
 `contracts/test/FixedDefects.t.sol`, whose comments keep the original v1
 behaviour so the reader can see exactly what changed. v1 is immutable and
 still holds its four vaults; nothing uses it any more.
@@ -416,6 +448,24 @@ endpoint — `cast send` reaches every path, and the app is a convenience over
 the same calls. The claim "recovery needs nothing Shield operates" is still
 true; the specific artefact the old document cited does not cover EVM.
 
+
+## What a determined tilted user can still do (v3, stated plainly)
+
+Shield governs money inside the vault and nothing else. After a loss a user can:
+reload once before any verdict lands (a verdict takes seconds to minutes; a reload
+takes one block); route the emergency cold cap to a safe wallet and deposit it to
+the venue from there; add margin to a losing position they never close, which no
+realised-loss rule sees; trade from an address Shield does not read; or use any
+other venue. A Shield-held agent key, a Privy policy on the embedded wallet, or a
+time-bound session signer stops none of that: Hyperliquid has no per-agent
+scoping and the master key always retains full authority, so any such layer is
+friction, not enforcement, and Shield does not ship one. What tilt cannot do is
+breach the floor, exceed the 24-hour budget from the vault (or the REDUCED budget
+once the rung is in force), skip the large-move wait, shorten a cooldown, weaken a
+rule or climb a rung early, or send vault money anywhere not registered while
+calm. The hard guarantee is the capital vault; the ladder adds pre-authorised
+degrees of freedom to what a verdict may do, behind the same soft loss reader.
+
 ## Attacks, by attacker
 
 ### Alex, five minutes after a loss
@@ -475,7 +525,7 @@ verified, not assumed.
 
 There is nothing to say. `ShieldVault.sol` has no owner, no admin, no proxy
 and no upgrade path; the deployed bytecode at
-`0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006` is the final bytecode. Shield
+`0xDaA8B6a85391d54397c3847F006a49A16d0F37b3` is the final bytecode. Shield
 cannot move a user's funds, change a user's rules, or turn the contract off.
 The one thing Shield can influence is whether a verdict gets signed, and
 invariant 9 bounds what a verdict can do.

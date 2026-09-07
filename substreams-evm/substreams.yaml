@@ -37,8 +37,8 @@ binaries:
 # only the filter was updated. `substreams-config.test.ts` now pins the two
 # together so the halves cannot drift apart again.
 params:
-  map_shield_events: "evt_addr:0xba1bb356e546ad2d036f4caa8d25fbba4f5c1006"
-  map_vault_flows: "evt_addr:0xba1bb356e546ad2d036f4caa8d25fbba4f5c1006 || evt_addr:0x2b3370ee501b4a559b57d449569354196457d8ab"
+  map_shield_events: "evt_addr:0xdaa8b6a85391d54397c3847f006a49a16d0f37b3"
+  map_vault_flows: "evt_addr:0xdaa8b6a85391d54397c3847f006a49a16d0f37b3 || evt_addr:0x2b3370ee501b4a559b57d449569354196457d8ab"
 
 modules:
   # ---- Stage 1: typed decoding, filtered by the foundational block index ----
@@ -55,7 +55,7 @@ modules:
     blockFilter:
       module: ethereum_common:index_events
       query:
-        string: "evt_addr:0xba1bb356e546ad2d036f4caa8d25fbba4f5c1006"
+        string: "evt_addr:0xdaa8b6a85391d54397c3847f006a49a16d0f37b3"
     output:
       type: proto:shield.evm.v1.ShieldEvents
 
@@ -80,7 +80,7 @@ modules:
     blockFilter:
       module: ethereum_common:index_events
       query:
-        string: "evt_addr:0xba1bb356e546ad2d036f4caa8d25fbba4f5c1006 || evt_addr:0x2b3370ee501b4a559b57d449569354196457d8ab"
+        string: "evt_addr:0xdaa8b6a85391d54397c3847f006a49a16d0f37b3 || evt_addr:0x2b3370ee501b4a559b57d449569354196457d8ab"
     output:
       type: proto:shield.evm.v1.VaultFlows
 

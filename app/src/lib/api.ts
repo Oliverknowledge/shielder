@@ -115,7 +115,7 @@ export interface EventJson {
 }
 
 export interface VerdictRecordJson {
-  verdict: { nonce: string; realizedLossUsdc: string; reasonCode: number; evidenceHash: string; issuedAt: string; verifier: string };
+  verdict: { nonce: string; realizedLossUsdc: string; reasonCode: number; evidenceHash: string; issuedAt: string; verifier: string; tier?: number; ladderHash?: string };
   headline: string;
   lines: string[];
   relayed: boolean;

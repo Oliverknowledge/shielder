@@ -21,12 +21,11 @@ export interface RuleDef {
   /**
    * The largest value the app will submit, in the rule's own unit.
    *
-   * Tightening is instant and irreversible except through the loosen path, and
-   * ShieldVault.sol bounds only the loss cooldown (30 days). Nothing in the
-   * contract stops someone setting a weakening delay or an exit delay of a
-   * thousand years, which would silently destroy the one promise Shield makes
-   * unconditionally: that you can always get your money out. The contract
-   * cannot be changed, so the app refuses to be the instrument.
+   * Tightening is instant and irreversible except through the loosen path.
+   * ShieldVault.sol v2 bounds every self-set delay at 30 days (v1 did not, and
+   * the app was the only thing standing between a user and a thousand-year
+   * exit delay). The app keeps its own, tighter caps so that a slip in the
+   * editor never becomes a month-long wait.
    */
   max?: number;
   maxWhy?: string;

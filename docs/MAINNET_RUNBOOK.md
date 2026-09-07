@@ -41,7 +41,7 @@ bun run scripts/hyperevm-bridge.ts USDC <amount>
 # 2. Big blocks: the deployment does not fit a small one
 bun run hyperevm:big-blocks on
 
-cd contracts && forge create src/ShieldVault.sol:ShieldVault \   # v2: fits EIP-170 with optimizer_runs = 1 (foundry.toml)
+cd contracts && forge create src/ShieldVault.sol:ShieldVault \   # v3: via_ir = true, optimizer_runs = 1 (foundry.toml); 21.4 KB runtime
   --rpc-url $EVM_RPC_URL --private-key $EVM_DEPLOYER_KEY \
   --gas-limit 6000000 --legacy --broadcast \
   --constructor-args 0xb88339CB7199b77E23DB6E890353E22632Ba630f \
@@ -80,3 +80,13 @@ The `CHAIN_ID === 999` path in `server/evm-index.ts` turns the Substreams
 source on and the demo endpoints off. It has never run against a real vault,
 because until now there was no mainnet vault to point it at. Exercise it
 immediately after the deploy rather than during the recording.
+
+
+## v3 additions
+
+After `bootstrap:hyperevm`, commit the ladder from the authority
+(`commitLadder(hash, reducedBudget, 86400)`; the app's "Write my plan" does this
+and keeps the private half in the browser), then give the enclave the plaintext:
+`cre secrets create` for `LADDER_<vault lowercase>` on the network, or the
+`LADDER_*` entries in `cre/.env` for simulation (`cre/secrets.yaml` maps ids to
+env names). Never put the threshold in a config file, a trigger payload or a log.

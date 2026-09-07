@@ -6,7 +6,7 @@ in `docs/internal/gauntlet/FACTS.md`, checked against the chain or a command tha
 actually run.
 
 The one-line version: `ShieldVault.sol` is deployed and immutable on HyperEVM
-testnet (chain 998) at `0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006` (v2). It holds
+testnet (chain 998) at `0xDaA8B6a85391d54397c3847F006a49A16d0F37b3` (v3). It holds
 a user's protected USDC and releases it into their Hyperliquid account under
 rules they set while calm. Tightening a rule is instant; loosening waits and
 has to be confirmed again afterwards.
@@ -28,10 +28,11 @@ leaves, each to a destination registered in advance and typed permanently;
 splitting inside one active window hits a rolling 24h budget shared by top-ups
 and cold transfers; adding a new destination to a funded vault is a delayed
 change; raising a limit is a delayed change that any tightening in between
-invalidates; leaving is a proposal at the user's own exit delay. 49 Foundry
+invalidates; leaving is a proposal at the user's own exit delay. 64 Foundry
 tests run those attacks against the deployed logic: 41 invariants, 6
 regressions for the three defects our own gauntlet found in v1 and fixed in
-v2 (below), and 2 for reentrancy and registry isolation. Outside the vault, of course they can:
+v2 (below), 2 for reentrancy and registry isolation, and 15 for the v3 risk
+ladder. Outside the vault, of course they can:
 money that never entered Shield is not protected. The app says so itself, in
 the connected-venue panel on Home, under the button that opens Hyperliquid:
 "Money you send here yourself never passes through Shield, and none of your
@@ -397,9 +398,26 @@ of them. The verifiable form is direct:
 
 ```
 cast tx 0x94960d1f937a3e36e1b16e69922a2579e77b584ed25b2ced044da7991fe889be --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
-cast call 0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006 "usdc()(address)" --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
-cd contracts && forge install foundry-rs/forge-std --no-git && forge test    # 49 passing
+cast call 0xDaA8B6a85391d54397c3847F006a49A16d0F37b3 "usdc()(address)" --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
+cd contracts && forge install foundry-rs/forge-std --no-git && forge test    # 64 passing
 ```
 
 On HyperEVM mainnet `hyperevmscan.io` works — one more reason the mainnet
 deploy matters.
+
+
+## "Why don't you just restrict the trading itself — reduce-only, lower leverage — when the session goes bad?"
+
+Because it cannot be done for a self-custodial trader, and a fake restriction is
+worse than none. Every Hyperliquid trading action is signed as
+`Agent{source, connectionId}` with the whole order hashed into `connectionId`, so
+a Privy policy sees one opaque `bytes32` and cannot tell a reduce-only close from
+a 40× open; Privy ships no Hyperliquid decoder. Hyperliquid has no per-agent
+scoping; an agent can do every trading action; the master key always keeps full
+authority; a Shield-held agent is bypassed by the master wallet or one
+`approveAgent` in about a second. The only hard version is a Privy 2-of-2 quorum
+where Shield co-signs every order — co-custody and a liveness dependency, which is
+not what Shield is. We researched it against current docs and on testnet
+(`docs/internal/research/A…C`) and wrote it down as impossible rather than
+shipping a toggle that reads "reduce-only" and does nothing. What ratchets is the
+capital: the vault's release budget, on chain, by rules you wrote while calm.

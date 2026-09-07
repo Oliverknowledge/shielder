@@ -6,6 +6,7 @@ test = "test"
 script = "script"
 solc_version = "0.8.26"
 optimizer = true
+via_ir = true
 optimizer_runs = 1
 evm_version = "cancun"
 fs_permissions = [{ access = "read", path = "./" }]

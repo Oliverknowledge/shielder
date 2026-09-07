@@ -113,7 +113,17 @@ fn map_shield_events(params: String, block: Block) -> Result<ShieldEvents, Error
         } else if let Some(e) = ev::FullExitExecuted::match_and_decode(log) {
             events.push(base("FullExitExecuted", &e.vault, f(&[("destinationOwner", addr(&e.destination_owner)), ("amount", e.amount.to_string())])));
         } else if let Some(e) = ev::RiskVerdictApplied::match_and_decode(log) {
-            events.push(base("RiskVerdictApplied", &e.vault, f(&[("nonce", e.nonce.to_string()), ("reasonCode", e.reason_code.to_string()), ("realizedLossUsdc", e.realized_loss_usdc.to_string()), ("cooldownUntil", e.cooldown_until.to_string()), ("extended", e.extended.to_string()), ("evidenceHash", addr(&e.evidence_hash))])));
+            events.push(base("RiskVerdictApplied", &e.vault, f(&[("nonce", e.nonce.to_string()), ("tier", e.tier.to_string()), ("realizedLossUsdc", e.realized_loss_usdc.to_string()), ("cooldownUntil", e.cooldown_until.to_string()), ("extended", e.extended.to_string()), ("evidenceHash", addr(&e.evidence_hash))])));
+        } else if let Some(e) = ev::RiskTierChanged::match_and_decode(log) {
+            // v3 ladder: the rung in force changed (by verdict or by the user). The
+            // thresholds that selected it are private; the rung and its clock are public.
+            events.push(base("RiskTierChanged", &e.vault, f(&[("tier", e.tier.to_string()), ("until", e.until.to_string()), ("verdictNonce", e.verdict_nonce.to_string()), ("ladderHash", addr(&e.ladder_hash)), ("byVerifier", e.by_verifier.to_string())])));
+        } else if let Some(e) = ev::LadderCommitted::match_and_decode(log) {
+            events.push(base("LadderCommitted", &e.vault, f(&[("ladderHash", addr(&e.ladder_hash)), ("reducedVelocityThreshold", e.reduced_velocity_threshold.to_string()), ("tierResetSecs", e.tier_reset_secs.to_string()), ("configVersion", e.config_version.to_string())])));
+        } else if let Some(e) = ev::LadderChangeProposed::match_and_decode(log) {
+            events.push(base("LadderChangeProposed", &e.vault, f(&[("nonce", e.nonce.to_string()), ("executeAfter", e.execute_after.to_string()), ("resetTier", e.reset_tier.to_string())])));
+        } else if let Some(e) = ev::LadderChangeExecuted::match_and_decode(log) {
+            events.push(base("LadderChangeExecuted", &e.vault, f(&[("nonce", e.nonce.to_string()), ("resetTier", e.reset_tier.to_string())])));
         }
     }
     Ok(ShieldEvents { events })

@@ -135,8 +135,9 @@ but empty dashboard that looks like a bug.
 
 | Vault authority | State | Use it? |
 |---|---|---|
-| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | v2: $70 balance, floor $50, $10/24h, $3 loss trigger, 12h; verdict nonce 1 unused | **Yes** — key in `.shield/hyperevm-keys.json` under `authority` |
-| `0x751D1e26d79FeffE95F8a8662aB7A022780ED023` | v2: $6 balance, in a 12h loss cooldown from the CRE-signed verdict (until 1788818471) | Only to show a vault already in cooldown; nonce 1 is consumed |
+| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | v3: $60, floor $40, $12/24h, $7 loss trigger, ladder committed (REDUCED budget $5, private threshold $3 in `.shield/ladders/`). LOCKED until ~00:00 UTC 2026-09-08 by today's real loss | **Yes, after the cooldown clears** — key `.shield/hyperevm-keys.json` → `authority` |
+| `0xaA8cfBd03CD4e043228bCCe42b5adD98866F7D8b` | v3: $5, $4/day; already REDUCED by the enclave (until ~13:17 UTC 2026-09-08), budget $3 | To show a vault already REDUCED; key → `ladderAuthority2` |
+| `0x751D1e26d79FeffE95F8a8662aB7A022780ED023` | v3: $10, LOCKED today | Only to show LOCKED; nonce 1 consumed |
 | `0x83144b99D89947703714Ee9aA3A3614985041D2B` | the Privy embedded wallet — **no vault on v2 yet**, holds $20 test USDC + 0.3 HYPE | **Yes, and this is the Privy beat:** sign in with email, walk onboarding, and make the deposit *from the Privy wallet itself*. That closes the one gap in the v1 evidence (the v1 vault was funded by another address) |
 | `0x05a7a130869a793719BB6B341009ea3B70588DCb` | $0 balance, floor $6,000 | **No.** The floor exceeds anything you can deposit and lowering it waits 24 hours. This is the funder and the registered Hyperliquid destination, not a vault to demo |
 
@@ -144,6 +145,18 @@ but empty dashboard that looks like a bug.
 SHIELD_PORT=8788 bun run server:evm    # indexer + monitor + relayer + API on :8788
 bun run dev:app:hyperevm               # http://localhost:5174
 ```
+
+**The REDUCED beat (the strongest 36 seconds, `docs/internal/research/I-wow-judge.md`).**
+On the demo vault once NORMAL: release $5 (allowed; `cast call … instantTopUp` returns `0x`),
+run `EVM_EXECUTION_KEY=<execution> bun run scripts/hyperevm-losing-trade.ts 3.5 0 30` so the
+trading account realises a loss above the private $3 threshold but below the $7 public trigger
+(watch the printed realised figure; stop early if it nears $7), then
+`cre workflow simulate shield-risk --target evm-settings … '{"vault":"0x9872f09D…"}'`. The enclave
+logs `decision=reduced` and a relay hash; `currentTier` reads 1; the same $5 call now reverts
+`VelocityThresholdExceeded` (`0x54debb02`) and a $0 … $0 release under the $5 budget still
+returns `0x`. Say "the reload budget changed" — never "permissions" or "signing authority".
+Trader-sized numbers need the Hyperliquid testnet drip (app.hyperliquid-testnet.xyz/drip with
+the mainnet-active deployer) and `scripts/hyperevm-bridge.ts`; test USDC is exhausted today.
 
 **Filming the cooldown needs a fresh loss.** A verdict only lands when there is
 one, and nonce 1 is already consumed on both the demo vault and the CRE vault
@@ -233,10 +246,12 @@ Graph table, last row) and `docs/SUBMISSION.md`.
 
 ## Done since the last pass (so you do not redo it)
 
-- The three v1 contract defects are **fixed**: `ShieldVault.sol` v2 is deployed
-  at `0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006` (block 63626253, `VERSION()`
-  = 2), `contracts/test/FixedDefects.t.sol` pins the fixes, and every config,
-  filter and document points at v2. v1 stays on chain as history.
+- **v3 with the risk ladder is deployed** at `0xDaA8B6a85391d54397c3847F006a49A16d0F37b3`
+  (block 63634061); a Sepolia twin (`0xf1ef03Ea…`) gives The Graph real rows; the enclave
+  moved a live vault to REDUCED against a private ladder (`docs/evidence/cre-simulate.txt`).
+  The dynamic trading-authority ratchet was researched and found impossible for a
+  self-custodial trader (`docs/ARCHITECTURE_DECISION.md`, addendum); nothing claims it.
+- The three v1 contract defects are **fixed** (v2), pinned in `contracts/test/FixedDefects.t.sol`.
 - The demo vault and the CRE vault were re-created on v2; a real $7.12 loss on
   Hyperliquid testnet drove a CRE-signed verdict on-chain
   (`docs/evidence/cre-simulate.txt`, tx `0xa02e2fcb…`).

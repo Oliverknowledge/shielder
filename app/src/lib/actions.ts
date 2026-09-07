@@ -35,6 +35,8 @@ export const ERROR_COPY: Record<ShieldErrorName, string> = {
   VerdictWrongBinding: "That verdict is for a different vault.",
   VerdictReplayed: "That verdict was already used.",
   VerdictBelowLossTrigger: "The attested loss is below your trigger, so the vault rejected it.",
+  LadderMismatch: "That verdict was computed against a different ladder than the one on chain.",
+  NoLadder: "You have no bad-session plan committed yet.",
   NotATightening: "That change would weaken protection, so it can't apply instantly.",
   NotALoosening: "That change strengthens protection; apply it instantly instead.",
   PauseTooLong: "Pauses are capped at 30 days.",

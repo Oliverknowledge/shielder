@@ -1,7 +1,14 @@
 # Demo script — 2–4 minute submission video
 
-One take, HyperEVM testnet (chain 998), the deployed `ShieldVault.sol` v2 at
-`0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006`. Everything on screen is a real
+One take, HyperEVM testnet (chain 998), the deployed `ShieldVault.sol` v3 at
+`0xDaA8B6a85391d54397c3847F006a49A16d0F37b3`.
+
+**New in v3, and the beat to build the take around:** the REDUCED rung. The
+shot list, the exact `cast call` that goes from `0x` to
+`VelocityThresholdExceeded` (`0x54debb02`) and back to `0x` for a smaller
+amount, and what must not be said are in
+`docs/internal/research/I-wow-judge.md`; the on-set recipe is in
+`HUMAN_ACTIONS.md` #3. Everything on screen is a real
 transaction on a real chain. Target length **3:25**; the hard ceiling is 4:00.
 
 The one thing to keep saying: **Shield is not where you trade.** The user

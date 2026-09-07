@@ -2,7 +2,7 @@ import { createPublicClient, createWalletClient, custom, decodeFunctionData, htt
 import { privateKeyToAccount } from "viem/accounts";
 import { MOCK_CORE_DEPOSIT_ABI } from "../../../client/abi/MockCoreDepositWallet";
 import { MOCK_USDC_ABI } from "../../../client/abi/MockUSDC";
-import { evmCalls, readProposals, readRegistry, readUsdcAllowance, readUsdcBalance, readVault, readVaultBundle, shieldErrorFromRevert, supportsBundledReads, viemChain, type EvmConfig } from "../../../client/evm";
+import { evmCalls, readLadderProposal, readProposals, readRegistry, readUsdcAllowance, readUsdcBalance, readVault, readVaultBundle, shieldErrorFromRevert, supportsBundledReads, viemChain, type EvmConfig } from "../../../client/evm";
 import { Route } from "../../../client/views";
 import { ShieldTxError, type Actions, type Engine, type PreparedTx, type Signer, type VaultSnapshot } from "./engine";
 
@@ -142,7 +142,8 @@ export function evmEngine(cfg: EvmEngineConfig, demoKey: () => Hex | null, provi
           return { owner: e.owner, label: e.label, kind: e.kind, route: e.route, active: e.active, usdc };
         })
       );
-      return { vault: base.vault, balance: base.balance, proposals: base.proposals, registry: base.registry, wallets, walletUsdc };
+      const ladderProposal = base.vault ? await rpc(() => readLadderProposal(pub, cfg, authority)).catch(() => null) : null;
+      return { vault: base.vault, balance: base.balance, proposals: base.proposals, registry: base.registry, wallets, walletUsdc, ladderProposal };
     },
     actions(signer): Actions {
       const authority = signer.address as Address;
@@ -155,6 +156,11 @@ export function evmEngine(cfg: EvmEngineConfig, demoKey: () => Hex | null, provi
         tighten: (t) => wrap(evmCalls.tighten(cfg, t)),
         proposeLoosen: (l) => wrap(evmCalls.proposeLoosen(cfg, l)),
         executeRuleChange: () => wrap(evmCalls.executeRuleChange(cfg)),
+        commitLadder: (h, allowance, reset) => wrap(evmCalls.commitLadder(cfg, h as Hex, allowance, reset)),
+        setReducedTier: () => wrap(evmCalls.setReducedTier(cfg)),
+        proposeLadderChange: (h, allowance, reset, resetTier) => wrap(evmCalls.proposeLadderChange(cfg, h as Hex, allowance, reset, resetTier)),
+        executeLadderChange: () => wrap(evmCalls.executeLadderChange(cfg)),
+        cancelLadderChange: () => wrap(evmCalls.cancelLadderChange(cfg)),
         cancelProposal: (c) => wrap(evmCalls.cancelProposal(cfg, c)),
         instantTopUp: (d, amt) => wrap(evmCalls.instantTopUp(cfg, d as Address, amt)),
         proposeTopUp: (d, amt) => wrap(evmCalls.proposeTopUp(cfg, d as Address, amt)),

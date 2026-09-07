@@ -18,7 +18,8 @@ import type { Hex } from "viem";
 
 if ((process.env.EVM_CHAIN_ID || "998") === "999") { console.error("refusing: this script trades real money on mainnet"); process.exit(2); }
 const TARGET = Number(process.argv[2] ?? 3.5);
-const FUND = Number(process.argv[3] ?? 85);
+const FUND = Number(process.argv[3] ?? 85); // 0 = trade with what the account already holds (e.g. what the vault released)
+const ROUNDS = Number(process.argv[4] ?? 6);
 const funderKey = process.env.EVM_DEPLOYER_KEY as Hex | undefined;
 const keys = JSON.parse(readFileSync(`${process.env.SHIELD_STATE_DIR || ".shield"}/hyperevm-keys.json`, "utf8")) as { execution: Hex };
 const venueKey = (process.env.EVM_EXECUTION_KEY as Hex | undefined) ?? keys.execution;
@@ -40,7 +41,7 @@ const realised = async () => {
 // 1. fund the trading account's perps balance from the funder's spot USDC
 const perps = async (u: `0x${string}`) => Number((await info.clearinghouseState({ user: u })).withdrawable);
 console.log(`venue ${venueAcct.address} perps: $${await perps(venueAcct.address)}`);
-if ((await perps(venueAcct.address)) < FUND * 0.9) {
+if (FUND > 0 && (await perps(venueAcct.address)) < FUND * 0.9) {
   // The funder is a unified account: legacy usdSend/usdClassTransfer are disabled,
   // so move spot USDC straight into the trading account's perps balance with sendAsset.
   const spotMeta = await info.spotMeta();
@@ -58,10 +59,11 @@ const { szDecimals, maxLeverage } = meta.universe[idx];
 const lev = Math.min(40, maxLeverage);
 await venue.updateLeverage({ asset: idx, isCross: true, leverage: lev });
 const px5 = (p: number) => Number(p.toPrecision(5)).toString();
-for (let i = 0; i < 6; i++) {
+for (let i = 0; i < ROUNDS; i++) {
   const mid = Number((await info.allMids())["BTC"]);
   const margin = (await perps(venueAcct.address)) * 0.9;
   const size = Number((Math.max(0.0001, (margin * lev) / mid)).toFixed(szDecimals));
+  if (size * mid < 10) { console.log(`notional $${(size * mid).toFixed(2)} is under the venue's $10 minimum; stopping`); break; }
   const buy = await venue.order({ orders: [{ a: idx, b: true, p: px5(mid * 1.01), s: String(size), r: false, t: { limit: { tif: "Ioc" } } }], grouping: "na" });
   await sleep(800);
   const sell = await venue.order({ orders: [{ a: idx, b: false, p: px5(mid * 0.99), s: String(size), r: true, t: { limit: { tif: "Ioc" } } }], grouping: "na" });

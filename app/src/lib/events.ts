@@ -102,7 +102,21 @@ export function describeEvent(e: EventJson, labelOf: (owner: string) => string, 
       return { title: d.uninstall ? "Exit from Shield scheduled" : `Withdrawal of ${usd(s("amount"))} scheduled`, body: `Executes ${dateTime(n("executeAfter"))} · every rule stays in force until then`, tone: "pending", category: "Scheduled" };
     case "FullExitExecuted":
       return { title: `Exited ${usd(s("amount"))} to ${labelOf(s("destinationOwner"))}`, body: "The waiting period passed", tone: "neutral", category: "Exit", amount: { text: `−${usd(s("amount"))}`, tone: "neutral" } };
+    case "RiskTierChanged":
+      return {
+        title: n("tier") === 1 ? "Moved to REDUCED" : n("tier") === 2 ? "Moved to LOCKED" : "Back to NORMAL",
+        body: `${s("byVerifier") === "true" ? "By your monitor, against the plan you wrote" : "By you"}${n("until") > 0 ? ` · until ${clockTime(n("until"), now)}` : ""}`,
+        tone: n("tier") === 0 ? "protect" : "blocked",
+        category: "Plan",
+      };
+    case "LadderCommitted":
+      return { title: "Bad-session plan committed", body: `REDUCED budget ${usd(s("reducedVelocityThreshold"))} a day, resets after ${Math.round(n("tierResetSecs") / 3600)}h · the drawdown threshold stays private (hash on chain)`, tone: "protect", category: "Plan" };
+    case "LadderChangeProposed":
+      return { title: s("resetTier") === "true" ? "Asked to leave REDUCED early" : "Plan change scheduled", body: `Review after ${clockTime(n("executeAfter"), now)}; nothing applies until you confirm`, tone: "pending", category: "Plan" };
+    case "LadderChangeExecuted":
+      return { title: s("resetTier") === "true" ? "Back to NORMAL, confirmed" : "Plan change applied", body: "You confirmed it after the wait", tone: "protect", category: "Plan" };
     case "RiskVerdictApplied":
+      if (n("tier") === 1) return { title: "Your plan moved you to REDUCED", body: `Verdict #${s("nonce")} from your monitor · the drawdown that did it stays private`, tone: "blocked", category: "Plan" };
       return {
         title: "Loss rule paused new capital",
         // "attested", not "realised". A verdict is a permanent record of what the

@@ -12,7 +12,8 @@ import { Link } from "react-router-dom";
 import { useShield, API_URL, IS_MAINNET } from "../lib/shield";
 import { CapitalBar, Countdown, Dot, Field, Icon, MoneyInput, Pill, Sheet, Skeleton, useToast, type Tone } from "../components/ui";
 import { usd, clockTime, hoursLabel, timeOnly, spanAdjective } from "../lib/format";
-import { evaluateTopUp, rollingVelocity, ProposalKind, COOLDOWN_REASON, usdcToRaw, type ProposalView } from "../../../client/views";
+import { evaluateTopUp, effectiveVelocityThreshold, rollingVelocity, ProposalKind, COOLDOWN_REASON, usdcToRaw, type ProposalView } from "../../../client/views";
+import { tierInForce } from "../../../client/ladder";
 import { useAction } from "../lib/actions";
 import { getJson } from "../lib/api";
 import { describeLoosen } from "../lib/rules";
@@ -71,7 +72,9 @@ export function Overview() {
   const byRule = vault.cooldownReason === COOLDOWN_REASON.RISK_VERDICT;
   const bankroll = venue.bankroll ?? 0n;
   const velocity = rollingVelocity(vault, BigInt(now));
-  const remainingToday = vault.velocityThreshold > velocity ? vault.velocityThreshold - velocity : 0n;
+  const rung = tierInForce(vault, now);
+  const budget = effectiveVelocityThreshold(vault, BigInt(now));
+  const remainingToday = budget > velocity ? budget - velocity : 0n;
   const floorShown = vault.protectedFloor < balance ? vault.protectedFloor : balance;
   const headroom = balance - floorShown;
   const canMove = remainingToday < headroom ? remainingToday : headroom;
@@ -85,9 +88,11 @@ export function Overview() {
   const lossToday = server && Number(server.assessment.realizedLossUsdc) > 0 ? server.assessment.realizedLossUsdc : null;
   const labelOf = (owner: string) => wallets.find((w) => w.owner === owner)?.label ?? `${owner.slice(0, 4)}…`;
 
-  const approaching = !cooldownActive && vault.velocityThreshold > 0n && remainingToday * 4n <= vault.velocityThreshold;
+  const approaching = !cooldownActive && budget > 0n && remainingToday * 4n <= budget;
   const status: { tone: Tone; label: string } = cooldownActive
     ? { tone: "blocked", label: byRule ? "New capital paused" : "Paused by you" }
+    : rung === 1
+      ? { tone: "pending", label: "Reduced by your plan" }
     : approaching
       ? { tone: "pending", label: remainingToday === 0n ? "Daily limit reached" : "Approaching your limit" }
       : { tone: "protect", label: "Within your plan" };
@@ -124,9 +129,21 @@ export function Overview() {
     // balance === 0 and balance <= floor both give zero headroom, but they are
     // very different situations and saying "$X stays put" about an empty
     // treasury is simply false.
+    if (rung === 1) {
+      return {
+        tone: "pending" as const,
+        icon: "clock" as const,
+        text: (
+          <>
+            <b>Reduced by your plan</b> · release budget is {usd(budget)} until {clockTime(Number(vault.tierUntil), now)}, {usd(remainingToday)} of it left. What is already in {venue.label} is untouched.
+          </>
+        ),
+        right: null,
+      };
+    }
     if (balance === 0n) return { tone: "neutral" as const, icon: "clock" as const, text: <>Your treasury is empty. Deposit before anything can be released.</>, right: <button className="btn btn-sm btn-secondary" onClick={() => setDepositOpen(true)}>Deposit</button> };
     if (headroom === 0n) return { tone: "neutral" as const, icon: "lock" as const, text: <>All <b>{usd(balance)}</b> of it sits at or below your <b>{usd(vault.protectedFloor)}</b> floor, so none of it can be released.</>, right: null };
-    if (remainingToday === 0n) return { tone: "neutral" as const, icon: "clock" as const, text: <>Today's <b>{usd(vault.velocityThreshold)}</b> limit is used up. Capacity returns as the 24-hour window rolls.</>, right: null };
+    if (remainingToday === 0n) return { tone: "neutral" as const, icon: "clock" as const, text: <>Today's <b>{usd(budget)}</b> limit is used up. Capacity returns as the 24-hour window rolls.</>, right: null };
     return {
       tone: "protect" as const,
       icon: "check" as const,
