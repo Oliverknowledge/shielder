@@ -5,7 +5,7 @@ import { usd, ago, dateTime, short, timeOnly, dayLabel, hoursLabel } from "../li
 import { OwnerKind } from "../../../client/views";
 import { getJson, type EvidenceJson, type HlProfileJson } from "../lib/api";
 import { usePrefs } from "../lib/prefs";
-import { VENUE_NAME, HL_NET } from "../lib/venue";
+import { VENUE_NAME, HL_NET, useVenue } from "../lib/venue";
 import { Link } from "react-router-dom";
 
 const KIND_LABEL: Record<string, string> = {
@@ -21,13 +21,21 @@ export function Behaviour() {
   const { server, serverError, serverLoading, wallets, vault, now, signer, chain } = useShield();
   const toast = useToast();
   const [prefs] = usePrefs(signer?.address ?? null);
+  const venue = useVenue();
+  // The one genuinely personal thing in the product — how long this trader
+  // waits before reloading after a loss, how many of their worst sessions
+  // involved a second one — was gated on a localStorage key written once during
+  // onboarding. Sign in on another device, or clear storage, and the whole
+  // section silently vanished. The address is on chain: it is the registered
+  // execution destination, which is the only place Shield can release to.
+  const hlAddress = venue.address ?? prefs.hyperliquidAddress ?? null;
   const [hl, setHl] = useState<HlProfileJson | null>(null);
   useEffect(() => {
     let cancelled = false;
-    if (!prefs.hyperliquidAddress) { setHl(null); return; }
-    getJson<HlProfileJson>(`${API_URL}/api/hyperliquid/${prefs.hyperliquidAddress}?network=${HL_NET}`).then((p) => { if (!cancelled) setHl(p); }).catch(() => null);
+    if (!hlAddress) { setHl(null); return; }
+    getJson<HlProfileJson>(`${API_URL}/api/hyperliquid/${hlAddress}?network=${HL_NET}`).then((p) => { if (!cancelled) setHl(p); }).catch(() => null);
     return () => { cancelled = true; };
-  }, [prefs.hyperliquidAddress]);
+  }, [hlAddress]);
   const [evidence, setEvidence] = useState<EvidenceJson | null>(null);
   const [showAllFlows, setShowAllFlows] = useState(false);
   const labelOf = (owner: string) => wallets.find((w) => w.owner === owner)?.label ?? short(owner);
@@ -68,6 +76,8 @@ export function Behaviour() {
   const denom = Number(sent > returned ? sent : returned) || 1;
   const w = (x: bigint) => `${(Number(x) / denom) * 100}%`;
   const loss24 = BigInt(server.assessment.realizedLossUsdc);
+  const watchedFor = vault ? Math.max(0, now - Number(vault.createdAt)) : 0;
+  const releases30d = p.windows.d30.topUpCount;
 
   const openEvidence = async (hash: string) => {
     try {
@@ -156,12 +166,17 @@ export function Behaviour() {
           )}
           <div className="notice">
             <Dot tone={p.reloadsAfterLoss7d > 0 ? "blocked" : "protect"} />
-            <span>{p.reloadsAfterLoss7d > 0 ? `You reloaded within 3 hours of a loss ${p.reloadsAfterLoss7d} time${p.reloadsAfterLoss7d === 1 ? "" : "s"} this week.` : "No reloads within 3 hours of a loss this week."}</span>
+            {/* A clean bill of health for a week that has not happened yet is
+                the fastest way to make every other number here look invented. */}
+            <span>{p.reloadsAfterLoss7d > 0 ? `You reloaded within 3 hours of a loss ${p.reloadsAfterLoss7d} time${p.reloadsAfterLoss7d === 1 ? "" : "s"} this week.` : watchedFor < 7 * 86400 ? `No reloads within 3 hours of a loss so far. Shield has been watching for ${hoursLabel(watchedFor)}.` : "No reloads within 3 hours of a loss this week."}</span>
           </div>
           {Number(p.medianTopUp30d) > 0 && (
             <div className="notice">
               <Dot tone="neutral" />
-              <span>Your typical release is {usd(p.medianTopUp30d)}. {usd(p.velocity24h)} went to trading in the last 24 hours.</span>
+              {/* "Typical" from a sample of one is not an observation, and
+                  comparing that median to the same single release makes it a
+                  tautology dressed as insight. */}
+              <span>{releases30d >= 3 ? <>Your typical release is {usd(p.medianTopUp30d)}. {usd(p.velocity24h)} went to trading in the last 24 hours.</> : <>{usd(p.velocity24h)} went to trading in the last 24 hours. That is release {releases30d} — not enough yet to say what is typical for you.</>}</span>
             </div>
           )}
         </div>
