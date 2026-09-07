@@ -78,6 +78,8 @@ export function Behaviour() {
   const loss24 = BigInt(server.assessment.realizedLossUsdc);
   const watchedFor = vault ? Math.max(0, now - Number(vault.createdAt)) : 0;
   const releases30d = p.windows.d30.topUpCount;
+  /** A verdict that attested more than the current rule would. */
+  const supersededVerdict = server.verdicts.find((v) => BigInt(v.verdict.realizedLossUsdc) > loss24) ?? null;
 
   const openEvidence = async (hash: string) => {
     try {
@@ -197,6 +199,16 @@ export function Behaviour() {
                 <button className="btn btn-ghost btn-sm" onClick={() => void openEvidence(v.verdict.evidenceHash)}>Evidence</button>
               </div>
             ))}
+            {/* A verdict is permanent once it is on chain, but the rule that
+                produced it is not. Without this, the screen shows "$69.50
+                attested" one inch above "$0, below your trigger" and looks like
+                it cannot count. Saying which rule armed it is both the honest
+                explanation and a better answer than the contradiction. */}
+            {supersededVerdict && (
+              <p className="tiny muted" style={{ marginTop: 10 }}>
+                Verdicts stay on chain once applied, and the pause runs its full length. #{supersededVerdict.verdict.nonce} attested {usd(supersededVerdict.verdict.realizedLossUsdc)} under Shield's earlier rule, which counted money still sitting at the venue as a loss. It doesn't any more: where {VENUE_NAME} answers, its own settlement decides.
+              </p>
+            )}
           </div>
         )}
       </section>

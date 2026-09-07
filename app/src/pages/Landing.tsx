@@ -47,7 +47,7 @@ function Hero() {
       </div>
       <div className="l-wrap">
         <motion.p className="l-eyebrow" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2, duration: 0.8 }}>
-          A financial control layer for people who trade
+          The account that says no to the top-up after the loss
         </motion.p>
         <motion.h1 className="l-h1" style={{ marginTop: 18, maxWidth: "12ch" }} initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.9, ease: [0.2, 0.8, 0.2, 1] }}>
           Crypto gives you freedom.
@@ -203,7 +203,7 @@ function Reach({ reduce }: { reduce: boolean }) {
             <h2 className="l-h2" style={{ maxWidth: "16ch" }}>
               Calm you sets the limits. <span className="l-serif" style={{ fontStyle: "italic", color: "var(--sage)" }}>Tilted you can't instantly undo them.</span>
             </h2>
-            <p className="l-lead" style={{ marginTop: 20 }}>$8,500 stays exactly where calm you put it. Not a warning, not a nudge: the money cannot move.</p>
+            <p className="l-lead" style={{ marginTop: 20 }}>$8,500 stays exactly where calm you put it. Not a warning, not a nudge: it doesn't move tonight. Getting it to your own safe wallet is always open; feeding the trade is not.</p>
           </motion.div>
         </div>
       </motion.div>
@@ -245,8 +245,8 @@ function Modes() {
           {[
             ["\"I'll make it back.\"", "Revenge trading"],
             ["\"Once I've started, I keep adding.\"", "Repeated top-ups"],
-            ["\"Send it now, the window closes.\"", "Rushed transfers"],
-            ["\"Move it to this recovery address.\"", "Scam urgency"],
+            ["\"I'll size up to get it back faster.\"", "Escalating after a loss"],
+            ["\"Just tonight, then I'll stop.\"", "The rule that keeps getting an exception"],
           ].map(([q, k]) => (
             <motion.div key={k} className="l-mode" initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-10%" }} transition={{ duration: 0.5 }}>
               <div className="q">{q}</div>
