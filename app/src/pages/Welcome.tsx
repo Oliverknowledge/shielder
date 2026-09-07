@@ -71,7 +71,7 @@ export function Welcome() {
       </section>
 
       <div className="notice-list" style={{ margin: "24px 4px 28px" }}>
-        <div className="notice"><Dot tone="protect" /><span><b>Real enforcement.</b> Not a notification, not a setting. When a top-up is blocked, the money cannot move.</span></div>
+        <div className="notice"><Dot tone="protect" /><span><b>Real enforcement.</b> Not a notification, not a setting. When a top-up is blocked, the vault refuses it — and no one at Shield can make an exception.</span></div>
         <div className="notice"><Dot tone="pending" /><span><b>Tighten fast, loosen slowly.</b> Making yourself safer is instant. Making yourself less safe waits 24 hours.</span></div>
         <div className="notice"><Dot tone="bankroll" /><span><b>Your history, your rules.</b> Shield watches what actually came back from your trading wallet and pauses reloads after real losses.</span></div>
       </div>

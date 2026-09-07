@@ -277,7 +277,7 @@ export function Setup() {
         {step === 1 && (
           <div className="stack">
             <div className="page-head" style={{ marginBottom: 0 }}>
-              <h1>What gets you into trouble?</h1>
+              <h1>What do you want Shield to stop?</h1>
               <p>Pick anything that's true. Shield proposes your rules from it. Nothing here is a diagnosis; it's what you already know about yourself when you're calm.</p>
             </div>
             <div className="stack-s">
@@ -337,7 +337,7 @@ export function Setup() {
             </div>
 
             <div>
-              <h2 className="title">Your mandate</h2>
+              <h2 className="title">Your rules</h2>
               <p className="dim" style={{ marginTop: 4 }}>Proposed from your bankroll{prefs.troubles.length ? " and what you told us" : ""}. Edit anything.</p>
             </div>
             <div className="card stack">
