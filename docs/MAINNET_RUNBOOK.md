@@ -41,7 +41,7 @@ bun run scripts/hyperevm-bridge.ts USDC <amount>
 # 2. Big blocks: the deployment does not fit a small one
 bun run hyperevm:big-blocks on
 
-cd contracts && forge create src/ShieldVault.sol:ShieldVault \
+cd contracts && forge create src/ShieldVault.sol:ShieldVault \   # v2: fits EIP-170 with optimizer_runs = 1 (foundry.toml)
   --rpc-url $EVM_RPC_URL --private-key $EVM_DEPLOYER_KEY \
   --gas-limit 6000000 --legacy --broadcast \
   --constructor-args 0xb88339CB7199b77E23DB6E890353E22632Ba630f \
@@ -64,10 +64,11 @@ vault:
 
 1. The `blockFilter` query strings and the `params:` block must name the
    mainnet vault and `0xb88339CB…630f` instead of the testnet addresses.
-2. **`initialBlock` on every module must be the vault's deploy block.** They
-   are currently `0`, which makes a live run try to process 45 million blocks
-   to build its stores — the CLI refuses with a `--limit-processed-blocks`
-   error, and rightly so.
+2. **`initialBlock` on every module must be the vault's deploy block.** It is
+   currently a recent mainnet block (45,260,000, one YAML anchor) so the
+   testnet-era package still makes a valid mainnet request; starting from `0`
+   would make a live run try to process 45 million blocks to build its stores
+   and the CLI refuses with a `--limit-processed-blocks` error, rightly so.
 
 With those set, `scripts/substreams-live.sh hyperevm` streams the real vault,
 and the server flips `source.mode` to `substreams` because `SUBSTREAMS_ACTIVE`

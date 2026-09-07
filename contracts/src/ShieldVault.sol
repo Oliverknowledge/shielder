@@ -42,6 +42,14 @@ contract ShieldVault {
     uint64 public constant MIN_FULL_EXIT_COOLDOWN_SECS = 1 hours;
     uint64 public constant MAX_LOSS_COOLDOWN_SECS = 30 days;
     uint64 public constant MAX_SELF_PAUSE_SECS = 30 days;
+    // v2: every delay the user can set on themselves is bounded, so "you can
+    // always leave" cannot be broken by a single tighten() call.
+    uint64 public constant MAX_TOP_UP_COOLDOWN_SECS = 30 days;
+    uint64 public constant MAX_LOOSEN_COOLDOWN_SECS = 30 days;
+    uint64 public constant MAX_FULL_EXIT_COOLDOWN_SECS = 30 days;
+    /// @dev Contract revision. v1 (HyperEVM testnet 0xcdB6d631…) had three
+    ///      velocity/bound defects, pinned in test/FixedDefects.t.sol.
+    uint8 public constant VERSION = 2;
     uint64 public constant VERDICT_CLOCK_SKEW_SECS = 5 minutes;
     uint256 public constant BPS_DENOM = 10_000;
 
@@ -368,9 +376,21 @@ contract ShieldVault {
             if (p.lossCooldownSecs > MAX_LOSS_COOLDOWN_SECS) revert InvalidParameter();
             v.lossCooldownSecs = p.lossCooldownSecs; changed = true;
         }
-        if (p.hasTopUpCooldownSecs) { if (p.topUpCooldownSecs < v.topUpCooldownSecs) revert NotATightening(); v.topUpCooldownSecs = p.topUpCooldownSecs; changed = true; }
-        if (p.hasLoosenCooldownSecs) { if (p.loosenCooldownSecs < v.loosenCooldownSecs) revert NotATightening(); v.loosenCooldownSecs = p.loosenCooldownSecs; changed = true; }
-        if (p.hasFullExitCooldownSecs) { if (p.fullExitCooldownSecs < v.fullExitCooldownSecs) revert NotATightening(); v.fullExitCooldownSecs = p.fullExitCooldownSecs; changed = true; }
+        if (p.hasTopUpCooldownSecs) {
+            if (p.topUpCooldownSecs < v.topUpCooldownSecs) revert NotATightening();
+            if (p.topUpCooldownSecs > MAX_TOP_UP_COOLDOWN_SECS) revert InvalidParameter();
+            v.topUpCooldownSecs = p.topUpCooldownSecs; changed = true;
+        }
+        if (p.hasLoosenCooldownSecs) {
+            if (p.loosenCooldownSecs < v.loosenCooldownSecs) revert NotATightening();
+            if (p.loosenCooldownSecs > MAX_LOOSEN_COOLDOWN_SECS) revert InvalidParameter();
+            v.loosenCooldownSecs = p.loosenCooldownSecs; changed = true;
+        }
+        if (p.hasFullExitCooldownSecs) {
+            if (p.fullExitCooldownSecs < v.fullExitCooldownSecs) revert NotATightening();
+            if (p.fullExitCooldownSecs > MAX_FULL_EXIT_COOLDOWN_SECS) revert InvalidParameter();
+            v.fullExitCooldownSecs = p.fullExitCooldownSecs; changed = true;
+        }
         if (p.hasPauseTopUpsUntil) {
             if (p.pauseTopUpsUntil <= nowTs) revert NotATightening();
             if (p.pauseTopUpsUntil <= v.cooldownUntil) revert NotATightening();
@@ -456,7 +476,13 @@ contract ShieldVault {
         Vault storage v = _own();
         Proposal storage pr = proposals[msg.sender][category];
         if (!pr.exists) revert NoPendingProposal();
-        if (pr.action == ACTION_TOP_UP) _refundVelocity(v, pr.amount, pr.reservedBucketIndex);
+        if (pr.action == ACTION_TOP_UP) {
+            // v2: the reservation is refunded only if the bucket it was made in
+            // is still the same 4h window. After a full lap the bucket has been
+            // recycled and holds unrelated spend, which must not be erased.
+            _rollBuckets(v, uint64(block.timestamp));
+            if (_reservationStillCurrent(v, pr.reservedBucketIndex, pr.createdAt)) _refundVelocity(v, pr.amount, pr.reservedBucketIndex);
+        }
         uint64 nonce = pr.nonce;
         delete proposals[msg.sender][category];
         emit ProposalCancelled(msg.sender, category, nonce);
@@ -705,15 +731,27 @@ contract ShieldVault {
         if (elapsed == 0) return;
         if (elapsed >= NUM_VELOCITY_BUCKETS) {
             for (uint256 i = 0; i < NUM_VELOCITY_BUCKETS; i++) v.velocityBuckets[i] = 0;
-            elapsed = uint64(NUM_VELOCITY_BUCKETS);
         } else {
             for (uint64 i = 0; i < elapsed; i++) {
                 uint256 idx = (uint256(v.currentBucketIndex) + 1 + i) % NUM_VELOCITY_BUCKETS;
                 v.velocityBuckets[idx] = 0;
             }
-            v.currentBucketIndex = uint8((uint256(v.currentBucketIndex) + elapsed) % NUM_VELOCITY_BUCKETS);
         }
+        // v2: the ring pointer and the window start always advance by the real
+        // number of elapsed buckets. v1 clamped `elapsed` to the ring size
+        // before advancing `bucketStart`, so after an idle gap every call
+        // re-entered the long-idle branch and re-zeroed the window with no
+        // time passing in between.
+        v.currentBucketIndex = uint8((uint256(v.currentBucketIndex) + elapsed) % NUM_VELOCITY_BUCKETS);
         v.bucketStart += elapsed * BUCKET_LEN_SECS;
+    }
+
+    /// @dev True if bucket `index` still represents the 4h window in which a
+    ///      reservation made at `reservedAt` was placed. Call after _rollBuckets.
+    function _reservationStillCurrent(Vault storage v, uint8 index, uint64 reservedAt) internal view returns (bool) {
+        uint256 behind = (uint256(v.currentBucketIndex) + NUM_VELOCITY_BUCKETS - (uint256(index) % NUM_VELOCITY_BUCKETS)) % NUM_VELOCITY_BUCKETS;
+        uint64 windowStart = v.bucketStart - uint64(behind) * BUCKET_LEN_SECS;
+        return reservedAt >= windowStart && reservedAt < windowStart + BUCKET_LEN_SECS;
     }
 
     function _velocitySum(Vault storage v) internal view returns (uint64 s) {

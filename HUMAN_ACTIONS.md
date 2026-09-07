@@ -98,7 +98,7 @@ nothing else in the pipeline changes:
 
 1. The two `evt_addr` filter strings and the `params:` block name the mainnet
    vault and `0xb88339CB…630f` instead of the testnet addresses.
-2. `initialBlock` (currently `45220000`) becomes the vault's deploy block.
+2. `initialBlock` (currently `45260000`, a recent mainnet block behind one YAML anchor) becomes the vault's deploy block.
 
 ```bash
 bun run substreams:hyperevm                      # expect flow rows, not just "Completed successfully"
@@ -135,8 +135,9 @@ but empty dashboard that looks like a bug.
 
 | Vault authority | State | Use it? |
 |---|---|---|
-| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | $600 balance, floor $500, $100/24h | **Yes** — key in `.shield/hyperevm-keys.json` under `authority` |
-| `0x83144b99D89947703714Ee9aA3A3614985041D2B` | $45, floor $10 — the Privy embedded wallet | Yes, for the Privy beat: sign in with email, not a pasted key |
+| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | v2: $70 balance, floor $50, $10/24h, $3 loss trigger, 12h; verdict nonce 1 unused | **Yes** — key in `.shield/hyperevm-keys.json` under `authority` |
+| `0x751D1e26d79FeffE95F8a8662aB7A022780ED023` | v2: $6 balance, in a 12h loss cooldown from the CRE-signed verdict (until 1788818471) | Only to show a vault already in cooldown; nonce 1 is consumed |
+| `0x83144b99D89947703714Ee9aA3A3614985041D2B` | the Privy embedded wallet — **no vault on v2 yet**, holds $20 test USDC + 0.3 HYPE | **Yes, and this is the Privy beat:** sign in with email, walk onboarding, and make the deposit *from the Privy wallet itself*. That closes the one gap in the v1 evidence (the v1 vault was funded by another address) |
 | `0x05a7a130869a793719BB6B341009ea3B70588DCb` | $0 balance, floor $6,000 | **No.** The floor exceeds anything you can deposit and lowering it waits 24 hours. This is the funder and the registered Hyperliquid destination, not a vault to demo |
 
 ```bash
@@ -214,30 +215,31 @@ in #1 afterwards.
 
 ---
 
-## 6. Optional, and the best Solidity work available: fix the three defects
+## 6. Publish both Substreams packages to the registry (10 minutes, no cost)
 
-Not needed for the submission. Worth doing because you said you wanted to write
-some of the contract yourself, and because this is real work with real value
-rather than an exercise.
+The Graph's composable track names "contributing a reusable composable
+Substreams module" as in scope. Both packages already pass
+`substreams registry verify`; publishing needs a substreams.dev login, which is
+a browser step.
 
-`contracts/test/KnownDefects.t.sol` holds three failing-by-design tests that
-assert what `ShieldVault.sol` currently *does*. Each one is a bug, each one is
-disclosed in `docs/THREAT_MODEL.md`, and each one has a small, self-contained
-fix that cannot be made to the deployed contract because it is immutable:
+```bash
+substreams registry login                       # opens substreams.dev, paste the token
+cd substreams-evm && substreams registry publish shield-evm-behavioral-memory-v0.1.0.spkg && cd ..
+cd substreams     && substreams registry publish shield-behavioral-memory-v0.2.0.spkg && cd ..
+```
 
-1. `_refundVelocity` refunds into the bucket index stored at proposal time,
-   which after a full lap of the window is current again and holds unrelated
-   spend. Store the reservation's absolute timestamp and refund only if the
-   window has not rolled since.
-2. `tighten` bounds `lossCooldownSecs` and the self-pause but places no upper
-   bound on `loosenCooldownSecs` or `fullExitCooldownSecs`, so a user can lock
-   themselves out of their own exit in one instant, unconfirmed call. Add the
-   bounds.
-3. `_rollBuckets` clamps `elapsed` before using it to advance `bucketStart` and
-   never advances `currentBucketIndex` in the long-idle branch, so an idle gap
-   refunds the whole daily limit once per idle day, in a single block. Advance
-   `bucketStart` to the current window and the index with it.
+Then paste the two registry URLs into `docs/SPONSOR_INTEGRATIONS.md` (The
+Graph table, last row) and `docs/SUBMISSION.md`.
 
-The tests are already written and they describe the bug precisely. Invert each
-assertion, make it pass, and you have a v2 worth deploying. Nothing else in the
-contract needs to change.
+## Done since the last pass (so you do not redo it)
+
+- The three v1 contract defects are **fixed**: `ShieldVault.sol` v2 is deployed
+  at `0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006` (block 63626253, `VERSION()`
+  = 2), `contracts/test/FixedDefects.t.sol` pins the fixes, and every config,
+  filter and document points at v2. v1 stays on chain as history.
+- The demo vault and the CRE vault were re-created on v2; a real $7.12 loss on
+  Hyperliquid testnet drove a CRE-signed verdict on-chain
+  (`docs/evidence/cre-simulate.txt`, tx `0xa02e2fcb…`).
+- The Graph evidence was regenerated with two providers and a no-token
+  negative control (`docs/evidence/substreams-live.txt`).
+- `.env` is now gitignored (it was not) and the Graph Market JWT lives there.

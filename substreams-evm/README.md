@@ -29,6 +29,10 @@ SUBSTREAMS_API_TOKEN=<jwt> substreams run substreams.yaml map_vault_flows \
   -p map_vault_flows="evt_addr:<vault> || evt_addr:<native usdc>"
 ```
 
+The package passes `substreams registry verify`; publishing it as a reusable
+module on substreams.dev is `substreams registry login && substreams registry
+publish` from this directory (a human step: it needs a substreams.dev account).
+
 `server/evm-index.ts` consumes the same module through `@substreams/core`
 when `EVM_CHAIN_ID=999` and the JWT is set (`/api/health` → `source.mode:
 "substreams"`).

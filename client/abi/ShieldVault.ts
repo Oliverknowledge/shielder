@@ -252,6 +252,32 @@ export const SHIELD_VAULT_ABI = [
  },
  {
   "type": "function",
+  "name": "MAX_FULL_EXIT_COOLDOWN_SECS",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint64",
+    "internalType": "uint64"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "MAX_LOOSEN_COOLDOWN_SECS",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint64",
+    "internalType": "uint64"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
   "name": "MAX_LOSS_COOLDOWN_SECS",
   "inputs": [],
   "outputs": [
@@ -266,6 +292,19 @@ export const SHIELD_VAULT_ABI = [
  {
   "type": "function",
   "name": "MAX_SELF_PAUSE_SECS",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint64",
+    "internalType": "uint64"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "MAX_TOP_UP_COOLDOWN_SECS",
   "inputs": [],
   "outputs": [
    {
@@ -376,6 +415,19 @@ export const SHIELD_VAULT_ABI = [
     "name": "",
     "type": "bytes32",
     "internalType": "bytes32"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "VERSION",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint8",
+    "internalType": "uint8"
    }
   ],
   "stateMutability": "view"

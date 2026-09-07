@@ -1,25 +1,46 @@
 Chainlink CRE Confidential Workflow — cre CLI evidence
 ======================================================
 
-Captured: 2026-09-07T01:57:37Z (taken from the run's own log lines, below)
+Captured: 2026-09-07T10:02:11Z (the runs' own log lines carry their timestamps)
 CLI: CRE CLI version v1.32.0
+Contract under test: ShieldVault v2, 0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006, HyperEVM testnet (998)
+Vault: 0x751D1e26d79FeffE95F8a8662aB7A022780ED023 ($3 loss trigger, 12h pause)
 
-Two runs. The first shows the confidential handler executing. The second
-shows what happens when the secret it depends on is wrong — which is the
-part that proves the secret is load-bearing rather than merely present.
+Three runs, in the order they happened. Every one shows the same TEE banner
+("Trigger requested TEE Execution … AWS Nitro in us-west-2") and every
+evaluation line is printed from inside the confidential handler.
 
-Both use the evm-dry-settings target: identical to evm-settings but with
-deliver:false, so the workflow runs end to end without broadcasting a
-verdict to a live vault. Anyone can reproduce these without spending gas.
+RUN 1  evm-dry-settings (deliver:false). The vault had released $5 to its
+       registered Hyperliquid account and $1 had come back, but the venue's own
+       fills showed no settled loss, so the enclave correctly found nothing to
+       attest: realisedLoss24h=0, triggered=false. No signature was produced.
+RUN 2  evm-settings (deliver:true), after the trading account realised a
+       $7.12 loss on Hyperliquid testnet (two BTC round trips, fees and
+       spread; scripts/hyperevm-losing-trade.ts). The enclave read the venue's
+       fills, found realisedLoss24h=7119301 ≥ trigger=3000000, signed the
+       EIP-712 verdict with the key it holds as a secret, and Shield's relayer
+       landed it: tx 0xa02e2fcbe8770f58cb227dc0627ce32e65ca48ac6dee041b579012302d0bf9e4.
+       On-chain result: RiskVerdictApplied(nonce=1, realizedLossUsdc=7119301,
+       extended=true), cooldownUntil=1788818471, cooldownReason=2 (RISK_VERDICT).
+       A top-up simulated against the vault now reverts CooldownActive().
+RUN 3  evm-settings with the verifier secret replaced by 0xdeadbeef. The
+       workflow dies before any HTTP call, which is what proves the secret is
+       load-bearing rather than merely present.
 
-===============================================================================
-RUN 1 — the confidential handler executes
-===============================================================================
+The simulator is not real hardware; its own banner says so. Nothing here
+claims an attested enclave ran. Reproduce from the repository root with
+`bun run server:evm` running:
 
   cre workflow simulate shield-risk --target evm-dry-settings --non-interactive \
     --trigger-index 0 --http-payload '{"vault":"0x751D1e26d79FeffE95F8a8662aB7A022780ED023"}' \
     -R cre -e cre/.env
 
+(Nonce 1 is now consumed on this vault: a fresh loss is needed before the
+delivering target signs again.)
+
+===============================================================================
+RUN 1 — evm-dry-settings: the confidential handler executes, no loss to attest
+===============================================================================
 Initializing...
 Loading settings...
 Checking RPC connectivity...
@@ -28,14 +49,13 @@ Compiling workflow...
 ✓ Simulation limits enabled
   HTTP: req=120kb resp=250kb timeout=10s | ConfHTTP: req=125kb resp=500kb timeout=1m30s | Consensus obs=25kb | ChainWrite evm_report=50kb evm_gas=10000000 solana_report=265b solana_cu=300000 | WASM binary=100mb compressed=20mb
   Binary hash: 796686054503d7765a6ebff54292b1cd538a4bb21c12325aed1ac6ffe4a7862d
-  Config hash: 3ebd8bcdef81b1ad9b720373afc776f825b1b32b10b1f07d32542a3e826a4f2b
+  Config hash: 8c4129c9fc94d034604a8c23aa31ab69de550cc94a383ae2fc2506be2c16a096
 ! Secret "SHIELD_VERIFIER_SEED_B64" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_VERIFIER_SEED_B64").
 ! Secret "SHIELD_EVM_VERIFIER_KEY" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_EVM_VERIFIER_KEY").
 ✓ Parsed JSON input successfully
 ✓ Created HTTP trigger payload with 1 fields
-2026-09-07T01:57:37Z [SIMULATION] Simulator Initialized
-
-2026-09-07T01:57:37Z [SIMULATION] Running trigger trigger=http-trigger@1.0.0-alpha
+2026-09-07T10:55:31Z [SIMULATION] Simulator Initialized
+2026-09-07T10:55:31Z [SIMULATION] Running trigger trigger=http-trigger@1.0.0-alpha
 ╭────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Trigger requested TEE Execution your trigger will run in one of the following Tees:                │
 │     - AWS Nitro in us-west-2                                                                       │
@@ -45,14 +65,12 @@ Compiling workflow...
 │ They are presented in the simulator for debugging only.                                            │
 │                                                                                                    │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
-
-2026-09-07T01:57:37Z [USER LOG] Enclave evaluation: vault=0x751D1e26d79FeffE95F8a8662aB7A022780ED023 flows=3 realisedLoss24h=0 trigger=3000000 lossStreak=0 reloadsAfterLoss=0 triggered=false actionable=false
-
+2026-09-07T10:55:31Z [USER LOG] Enclave evaluation: vault=0x751D1e26d79FeffE95F8a8662aB7A022780ED023 flows=1 realisedLoss24h=0 trigger=3000000 lossStreak=0 reloadsAfterLoss=0 triggered=false actionable=false
 ✓ Workflow Simulation Result:
 {
   "actionable": false,
   "error": "",
-  "evidenceHash": "c4e84f1b94195a2b4da8f53a88e6ead6f699b02c3ab8620793904bd501fa2428",
+  "evidenceHash": "66d2b9805b8f332dc47bd0e876dc4a26a5668f60d796835d40fb3128a89ba9dc",
   "headline": "Realised losses in the last 24 hours: $0, below your $3 trigger.",
   "lossTriggerUsdc": "3000000",
   "nonce": "",
@@ -63,10 +81,8 @@ Compiling workflow...
   "vault": "0x751D1e26d79FeffE95F8a8662aB7A022780ED023",
   "verifier": ""
 }
-
-2026-09-07T01:57:37Z [SIMULATION] Execution finished signal received
-2026-09-07T01:57:37Z [SIMULATION] Skipping WorkflowEngineV2
-
+2026-09-07T10:55:31Z [SIMULATION] Execution finished signal received
+2026-09-07T10:55:31Z [SIMULATION] Skipping WorkflowEngineV2
 ╭──────────────────────────────────────────────────────╮
 │ Simulation complete! Ready to deploy your workflow?  │
 │                                                      │
@@ -74,15 +90,8 @@ Compiling workflow...
 ╰──────────────────────────────────────────────────────╯
 
 ===============================================================================
-RUN 2 — the same workflow with a bad secret
+RUN 2 — evm-settings: a real venue loss, a verdict signed in the enclave, relayed on-chain
 ===============================================================================
-
-Identical command, with SHIELD_EVM_VERIFIER_KEY set to 0xdeadbeef in the
-env file the simulator releases secrets from. The handler reads the secret
-as its first statement (io.getSecret in evaluateVault) and validates it
-before any other work, so a wrong value stops the workflow before it can
-reach the HTTP calls or the evaluation.
-
 Initializing...
 Loading settings...
 Checking RPC connectivity...
@@ -91,14 +100,13 @@ Compiling workflow...
 ✓ Simulation limits enabled
   HTTP: req=120kb resp=250kb timeout=10s | ConfHTTP: req=125kb resp=500kb timeout=1m30s | Consensus obs=25kb | ChainWrite evm_report=50kb evm_gas=10000000 solana_report=265b solana_cu=300000 | WASM binary=100mb compressed=20mb
   Binary hash: 796686054503d7765a6ebff54292b1cd538a4bb21c12325aed1ac6ffe4a7862d
-  Config hash: 3ebd8bcdef81b1ad9b720373afc776f825b1b32b10b1f07d32542a3e826a4f2b
-! Secret "SHIELD_VERIFIER_SEED_B64" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_VERIFIER_SEED_B64").
+  Config hash: 64e89bc162a3ab6e82aecf036d63fbbed1624264015b46860f7c0228e892c7ad
 ! Secret "SHIELD_EVM_VERIFIER_KEY" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_EVM_VERIFIER_KEY").
+! Secret "SHIELD_VERIFIER_SEED_B64" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_VERIFIER_SEED_B64").
 ✓ Parsed JSON input successfully
 ✓ Created HTTP trigger payload with 1 fields
-2026-09-07T01:57:41Z [SIMULATION] Simulator Initialized
-
-2026-09-07T01:57:41Z [SIMULATION] Running trigger trigger=http-trigger@1.0.0-alpha
+2026-09-07T11:01:07Z [SIMULATION] Simulator Initialized
+2026-09-07T11:01:07Z [SIMULATION] Running trigger trigger=http-trigger@1.0.0-alpha
 ╭────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Trigger requested TEE Execution your trigger will run in one of the following Tees:                │
 │     - AWS Nitro in us-west-2                                                                       │
@@ -108,23 +116,58 @@ Compiling workflow...
 │ They are presented in the simulator for debugging only.                                            │
 │                                                                                                    │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
+2026-09-07T11:01:07Z [USER LOG] Enclave evaluation: vault=0x751D1e26d79FeffE95F8a8662aB7A022780ED023 flows=3 realisedLoss24h=7119301 trigger=3000000 lossStreak=1 reloadsAfterLoss=0 triggered=true actionable=true
+2026-09-07T11:01:12Z [USER LOG] Verdict #1 relayed on-chain: 0xa02e2fcbe8770f58cb227dc0627ce32e65ca48ac6dee041b579012302d0bf9e4
+✓ Workflow Simulation Result:
+{
+  "actionable": true,
+  "error": "",
+  "evidenceHash": "0xe67adff913295afd9bdf77d22e96876f669a23696c1af30613874b14e2009373",
+  "headline": "You realised $7.119301 in losses in the last 24 hours. Your rule pauses new capital for 12h.",
+  "lossTriggerUsdc": "3000000",
+  "nonce": "1",
+  "realisedLossUsdc": "7119301",
+  "relayed": true,
+  "signature": "0xa02e2fcbe8770f58cb227dc0627ce32e65ca48ac6dee041b579012302d0bf9e4",
+  "triggered": true,
+  "vault": "0x751D1e26d79FeffE95F8a8662aB7A022780ED023",
+  "verifier": "0x4a41fa3dbc3e7129b1441441522a80bcd0e08f3f"
+}
+2026-09-07T11:01:12Z [SIMULATION] Execution finished signal received
+2026-09-07T11:01:12Z [SIMULATION] Skipping WorkflowEngineV2
+╭──────────────────────────────────────────────────────╮
+│ Simulation complete! Ready to deploy your workflow?  │
+│                                                      │
+│ Run cre account access to request deployment access. │
+╰──────────────────────────────────────────────────────╯
 
-2026-09-07T01:57:41Z [SIMULATION] Received interrupt signal, stopping execution
-2026-09-07T01:57:41Z [SIMULATION] Skipping WorkflowEngineV2
+===============================================================================
+RUN 3 — negative control: the secret replaced by 0xdeadbeef
+===============================================================================
+Initializing...
+Loading settings...
+Checking RPC connectivity...
+Compiling workflow...
+✓ Workflow compiled
+✓ Simulation limits enabled
+  HTTP: req=120kb resp=250kb timeout=10s | ConfHTTP: req=125kb resp=500kb timeout=1m30s | Consensus obs=25kb | ChainWrite evm_report=50kb evm_gas=10000000 solana_report=265b solana_cu=300000 | WASM binary=100mb compressed=20mb
+  Binary hash: 796686054503d7765a6ebff54292b1cd538a4bb21c12325aed1ac6ffe4a7862d
+  Config hash: 64e89bc162a3ab6e82aecf036d63fbbed1624264015b46860f7c0228e892c7ad
+! Secret "SHIELD_VERIFIER_SEED_B64" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_VERIFIER_SEED_B64").
+! Secret "SHIELD_EVM_VERIFIER_KEY" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_EVM_VERIFIER_KEY").
+✓ Parsed JSON input successfully
+✓ Created HTTP trigger payload with 1 fields
+2026-09-07T10:57:55Z [SIMULATION] Simulator Initialized
+2026-09-07T10:57:55Z [SIMULATION] Running trigger trigger=http-trigger@1.0.0-alpha
+╭────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Trigger requested TEE Execution your trigger will run in one of the following Tees:                │
+│     - AWS Nitro in us-west-2                                                                       │
+│ The simulator is not a real TEE, and is meant to debug.                                            │
+│ Do not use it for sensitive information.                                                           │
+│ During real execution, user logs for this trigger will not be visible, and will not leave the TEE. │
+│ They are presented in the simulator for debugging only.                                            │
+│                                                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
+2026-09-07T10:57:55Z [SIMULATION] Received interrupt signal, stopping execution
+2026-09-07T10:57:55Z [SIMULATION] Skipping WorkflowEngineV2
 ✗ workflow execution failed: EVM verifier secret must be a 0x-prefixed 32-byte private key
-
-===============================================================================
-What these show, and what they do not
-===============================================================================
-
-They show: a confidential TEE handler is registered (handlerInTee in
-cre/shield-risk/main.ts) and the CLI reports the enclave it would run in;
-the workflow reads a secret inside that handler and cannot proceed without
-a valid one; and the enclave derives the loss independently, from the
-vault's own flows and from the venue's settled PnL, then applies the user's
-own on-chain rule.
-
-They do not show a signature, because neither run is actionable: this
-vault's realised loss is zero once the venue's own settlement is taken into
-account, so there is nothing to attest. The signing path is evidenced
-separately by the verdict that is on chain — see docs/SPONSOR_INTEGRATIONS.md.

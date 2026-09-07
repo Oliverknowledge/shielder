@@ -1,7 +1,7 @@
 # Demo script — 2–4 minute submission video
 
-One take, HyperEVM testnet (chain 998), the deployed `ShieldVault.sol` at
-`0xcdB6d631A00857584e70a21d800f51C5776302Fe`. Everything on screen is a real
+One take, HyperEVM testnet (chain 998), the deployed `ShieldVault.sol` v2 at
+`0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006`. Everything on screen is a real
 transaction on a real chain. Target length **3:25**; the hard ceiling is 4:00.
 
 The one thing to keep saying: **Shield is not where you trade.** The user
@@ -225,16 +225,27 @@ cast tx 0x94960d1f937a3e36e1b16e69922a2579e77b584ed25b2ced044da7991fe889be from 
 **1:22 — the venue gives back less than it took** (~3 s, then 20–45 s of indexing)
 
 ```bash
-cast send $USDC_ADDRESS "transfer(address,uint256)" $SHIELD_VAULT_ADDRESS 600000 \
-  --rpc-url $EVM_RPC_URL --private-key $EVM_DEPLOYER_KEY | grep -E 'transactionHash|^status'
+# money comes back through deposit(), never a raw transfer (a raw transfer credits nobody)
+cast send $USDC_ADDRESS "approve(address,uint256)" $SHIELD_VAULT_ADDRESS 600000 \
+  --rpc-url $EVM_RPC_URL --private-key $EVM_EXECUTION_KEY --legacy | grep -E '^status'
+cast send $SHIELD_VAULT_ADDRESS "deposit(address,uint64)" $VAULT_AUTHORITY 600000 \
+  --rpc-url $EVM_RPC_URL --private-key $EVM_EXECUTION_KEY --legacy | grep -E 'transactionHash|^status'
 ```
+
+The venue's own settled PnL is what the loss rule reads where the venue
+answers, so the trading account also has to have actually lost: rehearse with
+`bun run scripts/hyperevm-losing-trade.ts` (testnet-only; two BTC round trips
+from the registered trading account, about $7 of fees and spread) before you
+roll, or do the losing trade by hand on app.hyperliquid-testnet.xyz from that
+account.
 
 Only `status 1 (success)` and the hash need to be legible.
 
 The signer here must be the address the vault has **registered as its execution
-destination** — that is what makes the indexer classify the transfer as a
-`RETURN` rather than a deposit. For this vault that address is
-`0x05a7a130…`, which is the deployer, so the key is `$EVM_DEPLOYER_KEY`. Check
+destination** — that is what makes the indexer classify the `deposit()` as a
+`RETURN` rather than fresh capital. For both v2 vaults that address is
+`0xE7c2Adb4…`, whose key is `.shield/hyperevm-keys.json` → `execution`
+(`EVM_EXECUTION_KEY` in `.env`). Check
 it on the Home screen's account menu ("Where Shield can send") before you roll.
 Keep it a variable name on screen — never paste a key into a terminal you are
 filming.
@@ -322,8 +333,8 @@ If the take runs over 4:00, cut in this order: 3:12 (8 s), 0:58 (12 s), 1:10
 - **The block screen shows an amount field instead of "Not tonight."** The
   cooldown is not a *loss* cooldown. `cooldownReason` must be 2
   (`RISK_VERDICT`); a self-pause is reason 1 and renders as "Paused by you".
-- **You need a bigger-numbers fallback.** Vault `0x9872f09D…` ($600 protected,
-  $500 floor, $100/day, 12 h cooldown) reads better on camera and can be signed
+- **You need a bigger-numbers fallback.** Vault `0x9872f09D…` ($70 protected,
+  $50 floor, $10/day, 12 h cooldown) reads better on camera and can be signed
   in on the Welcome screen's "Continue with a demo key" path with the
   `authority` key from `.shield/hyperevm-keys.json`. It costs you the Privy
   beat, so only fall back to it if the Privy wallet is unusable. That path also
