@@ -163,7 +163,8 @@ Shield vault 0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0 (Anvil) · authority 0xf
 
 Balance is $7,000, not $7,080: on Anvil the `return` command hands the money
 back with a plain ERC-20 transfer, which the contract never credits to a vault
-(see "Returned capital" in `docs/THREAT_MODEL.md`). $1,500 of the day's $2,000
+(`docs/THREAT_MODEL.md`, Known gaps 7 — there is $30.50 stranded in the
+deployed testnet contract the same way). $1,500 of the day's $2,000
 limit is used because the $500 top-up above was refused. Timestamps and the
 cooldown deadline depend on when you run it.
 

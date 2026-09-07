@@ -363,11 +363,13 @@ many idle days the test skipped; a longer gap refunds proportionally more.
 
 What still holds, and bounds it:
 
-- **The protected floor is the real backstop, and it holds.** An attempt to
-  reproduce this against a vault with a high floor fails on
-  `ProtectedFloorBreached` — the release is refused by `_checkFloor`, which is
-  a separate check on `balance - amount` and has nothing to do with the
-  buckets. Total drain is bounded at `balance - protectedFloor`.
+- **The protected floor is the real backstop, and it holds.** Re-running the
+  same exploit against a vault holding $10,000 behind an $8,000 floor: the
+  first post-gap release goes through, and the next one reverts
+  `ProtectedFloorBreached` while `velocityNow` still reports zero — so it is
+  demonstrably the floor refusing, not the limit. `_checkFloor` is a separate
+  check on `balance - amount` and has nothing to do with the buckets. Total
+  drain is bounded at `balance - protectedFloor`.
 - The registry is unaffected: the money can still only go to a destination the
   user registered, and a new destination still waits 24 hours.
 - The loss cooldown is unaffected: while `cooldownUntil` is in the future,

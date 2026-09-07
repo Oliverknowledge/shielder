@@ -7,6 +7,8 @@ export interface ServerHealth {
   programId: string;
   source: SourceStatus;
   substreamsEndpoint: string;
+  /** The server's own plain-words answer for whether The Graph can serve this network. */
+  substreamsAvailable?: string;
   spkg: string;
   monitor: { enabled: boolean; verifier: string | null };
   demo: boolean;

@@ -1,14 +1,14 @@
 # Human actions
 
-Three things are left, and only these three. Everything a machine could do is
-done: the contract is live on HyperEVM testnet, a Privy embedded wallet has
+Five things are left. Everything a machine could do is done: the contract is live on HyperEVM testnet, a Privy embedded wallet has
 moved real USDC to HyperCore, `cre workflow simulate` has run and its transcript
 is committed, and the Substreams package streams live from The Graph Market.
 The evidence for all of that is in `docs/SPONSOR_INTEGRATIONS.md`; the facts it
 is allowed to assert are pinned in `docs/internal/gauntlet/FACTS.md`.
 
 Ordered by leverage. #1 is worth more than #2 and #3 combined, because without
-it neither of them can be judged.
+it neither of them can be judged. #4 and #5 are small, but both are decisions
+that get much cheaper if you make them *before* #1, not after.
 
 ---
 
@@ -147,7 +147,66 @@ bun run dev:app:hyperevm               # http://localhost:5174
 one, and nonce 1 is already consumed on both the demo vault and the CRE vault
 (`0x751D1e26d79FeffE95F8a8662aB7A022780ED023`). Stage one first — release, then
 send back less than you released — or the verdict is correctly refused on camera.
+Send it back with `deposit(authority, amount)` from the trading wallet, **not**
+with a plain USDC transfer to the vault address: the contract credits
+`v.balance` only inside `deposit()`, so a raw transfer is stranded and cannot be
+recovered by anyone. There is already $30.50 stuck in the deployed contract that
+way (`docs/THREAT_MODEL.md`, Known gaps 7).
 
 **Then submit** on ETHGlobal before **Sunday 13 September, 12:00 pm EDT**
 (16:00 UTC); late submissions are not accepted. Partner prizes: **The Graph**,
 **Privy**, **Chainlink**. Paste from `docs/SUBMISSION.md`.
+
+---
+
+## 4. Decide what to do with `CLAUDE.md` and `.claude/hooks/check-gstack.sh` (5 minutes)
+
+Both are in the repository and both are hostile to a stranger. `CLAUDE.md`
+opens with "Before doing ANY work, verify gstack is installed" and instructs the
+agent to **stop and refuse** if it is not. `.claude/hooks/check-gstack.sh` backs
+that up mechanically: `.claude/settings.json` registers it as a `PreToolUse`
+hook on the `Skill` tool, and it returns `"permissionDecision":"deny"` and exits
+2 whenever a third-party toolchain (`github.com/garrytan/gstack`) is not found
+in one of a dozen home-directory locations. That is a private-repo convention.
+In a public repository it means a judge or a contributor who opens the project
+in Claude Code, Codex or Cursor has a tool denied outright, with an install
+instruction for software that has nothing to do with Shield and that they did
+not ask for. It reads as a dependency the project does not have.
+
+**The decision is yours; nothing has been deleted.** Two reasonable options:
+
+- Delete both `CLAUDE.md` and `.claude/hooks/check-gstack.sh` before publishing.
+  Nothing in the build depends on them.
+- Keep them but make them non-blocking: drop the hook entirely (it is the part
+  that denies), and reduce `CLAUDE.md` to a note saying which tools the authors
+  used, with no "STOP" and no refusal instruction.
+
+Either way, if you remove the script also remove the `PreToolUse` block in
+`.claude/settings.json` that points at it, so nothing is left referencing a
+missing file.
+
+---
+
+## 5. Decide whether to rewrite git history, and do it before the repo is public (15 minutes)
+
+`.git/objects` is **22 MB**; every tracked file in the working tree adds up to
+**4.0 MB**. The difference is almost entirely the first commit, `816fdca`
+"Initial commit with gstack", which imported **1,623 files, about 27 MB** of a
+vendored third-party toolchain. The second commit, `e3cd394`, deleted them —
+1,529 files, 390,601 deletions — so they are in nobody's working tree and in
+everybody's clone.
+
+The repository is pushed to `origin` (private) and both remote branches contain
+`816fdca`. **It has not been made public yet, and that is the whole window.**
+Right now a rewrite is a `git filter-repo` run and one force-push, and the only
+person it inconveniences is you. Once the repository is public — and especially
+once a judge has cloned it or anyone has forked it — a rewrite breaks every
+clone, every fork and every commit link, and the old objects stay reachable on
+GitHub through the fork network anyway. The cost goes from fifteen minutes to
+not worth doing.
+
+Do it or decline it deliberately. It is not urgent for judging: 22 MB clones
+fine and no judge will notice. It only becomes permanent.
+
+If you do it, do it **before** step #1, on a mirror, and re-run the secret check
+in #1 afterwards.

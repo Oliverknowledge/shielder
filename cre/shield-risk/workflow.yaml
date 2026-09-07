@@ -24,3 +24,14 @@ evm-settings:
     workflow-path: "./main.ts"
     config-path: "./config.evm.json"
     secrets-path: "../secrets.yaml"
+
+# Identical to evm-settings with delivery off, so the workflow can be run end to
+# end — secret read, evaluation, signature — without broadcasting a verdict to a
+# live vault. Use this one to reproduce; use evm-settings to actually relay.
+evm-dry-settings:
+  user-workflow:
+    workflow-name: "shield-risk-evm-dry"
+  workflow-artifacts:
+    workflow-path: "./main.ts"
+    config-path: "./config.evm-dry.json"
+    secrets-path: "../secrets.yaml"

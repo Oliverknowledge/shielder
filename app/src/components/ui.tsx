@@ -53,8 +53,10 @@ export function ToastHost({ children }: { children: ReactNode }) {
 export function useToast() {
   const { push } = useContext(ToastCtx);
   return {
-    ok: (text: string, sig?: string | null) => push({ text, kind: "ok", link: sig ? { href: explorerUrl("tx", sig), label: "View" } : undefined }),
-    err: (text: string, sig?: string | null) => push({ text, kind: "err", link: sig ? { href: explorerUrl("tx", sig), label: "View" } : undefined }),
+    // Only offer "View" where an explorer exists. On a network without one,
+    // explorerUrl returns "" and this used to render an anchor to nowhere.
+    ok: (text: string, sig?: string | null) => push({ text, kind: "ok", link: sig && explorerUrl("tx", sig) ? { href: explorerUrl("tx", sig), label: "View" } : undefined }),
+    err: (text: string, sig?: string | null) => push({ text, kind: "err", link: sig && explorerUrl("tx", sig) ? { href: explorerUrl("tx", sig), label: "View" } : undefined }),
     info: (text: string) => push({ text, kind: "info" }),
   };
 }

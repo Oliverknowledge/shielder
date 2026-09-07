@@ -18,7 +18,7 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 export function Behaviour() {
-  const { server, serverError, serverLoading, wallets, vault, now, signer, chain } = useShield();
+  const { server, serverError, serverLoading, wallets, vault, now, signer, chain, health } = useShield();
   const toast = useToast();
   const [prefs] = usePrefs(signer?.address ?? null);
   const venue = useVenue();
@@ -268,7 +268,8 @@ export function Behaviour() {
       </section>
 
       <p className="tiny muted" style={{ marginTop: 32 }}>
-        Vault flows above: {server.source.mode === "substreams" ? `live from The Graph Substreams · ${server.source.endpoint}` : `indexed from ${server.network === "anvil" ? "Anvil" : chain === "evm" ? "HyperEVM" : "Solana"} logs at ${server.source.endpoint}. The Graph Substreams package streams the same flows where the network is indexed.`}
+        Vault flows above: {server.source.mode === "substreams" ? `live from The Graph Substreams · ${server.source.endpoint}` : `indexed from ${server.network === "anvil" ? "Anvil" : chain === "evm" ? "HyperEVM" : "Solana"} logs at ${server.source.endpoint}.`}
+        {server.source.mode !== "substreams" && health?.substreamsAvailable ? ` The Graph Substreams package streams the same flows, but not here — ${health.substreamsAvailable.replace(/^no: /, "")}.` : ""}
         {hl ? ` Fills, positions and PnL above: read from ${VENUE_NAME}'s own API — HyperEVM never sees them.` : ""}
       </p>
 
