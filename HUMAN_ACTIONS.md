@@ -20,10 +20,11 @@ Chainlink: evidence a judge can open. `github.com/Oliverknowledge/shielder` is
 private today.
 
 **The decision you have to make:** which branch a judge lands on. The remote's
-default branch is `main`, and both remote branches currently sit at `8bf99bb`,
-five commits behind local `office-hours`. Either merge `office-hours` into
-`main`, or point the default branch at it. A judge who clones and finds a
-five-commits-stale tree reads it as an abandoned project.
+default branch is `main`, and it currently sits 22 commits behind
+`office-hours`, which is where all of this work is. Either fast-forward `main`
+or point the default branch at `office-hours`. A judge who clones the default
+branch and finds a stale tree reads it as an abandoned project. Check the gap
+before you flip anything: `git rev-list --count origin/main..office-hours`.
 
 ```bash
 # 1. Confirm nothing sensitive is tracked. Expect no output.
@@ -210,3 +211,33 @@ fine and no judge will notice. It only becomes permanent.
 
 If you do it, do it **before** step #1, on a mirror, and re-run the secret check
 in #1 afterwards.
+
+---
+
+## 6. Optional, and the best Solidity work available: fix the three defects
+
+Not needed for the submission. Worth doing because you said you wanted to write
+some of the contract yourself, and because this is real work with real value
+rather than an exercise.
+
+`contracts/test/KnownDefects.t.sol` holds three failing-by-design tests that
+assert what `ShieldVault.sol` currently *does*. Each one is a bug, each one is
+disclosed in `docs/THREAT_MODEL.md`, and each one has a small, self-contained
+fix that cannot be made to the deployed contract because it is immutable:
+
+1. `_refundVelocity` refunds into the bucket index stored at proposal time,
+   which after a full lap of the window is current again and holds unrelated
+   spend. Store the reservation's absolute timestamp and refund only if the
+   window has not rolled since.
+2. `tighten` bounds `lossCooldownSecs` and the self-pause but places no upper
+   bound on `loosenCooldownSecs` or `fullExitCooldownSecs`, so a user can lock
+   themselves out of their own exit in one instant, unconfirmed call. Add the
+   bounds.
+3. `_rollBuckets` clamps `elapsed` before using it to advance `bucketStart` and
+   never advances `currentBucketIndex` in the long-idle branch, so an idle gap
+   refunds the whole daily limit once per idle day, in a single block. Advance
+   `bucketStart` to the current window and the index with it.
+
+The tests are already written and they describe the bug precisely. Invert each
+assertion, make it pass, and you have a v2 worth deploying. Nothing else in the
+contract needs to change.
