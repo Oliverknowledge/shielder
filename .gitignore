@@ -12,7 +12,6 @@ target/deploy/*-keypair.json
 
 # Node / bun
 node_modules/
-bun.lock
 
 # CRE: compiled artifacts (rebuildable via `bunx cre-compile`) and simulation secrets
 cre/**/dist/
@@ -30,7 +29,6 @@ app/dist/
 
 # Local demo state and generated demo keys (never commit)
 .shield/
-substreams/*.spkg
 
 # Foundry deps (run: cd contracts && forge install foundry-rs/forge-std --no-git)
 contracts/lib/
@@ -39,7 +37,6 @@ contracts/cache/
 contracts/broadcast/
 
 # EVM Substreams build artifacts
-substreams-evm/*.spkg
 substreams-evm/target/
 substreams-evm/src/abi_shield_vault.rs
 
@@ -48,3 +45,16 @@ substreams-evm/src/abi_shield_vault.rs
 .env.*
 !.env.example
 .substreams.env
+
+# The built Substreams packages ARE committed. server/substreams-config.ts
+# hardcodes these paths, and a judge cloning the repo has no way to produce
+# them without the Rust wasm toolchain — so shipping the ~1.4 MB artefact is
+# what makes the Graph integration reproducible at all.
+
+# gstack installs per-project skills as symlinks into the author's home
+# directory. Tracked, they are 96 dangling links in anyone else's clone that
+# also publish a stranger's filesystem layout.
+.claude/skills/
+
+# The CRE CLI rewrites this ~900 KB bundle on every `cre workflow simulate`.
+cre/shield-risk/.cre_build_tmp.js

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { GetMeSafe, ResetScreen } from "../components/Safety";
 import { WhatHappened } from "../components/WhatHappened";
@@ -25,6 +25,7 @@ const card = {
 };
 
 export function AddFunds() {
+  const navigate = useNavigate();
   const { vault, balance, wallets, proposals, server, now, signer, vaultKey, actions, chain } = useShield();
   const venue = useVenue();
   const { run, busy } = useAction();
@@ -153,7 +154,9 @@ export function AddFunds() {
         <h1>Release capital to {destLabel}</h1>
       </div>
 
-      <section className="card">
+      {/* The card goes with the animation: hidden on a phone it left an empty
+          rounded box eating the top of the fold. */}
+      <section className="card flow-card">
         <FlowScene treasury={balance} bankroll={destWallet?.usdc ?? null} amount={blocked?.amount ?? (phase === "done" ? sent : amountRaw)} phase={phase} bankrollLabel={destWallet?.label ?? "Trading wallet"} />
       </section>
 
@@ -174,7 +177,32 @@ export function AddFunds() {
             )}
             <BlockedReason reason={shown.reason} amount={shown.amount} />
             <YourRule reason={shown.reason} />
-            <p className="title-l" style={{ marginTop: 18 }}>{usd(balance)} is still protected.</p>
+            <p className="title-l" style={{ marginTop: 18 }}>
+              {usd(vault.protectedFloor)} can never be released to trading{balance > vault.protectedFloor ? <>, and the other {usd(balance - vault.protectedFloor)} is locked until then</> : null}.
+            </p>
+            {shown.reason === "CooldownActive" && (
+              <div style={{ marginTop: 18 }}>
+                <p className="eyebrow" style={{ marginBottom: 4 }}>Available again in</p>
+                <div className="not-tonight" style={{ fontSize: "clamp(34px, 10vw, 52px)" }}><Countdown until={vault.cooldownUntil} now={now} /></div>
+                {/* A clock that expires into a second refusal is the fastest way
+                    to stop being believed. If the daily limit is also spent, say
+                    so here rather than letting them find out by pressing the
+                    button again. */}
+                {rollingVelocity(vault, BigInt(now)) >= vault.velocityThreshold && (
+                  <p className="small dim" style={{ marginTop: 6 }}>Your {usd(vault.velocityThreshold)} daily limit is also spent, and refills on its own rolling 24 hours. Whichever is later decides.</p>
+                )}
+              </div>
+            )}
+            {/* Actions before the evidence: on a phone the evidence pushed every
+                choice below the fold at exactly the moment a choice was needed. */}
+            <div className="row wrap" style={{ marginTop: 18, gap: 8 }}>
+              <button className="btn" onClick={() => setSafeOpen(true)}>Lock this down till tomorrow</button>
+              <button className="btn btn-secondary" onClick={() => setWhatOpen(true)}>See what happened</button>
+            </div>
+            <div className="row wrap" style={{ marginTop: 10, gap: 8 }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => setResetOpen(true)}>I still really want to trade</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => navigate("/")}>Back to Home</button>
+            </div>
             <SessionFacts amount={shown.amount} reason={shown.reason} attemptsToday={attempts.filter((a) => a.ts >= now - 86400).length} />
             {prefs.calmMessage && (
               <div style={{ marginTop: 18 }}>
@@ -183,15 +211,9 @@ export function AddFunds() {
               </div>
             )}
             <LossEvidence />
-            <div className="row wrap" style={{ marginTop: 18, gap: 8 }}>
-              <button className="btn" onClick={() => setSafeOpen(true)}>End my session</button>
-              <button className="btn btn-secondary" onClick={() => setWhatOpen(true)}>See what happened</button>
-              <button className="btn btn-secondary" onClick={() => setMoreOpen(true)}>Protect me more</button>
-            </div>
-            <div className="row wrap" style={{ marginTop: 10, gap: 8 }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => setResetOpen(true)}>I still really want to trade</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => { setBlocked(null); setPhase("idle"); }}>Back</button>
-            </div>
+            <p className="tiny muted" style={{ marginTop: 12 }}>
+              <button className="link" style={{ background: "none", border: 0, padding: 0, cursor: "pointer", font: "inherit", color: "inherit", textDecoration: "underline" }} onClick={() => setMoreOpen(true)}>Protect me more</button>
+            </p>
             {shown.sig && (
               <p className="tiny muted" style={{ marginTop: 12 }}>
                 Rejected on-chain by the vault {chain === "evm" ? "contract" : "program"} · <ExplorerLink sig={shown.sig} />
@@ -299,15 +321,17 @@ function hoursSince(ts: number, now: number): string {
 function BlockedReason({ reason, amount }: { reason: ShieldErrorName | null; amount: bigint }) {
   const { vault, server, now } = useShield();
   if (!vault) return null;
-  const h24 = server?.profile.windows.h24;
-  const loss = h24 && Number(h24.realisedLoss) > 0 ? h24.realisedLoss : null;
-  const firstLoss = server?.profile.sessions.filter((s) => s.realised && s.isLoss && s.lastActivityAt >= now - 86400).sort((a, b) => a.openedAt - b.openedAt)[0];
+  // The number the rule acts on, not the raw shortfall. And the window is
+  // measured from when the loss was realised (lastActivityAt), not from when the
+  // money was released — the old form counted the whole session as elapsed time.
+  const loss = server && Number(server.assessment.realizedLossUsdc) > 0 ? server.assessment.realizedLossUsdc : null;
+  const firstLoss = server?.profile.sessions.filter((s) => s.realised && s.isLoss && s.lastActivityAt >= now - 86400).sort((a, b) => a.lastActivityAt - b.lastActivityAt)[0];
   const lead = (text: React.ReactNode) => <p className="lead" style={{ marginTop: 8, color: "var(--ink)" }}>{text}</p>;
   if (reason === "CooldownActive") {
     if (vault.cooldownReason === COOLDOWN_REASON.RISK_VERDICT) {
       return lead(
         <>
-          {loss ? <>You've realised <b className="num">{usd(loss)}</b> in losses in {firstLoss ? hoursSince(firstLoss.openedAt, now) : "the last 24 hours"}.</> : <>Your trading wallet sent back less than you sent it.</>} Your {spanAdjective(vault.lossCooldownSecs)} cooldown is active until {clockTime(Number(vault.cooldownUntil), now)}.
+          {loss ? <>You've realised <b className="num">{usd(loss)}</b> in losses in {firstLoss ? hoursSince(firstLoss.lastActivityAt, now) : "the last 24 hours"}.</> : <>Your loss rule fired earlier and the pause runs its full length, whatever has happened since.</>} Your {spanAdjective(vault.lossCooldownSecs)} cooldown is active until {clockTime(Number(vault.cooldownUntil), now)}.
         </>
       );
     }
@@ -316,7 +340,7 @@ function BlockedReason({ reason, amount }: { reason: ShieldErrorName | null; amo
   if (reason === "VelocityThresholdExceeded") {
     const velocity = rollingVelocity(vault, BigInt(now));
     if (velocity === 0n) return lead(<>Your daily reload is <b className="num">{usd(vault.velocityThreshold)}</b>. You asked for {usd(amount)}, which is more than that in one go.</>);
-    return lead(<>You've already released <b className="num">{usd(velocity)}</b> to trading in the last 24 hours. Your limit is {usd(vault.velocityThreshold)}, however it's split.</>);
+    return lead(<>You've already released <b className="num">{usd(velocity)}</b> to trading in the last 24 hours. Your limit is {usd(vault.velocityThreshold)} in a rolling 24 hours.</>);
   }
   if (reason === "ProtectedFloorBreached") {
     return lead(<>{usd(amount)} would take your treasury below the <b className="num">{usd(vault.protectedFloor)}</b> you chose to protect. Lowering the floor waits {hoursLabel(vault.loosenCooldownSecs)}.</>);
@@ -363,7 +387,7 @@ function YourRule({ reason }: { reason: ShieldErrorName | null }) {
       : reason === "CooldownActive"
         ? "When I pause funding, it ends by time and nothing else."
         : reason === "VelocityThresholdExceeded"
-          ? `Release at most ${usd(vault.velocityThreshold)} in any 24 hours, however I split it.`
+          ? `Release at most ${usd(vault.velocityThreshold)} in any 24 hours.`
           : reason === "ProtectedFloorBreached"
             ? `Never let the treasury go below ${usd(vault.protectedFloor)}.`
             : null;
@@ -387,21 +411,18 @@ function SessionFacts({ amount, reason, attemptsToday }: { amount: bigint; reaso
   const net = back - sent;
   return (
     <div className="fact-grid" style={{ marginTop: 18 }}>
-      {sent > 0n && <div><div className="k">Started with</div><div className="v">{usd(sent)}</div></div>}
-      <div><div className="k">Trading equity now</div><div className="v">{equity === null ? "—" : usd(equity)}</div></div>
-      {venue.state === "live" && venue.session ? (
-        <div><div className="k">Session result</div><div className="v" style={{ color: venue.session.closedPnl < 0 ? "var(--blocked)" : "var(--protect)" }}>{usd(venue.session.closedPnl, { sign: true })}</div></div>
-      ) : sent > 0n ? (
-        <div><div className="k">Session result</div><div className="v" style={{ color: net < 0n ? "var(--blocked)" : "var(--protect)" }}>{usd(net, { sign: true })}</div></div>
-      ) : null}
+      {sent > 0n && <div><div className="k">Released today</div><div className="v">{usd(sent)}</div></div>}
+      {sent > 0n && <div><div className="k">Came back</div><div className="v">{usd(back)}</div></div>}
+      <div><div className="k">In {venue.label}</div><div className="v">{equity === null ? "—" : usd(equity)}</div></div>
       <div><div className="k">Still protected</div><div className="v c-protect">{usd(balance)}</div></div>
-      {reason === "CooldownActive" && (
-        <div style={{ gridColumn: "1 / -1" }}>
-          <div className="k">Available again in</div>
-          <div className="v" style={{ fontSize: 26 }}><Countdown until={vault.cooldownUntil} now={now} /></div>
-        </div>
-      )}
       {attemptsToday > 1 && <div style={{ gridColumn: "1 / -1" }}><div className="k">Blocked attempts today</div><div className="v">{attemptsToday}, including this {usd(amount)}</div></div>}
+      {/* The venue's own settled number, named as the venue's, so it can never
+          be read as contradicting Shield's. They measure different things. */}
+      {venue.state === "live" && venue.session && (
+        <p className="tiny muted" style={{ gridColumn: "1 / -1", margin: 0 }}>
+          {venue.label} settled {usd(venue.session.closedPnl, { sign: true })} on your trades today. Shield watches something else: how much of what it released has come back.
+        </p>
+      )}
     </div>
   );
 }

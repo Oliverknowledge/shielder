@@ -28,6 +28,13 @@ export function Protection() {
 
   const ruleChange = proposals.find((p) => p.category === ProposalKind.RuleChange);
   const exitPending = proposals.find((p) => p.category === ProposalKind.FullExit);
+  /**
+   * Any tightening bumps `configVersion`, and `_checkMaturityAndStaleness`
+   * rejects a proposal created under an older one. So "Get me safe", "Protect me
+   * more" and the 6h/24h/72h pause — the actions Shield most encourages — void a
+   * scheduled exit and restart its clock. The row used to promise the opposite.
+   */
+  const exitStale = !!exitPending && exitPending.configVersionAtCreation !== vault?.configVersion;
   const cooldownActive = Number(vault.cooldownUntil) > now;
   const coldWallets = registry.filter((r) => r.kind === OwnerKind.Cold && r.active);
   const monitorIsShield = !!health?.monitor.verifier && !!vault.riskVerifier && vault.riskVerifier.toLowerCase() === health.monitor.verifier.toLowerCase();
@@ -125,7 +132,8 @@ export function Protection() {
 
   const editValue = Number(value);
   const editCur = editing ? editing.current(vault) : 0;
-  const editValid = editing !== null && value !== "" && Number.isFinite(editValue) && editValue !== editCur && editValue >= 0;
+  const editOverMax = editing?.max !== undefined && Number.isFinite(editValue) && editValue > editing.max;
+  const editValid = editing !== null && value !== "" && Number.isFinite(editValue) && editValue !== editCur && editValue >= 0 && !editOverMax;
   const editStricter = editing ? isStricter(editing, editCur, editValue) : false;
 
   return (
@@ -142,7 +150,7 @@ export function Protection() {
           <div className="grow">
             <b>{vault.cooldownReason === COOLDOWN_REASON.SELF_PAUSE ? "New capital paused by you" : "Loss cooldown active"}</b> until {clockTime(Number(vault.cooldownUntil), now)}. Safe-wallet moves and cancellations still work.
           </div>
-          <span className="num right hide-xs" style={{ fontWeight: 600 }}><Countdown until={vault.cooldownUntil} now={now} /></span>
+          <span className="num right" style={{ fontWeight: 600 }}><Countdown until={vault.cooldownUntil} now={now} /></span>
         </div>
       )}
 
@@ -272,7 +280,8 @@ export function Protection() {
               <div style={{ fontWeight: 600 }}>Leave Shield</div>
               {exitPending ? (
                 <div className="small dim">
-                  {exitPending.action.kind === "uninstallVault" ? "Full exit" : `Withdrawal of ${exitPending.action.kind === "coldTransferAboveCap" ? usd(exitPending.action.amount) : ""}`} scheduled · {Number(exitPending.executeAfter) <= now ? "ready to execute" : <>executes in <b className="num"><Countdown until={exitPending.executeAfter} now={now} format="compact" /></b></>} · every rule stays in force until then
+                  {exitPending.action.kind === "uninstallVault" ? "Full exit" : `Withdrawal of ${exitPending.action.kind === "coldTransferAboveCap" ? usd(exitPending.action.amount) : ""}`} scheduled · {exitStale ? "superseded" : Number(exitPending.executeAfter) <= now ? "ready to execute" : <>executes in <b className="num"><Countdown until={exitPending.executeAfter} now={now} format="compact" /></b></>}
+                  {exitStale ? <> · you tightened a rule after scheduling this, so it can no longer execute. Cancel it and start again.</> : <> · your rules stay in force until then, but tightening any of them cancels it.</>}
                 </div>
               ) : (
                 <div className="small dim">Your whole balance moves to a safe wallet after {duration(Number(vault.fullExitCooldownSecs))}. Nothing else changes in the meantime. Cancel any time.</div>
@@ -303,7 +312,14 @@ export function Protection() {
             <Field label={`New value${editing.kind === "usd" ? "" : editing.kind === "pct" ? " (% of treasury)" : editing.kind === "hours" ? " (hours)" : " (days)"}`}>
               {editing.kind === "usd" ? <MoneyInput value={value} onChange={setValue} autoFocus /> : <input className="input" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value.replace(/[^0-9.]/g, ""))} autoFocus />}
             </Field>
-            {editValid ? (
+            {editOverMax && editing.max !== undefined ? (
+              <div className="banner banner-blocked small row" style={{ gap: 10, alignItems: "flex-start" }}>
+                <Icon name="clock" size={18} />
+                <span>
+                  <b>Too long. The most Shield will set is {fmtRule(editing, editing.max)}.</b> {editing.maxWhy}
+                </span>
+              </div>
+            ) : editValid ? (
               <>
                 <div className="change-pair">
                   <span className="from">{fmtRule(editing, editCur)}</span>

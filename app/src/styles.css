@@ -118,7 +118,7 @@ code, .mono { font-family: var(--mono); font-size: 0.86em; }
   .page { padding: 18px 16px calc(96px + env(safe-area-inset-bottom)); }
   .tabbar {
     position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
-    display: grid; grid-template-columns: repeat(5, 1fr);
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
     background: rgba(247, 246, 242, 0.94); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
     border-top: 1px solid var(--line); padding: 6px 4px calc(8px + env(safe-area-inset-bottom));
   }
@@ -268,7 +268,15 @@ textarea.input { min-height: 84px; resize: vertical; }
 .strip { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--r-m); font-size: 14px; min-width: 0; }
 .strip > .grow { flex: 1; min-width: 0; }
 .strip > .right { margin-left: auto; white-space: nowrap; }
-@media (max-width: 400px) { .hide-xs { display: none !important; } }
+@media (max-width: 400px) {
+  .hide-xs { display: none !important; }
+  /* The countdown used to be hidden here, which took the timer off the strip on
+     every phone — and a phone is where being blocked actually happens. A
+     refusal without a "when" is just a refusal. Wrap it onto its own line
+     instead of dropping it. */
+  .strip { flex-wrap: wrap; }
+  .strip > .right { margin-left: 0; width: 100%; font-size: 16px; }
+}
 .strip-blocked { background: var(--blocked-bg); color: #6d1711; }
 .strip-pending { background: var(--pending-bg); color: #5e4107; }
 .strip-protect { background: var(--protect-bg); color: #124a33; }
@@ -412,8 +420,11 @@ textarea.input { min-height: 84px; resize: vertical; }
 .hold-hint { font-size: 12px; font-weight: 500; opacity: 0.7; }
 .hold-protect { background: #185c40; }
 
-/* ---------------- reset (90 seconds) ---------------- */
-.reset-screen { position: fixed; inset: 0; z-index: 55; background: var(--paper); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+/* ---------------- reset (short pause) ---------------- */
+.reset-screen { position: fixed; inset: 0; z-index: 55; background: var(--paper); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; overflow-y: auto; overscroll-behavior: contain; padding: max(24px, env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom)); text-align: center; }
+/* Optically centred when it fits, scrollable when it does not. */
+.reset-screen > * { flex-shrink: 0; }
+.reset-screen::before, .reset-screen::after { content: ""; margin: auto; }
 .reset-ring { position: relative; width: 168px; height: 168px; margin: 8px auto 0; }
 .reset-ring svg { transform: rotate(-90deg); }
 .reset-ring .t { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 44px; font-weight: 600; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
@@ -476,3 +487,26 @@ textarea.input { min-height: 84px; resize: vertical; }
 .wh-body.good::before { background: var(--protect); }
 .wh-body .t { font-weight: 600; }
 .wh-body .b { font-size: 13px; color: var(--ink-3); margin-top: 2px; }
+
+
+/* ---------------- phones ----------------
+   Fixed two-column grids with nowrap values overflow rather than wrap once the
+   numbers get long, and 34px controls are below any touch guideline — including
+   the 6h/24h/72h pause, where a mis-tap costs three days and cannot be undone. */
+@media (max-width: 380px) {
+  .fact-grid, .two-up, .reset-facts { grid-template-columns: 1fr; }
+  .fact-grid .v, .two-up .v { white-space: normal; }
+}
+@media (pointer: coarse) {
+  .btn-sm, .chip, .segmented button { min-height: 44px; }
+  .segmented { gap: 6px; }
+  .account { min-height: 40px; }
+}
+/* A floor that is a small fraction of the treasury still has to be visible. */
+.capital i { min-width: 3px; }
+
+/* The blocked animation is the emotional beat of the product, but it is also a
+   third rendering of the treasury and bankroll figures. On a phone it costs
+   ~150px of a 750px fold and pushes the refusal, the countdown and every action
+   below it. Keep the beat where there is room for it. */
+@media (max-width: 560px) { .flow-card { display: none; } }

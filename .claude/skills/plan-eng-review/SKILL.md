@@ -1,1 +1,0 @@
-/Users/oliverstevenson/conductor/repos/shiedler/.claude/skills/gstack/plan-eng-review/SKILL.md

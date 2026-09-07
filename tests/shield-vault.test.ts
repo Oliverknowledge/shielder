@@ -5,7 +5,7 @@
  *
  *   bun test tests/
  */
-import { describe, expect, test } from "bun:test";
+import {expect, test} from "bun:test";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import {
@@ -34,7 +34,7 @@ import {
   evaluateTopUp,
   decodeEventsFromLogs,
 } from "../client/shield-client";
-import { setupVault, signVerdict, evidenceHash, H, D, type Fixture } from "./harness";
+import { setupVault, signVerdict, evidenceHash, H, D, type Fixture, solanaSuite } from "./harness";
 
 const $ = usdcToRaw;
 
@@ -100,7 +100,7 @@ function applyVerdict(f: Fixture, opts: Partial<{ nonce: bigint; loss: bigint; e
   );
 }
 
-describe("deposits and protected capital", () => {
+solanaSuite("deposits and protected capital", () => {
   test("deposit moves funds into the vault PDA token account and emits Deposited", () => {
     const f = setupVault({}, { deposit: 0n });
     expect(f.chain.tokenBalance(f.vaultAta)).toBe(0n);
@@ -139,7 +139,7 @@ describe("deposits and protected capital", () => {
   });
 });
 
-describe("instant top-ups", () => {
+solanaSuite("instant top-ups", () => {
   test("a permitted replenishment executes instantly and reserves 24h capacity", () => {
     const f = setupVault();
     const r = topUp(f, $(400));
@@ -201,7 +201,7 @@ describe("instant top-ups", () => {
   });
 });
 
-describe("gated top-ups (large transfer pause)", () => {
+solanaSuite("gated top-ups (large transfer pause)", () => {
   test("proposal cannot execute early, executes after the pause, and is one-shot", () => {
     const f = setupVault({ velocityThreshold: $(6_000) });
     expect(proposeTopUp(f, $(3_800)).ok).toBe(true);
@@ -249,7 +249,7 @@ describe("gated top-ups (large transfer pause)", () => {
   });
 });
 
-describe("cooldowns: the loss rule and self-pause", () => {
+solanaSuite("cooldowns: the loss rule and self-pause", () => {
   test("a valid loss verdict arms a cooldown of the USER's configured length and blocks every top-up path", () => {
     const f = setupVault({ velocityThreshold: $(6_000) });
     const before = f.chain.now();
@@ -413,7 +413,7 @@ describe("cooldowns: the loss rule and self-pause", () => {
   });
 });
 
-describe("tighten fast, loosen slowly", () => {
+solanaSuite("tighten fast, loosen slowly", () => {
   test("tightening applies immediately across every parameter", () => {
     const f = setupVault();
     const r = f.chain.send(
@@ -542,7 +542,7 @@ describe("tighten fast, loosen slowly", () => {
   });
 });
 
-describe("destinations: the allow-list", () => {
+solanaSuite("destinations: the allow-list", () => {
   test("no such thing as an unregistered destination", () => {
     const f = setupVault();
     const rando = Keypair.generate();
@@ -650,7 +650,7 @@ describe("destinations: the allow-list", () => {
   });
 });
 
-describe("cold transfers and the full exit", () => {
+solanaSuite("cold transfers and the full exit", () => {
   test("capped cold transfer is instant, floor-bound, and shares the 24h accumulator with top-ups", () => {
     const f = setupVault({ velocityThreshold: $(500) });
     expect(topUp(f, $(400)).ok).toBe(true);
@@ -740,7 +740,7 @@ describe("cold transfers and the full exit", () => {
   });
 });
 
-describe("authorization boundaries", () => {
+solanaSuite("authorization boundaries", () => {
   test("only the authority can move funds, change rules, or execute proposals", () => {
     const f = setupVault({ velocityThreshold: $(6_000) });
     expect(topUp(f, $(10), f.stranger).shieldError).toBe("Unauthorized");
@@ -779,7 +779,7 @@ describe("authorization boundaries", () => {
   });
 });
 
-describe("program identity", () => {
+solanaSuite("program identity", () => {
   test("program id matches the client constant", () => {
     expect(SHIELD_PROGRAM_ID.toBase58()).toBe("4Z46Kz8ygX5Efw22ABbQ2LTf329N3nD2J81Z3CAY5Hyx");
     expect(getAssociatedTokenAddressSync).toBeDefined();

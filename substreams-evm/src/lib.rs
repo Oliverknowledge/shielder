@@ -119,6 +119,16 @@ fn map_shield_events(params: String, block: Block) -> Result<ShieldEvents, Error
     Ok(ShieldEvents { events })
 }
 
+/// Forward key `exec:<vault>:<owner>` answers "is this owner a trading wallet of
+/// that vault", and reverse key `owner:<owner>` answers "which vault is this
+/// owner a trading wallet of". The reverse one is what makes returns detectable:
+/// a venue sends USDC back in its own transaction, in a block that carries no
+/// ShieldVault event at all, so there is nothing there to enumerate vaults from.
+///
+/// One owner registered by two vaults resolves to the most recent registration.
+/// A trading wallet belongs to one person in practice, and the forward key still
+/// gates the attribution, so the failure mode is a missed return rather than one
+/// credited to a stranger.
 #[substreams::handlers::store]
 fn store_vault_registry(events: ShieldEvents, store: StoreSetString) {
     for e in events.events {
@@ -128,8 +138,9 @@ fn store_vault_registry(events: ShieldEvents, store: StoreSetString) {
         let kind = e.fields.get("kind").cloned().unwrap_or_default();
         let active = e.fields.get("active").map(|a| a == "true").unwrap_or(false);
         let owner = e.fields.get("owner").cloned().unwrap_or_default();
-        let key = format!("exec:{}:{}", e.vault, owner);
-        store.set(0, &key, &(if kind == "0" && active { "1" } else { "0" }).to_string());
+        let is_exec = kind == "0" && active;
+        store.set(0, &format!("exec:{}:{}", e.vault, owner), &(if is_exec { "1" } else { "0" }).to_string());
+        store.set(0, &format!("owner:{}", owner), &(if is_exec { e.vault.clone() } else { String::new() }));
     }
 }
 
@@ -137,6 +148,9 @@ fn store_vault_registry(events: ShieldEvents, store: StoreSetString) {
 fn map_vault_flows(params: String, block: Block, events: ShieldEvents, registry: StoreGetString) -> Result<VaultFlows, Error> {
     let addrs = parse_addrs(&params);
     let vault_contract = addrs.first().cloned().unwrap_or_default();
+    // params is "evt_addr:<vault> || evt_addr:<usdc>". Without the second address
+    // every inbound ERC-20 transfer counted as a USDC return.
+    let usdc_contract = addrs.get(1).cloned();
     let block_time = block.timestamp_seconds();
     let mut flows = Vec::new();
     let mut deposit_txs: Vec<String> = Vec::new();
@@ -169,14 +183,16 @@ fn map_vault_flows(params: String, block: Block, events: ShieldEvents, registry:
         }
     }
 
-    // USDC Transfer(from, to=vault contract) that is not a deposit and comes from a registered trading wallet: a RETURN.
-    // The vault (authority) it belongs to is whichever vault registered that trading wallet; we scan registry keys per known vault in this block's events.
+    // A USDC Transfer(from = a registered trading wallet, to = the vault contract)
+    // that is not part of a deposit is a RETURN: money the user sent out to trade
+    // coming back. This is the measurement the whole product rests on, so it has
+    // to survive the ordinary case, which is the venue returning funds in its own
+    // transaction — a block containing no ShieldVault event whatsoever.
     for log in block.logs() {
-        if log.address() == vault_contract.as_slice() || log.topics().len() != 3 || log.topics()[0].as_slice() != TRANSFER_TOPIC {
+        if Some(log.address()) != usdc_contract.as_deref() || log.topics().len() != 3 || log.topics()[0].as_slice() != TRANSFER_TOPIC {
             continue;
         }
-        let to = &log.topics()[2][12..];
-        if to != vault_contract.as_slice() {
+        if &log.topics()[2][12..] != vault_contract.as_slice() {
             continue;
         }
         let tx = addr(&log.receipt.transaction.hash);
@@ -184,14 +200,16 @@ fn map_vault_flows(params: String, block: Block, events: ShieldEvents, registry:
             continue;
         }
         let from = addr(&log.topics()[1][12..]);
-        let amount = substreams::scalar::BigInt::from_unsigned_bytes_be(log.data()).to_u64();
-        // Find which vault registered `from` as an execution wallet: keys are exec:<vault>:<owner>.
-        // We look for the key under every vault seen in this package's events; the store also answers direct lookups.
-        for candidate in events.events.iter().map(|e| e.vault.clone()).collect::<std::collections::BTreeSet<_>>() {
-            if registry.get_last(format!("exec:{}:{}", candidate, from)).as_deref() == Some("1") {
-                flows.push(Flow { block: block.number, block_time, tx_hash: tx.clone(), vault: candidate.clone(), kind: FlowKind::Return as i32, outbound: false, counterparty: from.clone(), amount, counterparty_is_execution: true });
-            }
+        // Resolve the owning vault from the reverse index rather than from this
+        // block's events, then confirm against the forward key.
+        let Some(vault) = registry.get_last(format!("owner:{}", from)).filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        if registry.get_last(format!("exec:{}:{}", vault, from)).as_deref() != Some("1") {
+            continue;
         }
+        let amount = substreams::scalar::BigInt::from_unsigned_bytes_be(log.data()).to_u64();
+        flows.push(Flow { block: block.number, block_time, tx_hash: tx, vault, kind: FlowKind::Return as i32, outbound: false, counterparty: from, amount, counterparty_is_execution: true });
     }
     let _ = u64_of;
     Ok(VaultFlows { flows })

@@ -47,7 +47,7 @@ function Hero() {
       </div>
       <div className="l-wrap">
         <motion.p className="l-eyebrow" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2, duration: 0.8 }}>
-          A financial control layer for people who trade
+          The account that says no to the top-up after the loss
         </motion.p>
         <motion.h1 className="l-h1" style={{ marginTop: 18, maxWidth: "12ch" }} initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.9, ease: [0.2, 0.8, 0.2, 1] }}>
           Crypto gives you freedom.
@@ -203,7 +203,7 @@ function Reach({ reduce }: { reduce: boolean }) {
             <h2 className="l-h2" style={{ maxWidth: "16ch" }}>
               Calm you sets the limits. <span className="l-serif" style={{ fontStyle: "italic", color: "var(--sage)" }}>Tilted you can't instantly undo them.</span>
             </h2>
-            <p className="l-lead" style={{ marginTop: 20 }}>$8,500 stays exactly where calm you put it. Not a warning, not a nudge: the money cannot move.</p>
+            <p className="l-lead" style={{ marginTop: 20 }}>$8,500 stays exactly where calm you put it. Not a warning, not a nudge: it doesn't move tonight. Getting it to your own safe wallet is always open; feeding the trade is not.</p>
           </motion.div>
         </div>
       </motion.div>
@@ -219,7 +219,7 @@ function Principles() {
         <h2 className="l-h2" style={{ marginTop: 14, maxWidth: "18ch" }}>Freedom inside your plan. Friction when expanding it.</h2>
         <div className="l-cols">
           {[
-            ["Toward safety", "Instant", "Close a position, move idle capital back, pause funding, tighten a rule. Anything that makes you safer applies the moment you ask. Shield never traps you in risk."],
+            ["Toward safety", "Instant", "Pause funding, tighten a rule, move idle treasury to your safe wallet. Anything that makes you safer applies the moment you ask. Shield doesn't trade and can't close your positions; what it can do is stop feeding them."],
             ["Within your plan", "Invisible", "Trade the bankroll you allocated as fast as you like. No confirmations, no warnings, no nagging. A quiet \"within your plan\" and nothing else."],
             ["Expanding the plan", "Slow", "More capital after losses, a lower floor, a removed cooldown. Weaker changes wait 24 hours, and tomorrow-you has to say yes again."],
           ].map(([k, t, b]) => (
@@ -245,8 +245,8 @@ function Modes() {
           {[
             ["\"I'll make it back.\"", "Revenge trading"],
             ["\"Once I've started, I keep adding.\"", "Repeated top-ups"],
-            ["\"Send it now, the window closes.\"", "Rushed transfers"],
-            ["\"Move it to this recovery address.\"", "Scam urgency"],
+            ["\"I'll size up to get it back faster.\"", "Escalating after a loss"],
+            ["\"Just tonight, then I'll stop.\"", "The rule that keeps getting an exception"],
           ].map(([q, k]) => (
             <motion.div key={k} className="l-mode" initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-10%" }} transition={{ duration: 0.5 }}>
               <div className="q">{q}</div>
@@ -267,11 +267,11 @@ function Product() {
           <p className="l-eyebrow">The moment it matters</p>
           <h2 className="l-h2" style={{ marginTop: 14 }}>Not tonight.</h2>
           <p className="l-lead" style={{ marginTop: 20 }}>
-            When you reach for capital you decided not to risk, Shield doesn't lecture. It shows what happened, what's still protected, and when you can decide again. Every block is enforced on-chain, with the rejection there for anyone to verify.
+            When you reach for capital you decided not to risk, Shield doesn't lecture. It shows what happened, what's still protected, and when you can decide again. The refusal comes from the vault contract itself, so it holds whatever you do next.
           </p>
           <div className="l-insights">
-            <div className="l-insight warn"><i /><span>You've realised $1,420 in losses in the last hour. Your 18-hour cooldown is active until 6:02 PM.</span></div>
-            <div className="l-insight"><i /><span>You sent $1,500 to Axiom. $80 came back. Shield remembers the real numbers, from the chain, not your memory of them.</span></div>
+            <div className="l-insight warn"><i /><span>You've realised $1,420 in losses in the last hour. Your 12-hour cooldown is active until 6:02 PM.</span></div>
+            <div className="l-insight"><i /><span>You sent $1,500 to Hyperliquid. $80 came back. Shield remembers the real numbers, from the chain, not your memory of them.</span></div>
             <div className="l-insight"><i /><span>Yesterday at 22:13 you asked to remove your loss protection. Still want to?</span></div>
           </div>
         </div>
@@ -287,7 +287,7 @@ function Product() {
               <div><div className="k">Still in the treasury</div><div className="v">$8,500</div></div>
               <div><div className="k">Top up again in</div><div className="v">10:42:07</div></div>
             </div>
-            <p className="small dim" style={{ marginTop: 14 }}>This is the rule you set while calm, doing exactly what you asked. Nothing was lost: the money never left.</p>
+            <p className="small dim" style={{ marginTop: 14 }}>This is the rule you set while calm, doing exactly what you asked. The $1,080 is real. The $1,500 you just reached for never left the treasury.</p>
             <div className="row wrap" style={{ marginTop: 14, gap: 8 }}>
               <span className="btn btn-secondary btn-sm">See what happened</span>
               <span className="btn btn-sm">Get me safe</span>
@@ -310,14 +310,14 @@ function Final() {
           </h2>
           <Link to="/welcome" className="btn btn-lg">Open Shield</Link>
           <p className="l-lead" style={{ margin: "26px auto 0", maxWidth: "44ch", fontSize: 15 }}>
-            Self-custodial. Enforced by an immutable on-chain program. Remembered by The Graph. Judged inside a Chainlink confidential enclave that can only ever make you safer.
+            Self-custodial. Enforced by an immutable on-chain contract. Its behavioural memory is a Substreams package composed on The Graph: it streams live from a Graph Market provider, and returns nothing until the vault is on HyperEVM mainnet, so on testnet Shield indexes the same flows itself and says so on screen. Its loss verdicts come from a Chainlink CRE workflow that signs inside a TEE handler, and a verdict can only ever make you safer.
           </p>
         </div>
       </section>
       <footer className="l-wrap l-foot">
         <span>Shield · built for ETHGlobal ETHOnline 2026</span>
         <span>
-          <a href="https://github.com/Oliverknowledge/shiedler" target="_blank" rel="noreferrer">Source</a>
+          <a href="https://github.com/Oliverknowledge/shielder" target="_blank" rel="noreferrer">Source</a>
         </span>
       </footer>
     </>

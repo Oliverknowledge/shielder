@@ -165,6 +165,8 @@ function Inner({ children }: { children: ReactNode }) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const inflight = useRef(false);
   const vaultExistsRef = useRef(false);
+  /** Consecutive reads that said the vault is gone. One is not enough. */
+  const missedVault = useRef(0);
   const vaultKnownRef = useRef(false);
   const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshRef = useRef<(() => Promise<void>) | null>(null);
@@ -186,6 +188,19 @@ function Inner({ children }: { children: ReactNode }) {
     inflight.current = true;
     try {
       const snap = await engine.read(signer);
+
+      // A vault CAN legitimately disappear — a full exit with uninstall removes
+      // it — so "no vault" cannot simply be ignored. But a load-balanced RPC
+      // that serves a read from a node one block behind reports exists:false for
+      // a vault that is plainly there, and acting on that single answer throws a
+      // signed-in user into onboarding mid-session and offers to create the
+      // vault they already own. So a disappearance has to be seen twice in a row
+      // before it is believed; a real uninstall still lands one poll later.
+      if (!snap.vault && vaultExistsRef.current && missedVault.current === 0) {
+        missedVault.current = 1;
+        return;
+      }
+      missedVault.current = 0;
       vaultExistsRef.current = !!snap.vault;
       vaultKnownRef.current = true;
       setVaultKnown(true);

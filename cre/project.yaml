@@ -28,3 +28,11 @@ evm-settings:
   rpcs:
     - chain-name: ethereum-testnet-sepolia
       url: https://ethereum-sepolia-rpc.publicnode.com
+
+# The same EVM target with delivery off, so a judge (or a rehearsal) can run the
+# workflow end to end without broadcasting a verdict to a live vault. Every other
+# target has `deliver: true`, which meant there was no safe way to simulate.
+evm-dry-settings:
+  rpcs:
+    - chain-name: ethereum-testnet-sepolia
+      url: https://ethereum-sepolia-rpc.publicnode.com

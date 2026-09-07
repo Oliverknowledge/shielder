@@ -1,169 +1,410 @@
 # Judge Q&A
 
-Answers describe what the code does, not what we'd like it to do.
+Answers describe what the code does, not what we would like it to do. Where
+the answer is a limitation it is written as one. Everything factual here is
+in `docs/internal/gauntlet/FACTS.md`, checked against the chain or a command that was
+actually run.
 
-**Isn't this just a spending limit?**
-A spending limit is a number your future self can raise. Shield's limit
-can only be raised after a 24-hour wait that you can cancel, only lowered
-instantly, and it is one of four gates: a floor, a rolling 24h cap that
-sees through splitting, a 30-minute pause on large moves, and a loss rule
-fed by your real trading history. The last one is the new part: your own
-losses become enforcement state.
+The one-line version: `ShieldVault.sol` is deployed and immutable on HyperEVM
+testnet (chain 998) at `0xcdB6d631A00857584e70a21d800f51C5776302Fe`. It holds
+a user's protected USDC and releases it into their Hyperliquid account under
+rules they set while calm. Tightening a rule is instant; loosening waits and
+has to be confirmed again afterwards.
 
-**Why can't I build this in a normal wallet?**
-A wallet asks "did you authorise this?" and signs whatever you ask. The
-promise here is that a signature from you is *not enough* for some
-transfers, for a period you chose earlier. That has to live somewhere your
-key cannot override: a program-owned account with rules, on a chain that
-doesn't take instructions from the wallet vendor either.
+## The product
 
-**Can't the user bypass their own protection?**
-Inside the vault, no: we tried. Direct program calls hit the same checks;
-raw SPL transfers fail because the PDA owns the account; splitting hits the
-24h accumulator; cold wallets are capped and share the accumulator; new
-destinations wait 24h; stale proposals die when you tighten; exit waits 7
-days; execution paths re-check cooldowns. 46 tests run those attacks
-against the real program. Outside the vault, of course: money that never
-entered Shield is not protected, and we say so in the app.
+**Why does this need a blockchain? A bank spending limit does the same thing.**
+No bank will refuse you your own money. A card limit is raised by calling
+support, and support exists to say yes — that is the whole business. What a
+commitment device needs is a counterparty with no discretion and no incentive
+to grant the exception, and that is exactly what a contract with no owner is.
+The second reason is jurisdictional: the money is already USDC and the venue
+is a perps exchange that credits a deposit in one block. A bank limit cannot
+govern an on-chain transfer at all.
 
-**Why would someone voluntarily lock themselves?**
-Because they already do, badly: people give their seed phrase to a friend,
-use time-locked savings accounts, or just lose. The wedge user is a young
-active trader who knows their loss pattern is the reload after a loss. They
-keep trading freely; they only give up the ability to *refill on tilt*.
+**Why won't the user just bypass it?**
+Inside the vault, the paths are closed and tested: there are five ways money
+leaves, each to a destination registered in advance and typed permanently;
+splitting inside one active window hits a rolling 24h budget shared by top-ups
+and cold transfers; adding a new destination to a funded vault is a delayed
+change; raising a limit is a delayed change that any tightening in between
+invalidates; leaving is a proposal at the user's own exit delay. 44 Foundry
+tests run those attacks against the deployed logic — 41 that pass because the
+contract holds, and 3 that pin the places where it does not (below). Outside the vault, of course they can:
+money that never entered Shield is not protected. The app says so itself, in
+the connected-venue panel on Home, under the button that opens Hyperliquid:
+"Money you send here yourself never passes through Shield, and none of your
+rules apply to it." (`app/src/pages/Overview.tsx`.) The obvious bypass deserves
+to be answered by the product rather than by a document.
+
+Two defects we found while writing the threat model and did not paper over,
+both in the same mechanism — the rolling 24h budget:
+
+1. A top-up proposal left pending for more than 24 hours, then cancelled,
+   refunds velocity that has already expired and erases unrelated recent spend.
+2. Worse, and cheaper: after any idle gap longer than the window,
+   `_rollBuckets` clamps how far it advances the window but never advances the
+   bucket index, so **every** call re-zeroes the whole accumulator. Coming back
+   after a quiet week, a user can spend the daily limit over and over in a
+   single block, while `velocityNow` reports zero. Measured: **$6,000 released
+   in one block against a stated $1,000 per 24 hours.** It needs no setup and
+   no waiting.
+
+An earlier version of this answer said the ceiling was "about twice the daily
+limit in a window, with a day of setup". That was derived from defect 1 alone
+and it is wrong: the two compose, and defect 2 has no ceiling of its own.
+
+What does hold: **the protected floor.** It is a separate check on
+`balance - amount`, neither defect touches it, and a reproduction attempt
+against a vault with a high floor is refused with `ProtectedFloorBreached`. So
+the total that can leave is bounded at `balance - protectedFloor`, the money
+can still only reach a pre-registered destination, and a live loss cooldown
+still blocks every top-up path. The honest summary is that the **floor**, not
+the daily limit, is the number a user should be relying on.
+
+Both are pinned by `contracts/test/KnownDefects.t.sol` so they cannot change
+unnoticed, and written up in full in `docs/THREAT_MODEL.md` (Known gaps 1 and
+3). The same clamp is in the Solana v0 program
+(`programs/shield-vault/src/state.rs`), which is not deployed. The contract is
+immutable, so these are disclosed limitations rather than fixes; the repair
+belongs to a v2.
 
 **What if they genuinely need the money?**
-Up to the emergency cap moves to their own cold wallet instantly, any time,
-even during a cooldown. Larger amounts take the exit delay. The delays are
-theirs to set (floors: 1 hour for weakening, 1 hour for exit). Cancelling
-is always instant. Nothing is ever custodial.
+Two exits, neither of which any cooldown can block. Up to the emergency cap
+moves to their own registered cold wallet instantly — subject to the protected
+floor and the shared 24h budget, so it is not unconditional. (A vault sitting
+at its floor cannot make an instant cold transfer at all.) Anything larger,
+including everything, is a full exit at the delay they chose (7 days by
+default, 1 hour minimum), and a full exit ignores the floor entirely. Nothing
+is custodial at any point.
+
+**Can the user trap themselves?**
+Yes, if they try hard. `tighten` bounds the loss cooldown and the self-pause
+at 30 days each, but places no upper bound on the weakening delay or the exit
+delay. Someone hand-crafting a `tighten` call can set both to a value that
+puts their own funds out of reach permanently, and there is no admin to
+appeal to. The app never offers those values. We would rather tell you than
+have you find it.
 
 **How do you know they lost money?**
-We don't guess P&L. We measure what the chain shows: USDC sent from the
-vault to the trading wallet, and USDC that came back. A session that
-returns less than it received is a realised loss of the difference. Money
-still in the venue is shown as exposure, not loss. Narrow, auditable, true.
+There are two views of the same 24 hours, and only one of them can tell a loss
+from an open position.
 
-**What if your data source is wrong?**
-Then the only thing that can happen is a top-up pause of the user's chosen
-length, and only if the attested loss meets the user's trigger. A wrong
-source can't move money, loosen anything, or block exits. The evidence
-bundle behind each verdict (transaction signatures) is hashed on-chain, so a
-wrong verdict is provably wrong.
+The flow view is the one Shield builds itself: USDC released from the vault to
+the trading account, USDC that comes back, and the shortfall booked as a loss.
+It cannot see the difference between capital that was lost and capital that is
+still deployed. A session that sent $100, got $30 back and still held $246 at
+the venue reads as a $70 loss while the account is up $5. That is not a
+hypothetical — it fired on the live testnet vault and blocked a winning
+account, which is the worst thing this product can do. Block someone once
+while they are winning and they will never trust the rule again.
 
-**Why The Graph?**
-The loss rule needs the trading wallet's inflows to the vault at the SPL
-level, classified against the vault's own registry, continuously. That is
-an indexing problem, and Substreams gives us typed decoding of both our
-program and the token program with a resumable cursor from The Graph Market.
-The alternative, polling RPC, is our labelled fallback, not the product.
+So where the venue answers, the venue decides. Hyperliquid settles its own
+trades and knows what is closed, so its realised PnL is the number the rule
+reads, taken from its public info API and never inferred from HyperEVM. The
+flow view is the fallback: for when the venue does not answer, and for a
+destination with no API at all, where over-counting exposure as loss is at
+least the safe direction to be wrong in. The switch is one line in
+`server/policy.ts` — `const venueDecides = !!venue` — and it changes the
+wording on the screen too: with the venue answering, a session line reads
+"$70 still at the venue", not "$70 lost", because saying "lost" would
+contradict the number printed above it.
 
-**Why Chainlink?**
-A commitment device is worthless if the operator can cave. The verdict is
-signed by a key that only exists inside a CRE confidential workflow, over an
-evaluation the enclave re-derives itself. Shield's server cannot forge or
-soften one user's verdict. We're honest that the current verdict is one
-enclave signature, not DON consensus; the native forwarder path is the
-upgrade.
+**What if the data source is wrong?**
+Then the worst that happens is a top-up pause of the user's own chosen length,
+and only if the attested loss meets the user's own trigger. A wrong verdict
+cannot move money, loosen a rule, block a cold transfer, block an exit, or
+invalidate the user's own pending proposals. The evidence hash is on-chain, so
+a wrong verdict is provably wrong after the fact.
 
-**Why this chain?**
-The user is on Solana (Axiom, Telegram bots). Both sponsors support Solana
-devnet today. Moving chains to fit a sponsor would have meant building for
-nobody.
+**Why would anyone voluntarily constrain themselves?**
+This is the hardest question about the product, and the answer is a screen
+rather than an argument. Step 0 of setup asks for the Hyperliquid account the
+user trades from and reads its public history before proposing a single rule —
+ledger updates and fills from Hyperliquid's info API, no credentials
+(`server/hyperliquid.ts`). It groups that history into sessions (activity
+separated by six hours of quiet), takes realised PnL from the venue's own
+`closedPnl` minus fees, and shows the user four numbers about themselves:
+how many sessions they have had, their typical session size (the median of
+what they deployed), their largest losing session, and how many sessions
+included a reload made while already down.
 
-**What happens if Shield disappears?**
-`client/recovery-cli.ts` plus any RPC URL: status, cancel, cold transfer,
-propose exit, execute matured proposals. The program is immutable after
-finalisation, so the rules keep working exactly as written forever.
+Above those numbers is one sentence generated from the same data, of the form
+"3 of your 4 largest losing sessions involved another reload." Nobody has to
+be persuaded that the reload after a loss is their problem; they are shown
+their own count of it, before they are asked to commit to anything.
 
-**Who holds the funds?**
-A program-derived account that only the program can sign for, and the
-program only moves funds to addresses the user registered, under the
-user's rules. The user's key is the only authority; there is no admin key.
+Then the rules are proposed from those numbers rather than from a template
+(`app/src/pages/Setup.tsx`): the median session size becomes the suggested
+bankroll, and the loss trigger, the daily limit, the pause length and the
+large-move threshold are all derived from it and from which patterns the
+history actually shows. The user changes any of them. An account with no
+history is fine — it says so, and the rules start from defaults.
 
-**Can the company steal funds?**
-No. There is no instruction that sends to an unregistered address, no
-authority change, no delegate. After `deploy.sh finalize` there is no
-upgrade authority either. Until that runs on the judged deployment, the
-honest answer is "the upgrade authority could", which is why it's a listed
-blocker.
+**Why these delays, and does any of this work?**
+The shape is not invented. Asymmetric commitment — instant to tighten, delayed
+to loosen — is the near-universal design in gambling regulation, which is the
+one field that has run this experiment at national scale. Marionneau, Luoma,
+Turowski & Hayer (2025), *Harm Reduction Journal* 22(1):15,
+doi:10.1186/s12954-024-01150-3, reviewing 30 European countries: "In all
+countries, lowering personal pre-commitment limits took place immediately or
+as soon as possible, but raising limits involved waiting times of different
+durations, ranging from 24 h to seven days."
 
-**Does AI control the user's money?**
-No. AI/monitor output is a signed number. The vault checks that number
-against the user's rule and applies the user's duration. It can only
-tighten one thing (top-ups), never loosen, never move, never block exits.
+The UK specifies Shield's exact mechanism, reconfirmation included. Gambling
+Commission RTS 12D requires that a limit increase take effect "only after a
+cooling-off period of at least 24 hours has elapsed and only once the customer
+has taken positive action at the end of the cooling off period to confirm
+their request", while "customer-led reductions to limits must be implemented
+immediately". Shield's 24-hour hold plus its "still want to?" reconfirmation
+is that, written in Solidity instead of in an operator's terms. Other
+jurisdictions chose other lengths: Sweden 72 hours, and not before the current
+week or month has expired (Spelförordning 2018:1475, 11 kap.); Australia seven
+days (COAG Decision RIS 2018); Ontario 24 hours (AGCO Registrar's Standards
+2.24). Shield's defaults — 24 hours to loosen, seven days to leave — sit
+inside that range.
 
-**What prevents AI from maliciously locking users?**
-The pause length is the user's; the trigger is the user's; the monitor can
-be removed via the 24h path; cold transfers and exits are untouched; a
-verdict cannot invalidate the user's own pending proposals; every verdict is
-nonce-bound so it can't be replayed.
+The exit cost is time and never money, deliberately. John (2020), *Management
+Science* 66(2):503–529, doi:10.1287/mnsc.2018.3236, ran a field experiment in
+which people designed their own commitment contracts backed by financial
+penalties: "55% of clients default and incur monetary losses". A delay costs an
+over-committed user nothing but patience; a forfeit transfers money away from
+the person who is already in trouble. Shield has no penalty, no forfeit and no
+fee for changing your mind — only a wait. And when the harder option is
+offered, people take it: Beshears, Choi, Harris, Laibson, Madrian & Sakong,
+NBER w21474 / *Journal of Public Economics* 183:104144, found that when
+accounts paid the same interest, "the most illiquid commitment account attracts
+more money than any of the other commitment accounts."
+
+The caveat belongs in the same breath, so here it is. Limit-setting has weak
+evidence of changing outcomes. Ivanova, Magnusson & Carlbring (2019),
+*Frontiers in Psychology* 10:639, doi:10.3389/fpsyg.2019.00639, an RCT with
+N=4,328, found that prompting people to set a deposit limit raised take-up
+from 6.5% to 45% but "did not affect subsequent net loss". In the same trial,
+30–40% of limit-setters later raised or removed their limits, and those who
+did lost more. So the honest claim is narrow: Shield's *shape* matches what
+regulators converged on and what the commitment-device literature supports.
+Nobody has shown that Shield changes anyone's outcome, and the largest trial
+of the weaker version of this idea showed no effect on losses. What that trial
+does support is where Shield puts its weight — loosening is the behaviour that
+preceded the bigger losses, so loosening is the path that should be slow, and
+in Shield it is the only path that is.
+
+One more finding shaped the tone rather than the mechanism. Riley, Oakes &
+Lawn (2024), *IJERPH* 21(8):998, report that uptake of these tools is low
+partly because "users view them as tools for individuals already experiencing
+gambling harm as opposed to protective tools for all users." Shield is a
+financial control layer for a trader, not a health product and not a
+diagnosis; the regulatory parallel above is about mechanism, not category. The
+app says the same thing on the screen where it would be easiest to get wrong:
+"Nothing here is a diagnosis; it's what you already know about yourself when
+you're calm."
 
 **Isn't this gambling-enabling software?**
-It is harm-reduction for people who are already trading. It never
-encourages a trade; it removes the reload. The behaviour screen is the
-first honest scoreboard many users will have seen.
+It is a control layer for people who are already trading, and it adds no
+capability to trade with. There is no order
+entry, no market list and no leverage control in the app — the primary action
+on Home is "Open Hyperliquid". Shield never encourages a trade; it removes the
+reload after a loss, which is the specific behaviour that turns a bad day into
+a bad year.
 
-**What's the business model?**
-Consumer: a small monthly fee or a basis-point fee on protected balances
-above a free tier. B2B: venues and bots integrate a "fund from Shield"
-button and reduce chargebacks/regulatory exposure. Later: the behavioural
-data product for the user themselves (never sold).
+## What is actually enforced
 
-**Who is the first user?**
-An 18–25 active Solana trader with $5–20k who funds Axiom or a Telegram
-bot several times a week and knows the reload is the problem.
+**What is enforced on-chain, and what is convention?**
+Enforced by `ShieldVault.sol`, with no way around it: the protected floor; the
+large-amount threshold that pushes a big
+top-up onto the delayed path; the cooldown, which blocks every top-up path and
+which no function can shorten; the destination registry and its permanent
+types; instant tightening; delayed loosening with mandatory reconfirmation;
+staleness of any proposal that a tightening has overtaken; the exit delay; and
+the exact bound on what a risk verdict may do. The rolling 24h release budget
+is also enforced on-chain, but it has the two defects described above and does
+not hold across an idle gap; the floor does.
 
-**What becomes a venture-scale company here?**
-A self-custodial "policy layer" between people and venues: commitment
-devices, limits, cooling-off, verified exits, across chains and off-chain
-venues, with the user's own history as the enforcement input. Wallets
-protect keys; nobody protects intent.
+Convention, i.e. the server and the app: which sessions are grouped together,
+what counts as a realised loss, when a verdict gets signed at all, every
+explanation and every number that is not a rule. If the server dies, none of
+the enforcement changes. If the server lies, invariant 9 in
+`docs/THREAT_MODEL.md` bounds the damage to a pause.
 
+**What stops Shield stealing the money?**
+`ShieldVault.sol` has no owner, no admin, no pauser, no proxy and no upgrade
+path. The constructor sets two immutable addresses and an EIP-712 domain
+separator; every state-changing function derives its subject from
+`msg.sender`. There is no function that sends USDC to an address that is not
+a registry entry the user themselves created. The bytecode at the deployed
+address is the final bytecode — there is no finalisation step still pending,
+because there is nothing to finalise. Shield holds no key that matters. The
+one thing Shield influences is whether a verdict gets signed, and a verdict
+can only extend a cooldown.
 
----
+**What happens if Shield disappears?**
+The contract keeps working exactly as written, forever, because nobody can
+change it. Every path is reachable with `cast send` against the public ABI and
+any RPC endpoint — the app is a convenience over the same calldata
+(`client/evm.ts`). Honest gap: `client/recovery-cli.ts` is Solana-only; there
+is no equivalent one-command EVM tool yet, so recovery today means the ABI and
+`cast`.
 
-## Added 2026-09-06 (Hyperliquid-first)
+**What can a risk verdict actually do?**
+Extend a cooldown. That is the whole list. The signed struct carries no
+duration, no floor, no limit, no amount and no destination — the duration is
+the user's own `lossCooldownSecs`, capped at 30 days. The verdict is rejected
+unless the attested loss meets the user's own trigger, the nonce strictly
+increases, it has not expired, and the signature recovers to the verifier the
+user pinned. It never touches `configVersion`, so it cannot invalidate the
+user's own pending proposals, and cold transfers and exits never read the
+cooldown at all.
 
-**Why Hyperliquid, and why can't Hyperliquid do this itself?**
-Because that's where the user trades. Hyperliquid's agent (API) wallets can
-only sign orders; every value-moving action needs the master key, and a user
-can't bind their own master key. So the boundary has to live outside the
-venue: in a vault the master key controls but cannot override. The vault
-funds the Hyperliquid account directly through Circle's CoreDepositWallet
-(`depositFor`), so "add capital" is exactly the action the rules govern.
+One consequence we state rather than hide: a compromised verifier key can
+chain verdicts and hold top-ups closed indefinitely, in 30-day increments. It
+still cannot move a dollar, and the user can remove the monitor through the
+loosening path — which is not cooldown-gated — in as little as an hour.
+
+## The stack
+
+**Why Hyperliquid, and why does the vault sit outside the venue?**
+Because that is where the user already trades, and HyperEVM is where a vault
+can live and still deliver into the venue in the same transaction: the vault
+calls Circle's `CoreDepositWallet.depositFor`, so "add capital to my trading
+account" is precisely the action the rules govern, with no bridge and no
+withdrawal step in between. The boundary has to sit outside the venue for a
+different reason, below.
+
+Verified on chain: the Privy embedded wallet released $5.00 from its vault
+straight into a HyperCore perps account in one transaction
+(`0x94960d1f…`, block 63581864) — USDC approval and transfer, vault →
+CoreDepositWallet → the HyperCore system address, a HyperCore credit, and
+`TopUpExecuted(amount=$5, instant=true, route=1)`.
+
+**What stops Hyperliquid, or your wallet, from just building this?**
+Nothing. Any venue or wallet could ship it in a week — a sub-account and an
+`unlockAfter` timestamp is a sprint of work, and we would not argue otherwise.
+The reason none of them can build it *credibly* is not technical.
+
+A venue that holds a customer's money against that customer's stated wish owns
+a liability. It therefore has to build an appeals path: a support queue, an
+override, an exception for the good customer who is very sure this time. Every
+self-exclusion scheme ever shipped by an operator also shipped a way to lift
+it. An appeals path is exactly what defeats a commitment device — the device
+works only because the answer is no, and an operator that can say yes will
+eventually be asked to.
+
+Shield's advantage is that there is nobody to ask. No owner, no admin, no
+support queue, no account manager, no relationship to trade on. The contract
+is immutable and every path derives its subject from `msg.sender`, so there is
+no address anywhere that can grant an exception — including ours. A venue
+cannot offer that, and neither can a wallet vendor, because both of them
+answer to you. That is also why the rules are in Solidity rather than in a
+vendor's policy engine: calm-you sets policy for tilted-you, and a policy a
+vendor can change on request is not a policy tilted-you has to live with.
+
+**What does Privy do, and what does it not enforce?**
+Privy is sign-in and the key. The embedded wallet is created by Privy on
+login and is the vault's authority — the contract gates every path on
+`msg.sender`, so that wallet is the only party that can act on the vault. Our
+wallet has a nonce of 4 — it signed four transactions itself, among them
+`registerOwner`, the $5 release to HyperCore, and a `proposeLoosen`.
+
+Privy enforces nothing about the vault's rules and we do not configure it to
+try: no policies, no quorums, no session signers. A user can export the key,
+and that changes nothing, because the rules bind the key rather than the app.
+Shield deliberately does not co-own keys, so there is no 2-of-2 in which
+Shield could hold a user's funds hostage.
+
+**What does the Chainlink enclave do, and what can't it do?**
+The whole risk evaluation runs inside a CRE confidential workflow —
+`handlerInTee` from `@chainlink/cre-sdk`, registered for AWS Nitro in
+`us-west-2`. The sensitive input is the verifier private key, fetched
+in-enclave with `runtime.getSecret` and used there to produce the EIP-712
+signature. That is the part that is genuinely confidential. The simulation was
+run and reproduced; the transcript is in `docs/evidence/cre-simulate.txt`, and
+the resulting verdict landed on chain 998 (tx `0x2e411cea…`, block 63584417)
+as `RiskVerdictApplied(nonce=1, reasonCode=1, realizedLossUsdc=$3.50,
+extended=true)`, leaving that vault in `cooldownReason=2 (RISK_VERDICT)`.
+
+What it cannot do: anything except extend a cooldown, as above. What we will
+not claim: that the capital flows are confidential. They are read over plain
+HTTP from a local endpoint and they are on-chain facts anyway. And the verdict
+today is one enclave signature, not a DON quorum — the native CRE EVM
+forwarder is the production upgrade, and it is not built.
+
+**What is The Graph doing, and what is the honest limitation?**
+`substreams-evm/` is a five-module Substreams package that decodes
+`ShieldVault.sol`'s events and USDC returns into typed flows and running
+totals, composed on The Graph's foundational `ethereum-common@v0.3.3` — its
+`index_events` module is the declared block filter for both maps, so the
+package only touches blocks that contain the vault's logs. The full stateful
+pipeline has been run live against a Graph Market provider and completed
+successfully; the transcript is `docs/evidence/substreams-live.txt`.
+
+The limitation, which belongs next to the claim every time it is made: that
+run returns no rows. The Graph indexes HyperEVM **mainnet** only — there is no
+testnet entry in its networks registry — and the vault is on testnet. So the
+running server reports `source.mode: "rpc"` and `/api/health` says so in plain
+words. The package is correct and streams; it has nothing to stream from until
+the contract is on mainnet.
 
 **Where is the money, concretely?**
-Protected capital: `ShieldVault.sol` on HyperEVM, credited to the user's
-address, no owner or admin. Bankroll: the user's Hyperliquid perps account.
-Nothing sits with Shield or Privy.
+Protected capital: in `ShieldVault.sol` on HyperEVM, accounted to the user's
+own address, no owner and no admin. Bankroll: the user's own Hyperliquid perps
+account. Nothing sits with Shield, and nothing sits with Privy.
 
-**What does Privy actually enforce?**
-Nothing about the vault's rules, and we say so. Privy gives the user a
-self-custodial embedded wallet with email/passkey sign-in; that wallet is the
-vault's authority and signs the agent approval and the returns. Privy
-policies can add defence in depth on the trading wallet (deny withdrawals to
-unknown destinations, deny key export) but the commitment is the contract.
+**Does AI control the user's money?**
+No, and there is no AI in the shipped product at all. The verdict is a signed
+number that the contract checks against a rule the user set. `docs/AI_USAGE.md`
+is about AI writing this repository, which is a different thing entirely, and
+we are not claiming an AI track on the strength of it.
 
-**Can the user export the Privy key and bypass Shield?**
-They can export it (Privy documents that users always can unless a 2-of-2
-quorum with the app exists, which we deliberately don't create). Exporting
-doesn't help: the rules bind the key, not the app. There is no path in the
-contract that moves protected USDC except the five governed ones.
+## The company
 
-**Why is the demo on Anvil rather than HyperEVM?**
-HyperEVM testnet only serves addresses that have deposited on Hyperliquid
-mainnet, and The Graph indexes HyperEVM mainnet only. The contract, server,
-CRE path and app were verified end to end on Anvil with mocks that implement
-the documented USDC and CoreDepositWallet interfaces; the live deployment is
-one `forge create` plus a funded address (HUMAN_ACTIONS.md #2).
+**Is this a feature or a company?**
+Honestly, the first version is a feature — a commitment device around one
+venue. The company is the layer it generalises into: a self-custodial policy
+layer that sits between people and every venue they use, with their own
+verified history as the enforcement input. Wallets protect keys; exchanges
+protect themselves; nobody protects intent. That layer is chain- and
+venue-agnostic by construction, which is why the same rule engine already runs
+on two chains and why every screen in the app reads from a chain-agnostic
+view.
 
-**Is the Solana code dead?**
-No: it is the same rule engine on another chain, with 46 tests and a working
-local demo, and it is the reason the app is chain-agnostic. It is documented
-as v0.
+**What is the business model?**
+Consumer: a small subscription, or basis points on protected balances above a
+free tier. B2B: venues and bots integrate a "fund from Shield" button, which
+is a real reduction in their chargeback and regulatory exposure. Neither is
+tested — this is a hackathon build with no users.
 
-**What happens when the 24 hours end?**
-Nothing. The weakening stays pending until the user confirms it again
-("Still want to?"), and any tightening in between invalidates it. That is
-the mechanic that makes calm-you the final decision-maker.
+**Who is the first user?**
+An active Hyperliquid trader whose own fill history shows the pattern: a
+losing session, then another deposit within the hour. Setup shows them their
+own count of it before it proposes anything. They keep trading exactly as fast
+as they like inside the number they choose. The thing they give up is the
+ability to refill on tilt.
+
+## What is not built
+
+**What is not built yet?**
+- The repository is still private, and all three sponsor tracks require a
+  public repo. That is the top blocker, ahead of everything technical.
+- No mainnet deployment. It is the single change that turns The Graph's
+  indexing limitation from a caveat into a working pipeline.
+- No demo video, which every track requires.
+- No DON quorum on verdicts — one enclave signature.
+- No EVM recovery CLI; recovery is the ABI plus `cast`.
+- Two disclosed contract limitations: the velocity refund after a window roll,
+  and the unbounded self-imposed delays. Both in `docs/THREAT_MODEL.md`.
+- No users, no audit, no mainnet money.
+
+**How can I verify any of this myself?**
+There is no public block explorer that indexes HyperEVM testnet — we checked
+four and none of them resolve the vault or its transactions, so we link none
+of them. The verifiable form is direct:
+
+```
+cast tx 0x94960d1f937a3e36e1b16e69922a2579e77b584ed25b2ced044da7991fe889be --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
+cast call 0xcdB6d631A00857584e70a21d800f51C5776302Fe "usdc()(address)" --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
+cd contracts && forge install foundry-rs/forge-std --no-git && forge test    # 44 passing
+```
+
+On HyperEVM mainnet `hyperevmscan.io` works — one more reason the mainnet
+deploy matters.

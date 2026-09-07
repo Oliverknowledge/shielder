@@ -79,7 +79,10 @@ export function Overview() {
   const pending = proposals.filter((p) => p.category !== ProposalKind.TopUp);
   const topUpPending = proposals.find((p) => p.category === ProposalKind.TopUp);
   const h24 = server?.profile.windows.h24;
-  const lossToday = h24 && Number(h24.realisedLoss) > 0 ? h24.realisedLoss : null;
+  // The assessment, not the raw flow window: the flow view books capital that
+  // is still open at the venue as a loss, which is how this screen once told a
+  // user they had lost $69 directly above the venue reporting a $5 gain.
+  const lossToday = server && Number(server.assessment.realizedLossUsdc) > 0 ? server.assessment.realizedLossUsdc : null;
   const labelOf = (owner: string) => wallets.find((w) => w.owner === owner)?.label ?? `${owner.slice(0, 4)}…`;
 
   const approaching = !cooldownActive && vault.velocityThreshold > 0n && remainingToday * 4n <= vault.velocityThreshold;
@@ -100,9 +103,10 @@ export function Overview() {
         text: (
           <>
             <b>No new trading capital</b> until {clockTime(Number(vault.cooldownUntil), now)}{byRule ? ` · your loss rule fired${lossToday ? ` after ${usd(lossToday)} in losses` : ""}` : " · you paused it"}. What is already in {venue.label} is still yours to trade.
+            {byRule && !lossToday ? <> Your realised loss today is {usd(0)}: this pause was set under an earlier rule that counted money still sitting at {venue.label} as a loss. That is fixed, but a pause already on chain runs its full length.</> : null}
           </>
         ),
-        right: <span className="num right hide-xs" style={{ fontWeight: 600 }}><Countdown until={vault.cooldownUntil} now={now} format="compact" /></span>,
+        right: <span className="num right" style={{ fontWeight: 600 }}><Countdown until={vault.cooldownUntil} now={now} format="compact" /></span>,
       };
     }
     if (topUpPending && topUpPending.action.kind === "topUp") {
@@ -148,9 +152,9 @@ export function Overview() {
 
         <div className="split">
           <div className="split-side">
-            <div className="k">Protected</div>
+            <div className="k">{balance > vault.protectedFloor ? "In the vault" : "Protected"}</div>
             <div className="v">{usd(balance)}</div>
-            <div className="s">{balance === 0n ? <>Nothing deposited yet · floor {usd(vault.protectedFloor)}</> : balance <= vault.protectedFloor ? <>All of it is at or below your {usd(vault.protectedFloor)} floor.</> : <>{usd(vault.protectedFloor)} of it can never be released.</>}</div>
+            <div className="s">{balance === 0n ? <>Nothing deposited yet · floor {usd(vault.protectedFloor)}</> : balance <= vault.protectedFloor ? <>All of it is at or below your {usd(vault.protectedFloor)} floor.</> : <>{usd(vault.protectedFloor)} of it can never be released to trading.</>}</div>
           </div>
           <div className="split-mid" aria-hidden>
             <span className="bar" />
@@ -306,10 +310,14 @@ export function Overview() {
           )}
           <div className="row wrap" style={{ marginTop: 14, gap: 8 }}>
             <a className="btn btn-secondary btn-sm" href={venue.url} target="_blank" rel="noreferrer">Open {venue.label} <Icon name="external" size={14} /></a>
+            {/* The obvious bypass — fund the venue directly and never touch the
+                vault — deserves to be answered by the product rather than by a
+                document. Saying it plainly is also the honest version of what
+                Shield does and does not control. */}
             <span className="tiny muted">
               {venue.deliversToCore
-                ? "Released capital is deposited straight into this account on HyperCore."
-                : "Fills, positions and PnL always come from Hyperliquid's own API — the Shield chain never sees them."}
+                ? "Released capital is deposited straight into this account on HyperCore. Money you send here yourself never passes through Shield, and none of your rules apply to it."
+                : "Fills, positions and PnL always come from Hyperliquid's own API — the Shield chain never sees them. Money you send here yourself never passes through Shield, and none of your rules apply to it."}
             </span>
           </div>
         </div>
@@ -363,7 +371,7 @@ export function Overview() {
             <Link to="/protection">Change</Link>
           </div>
           <div className="notice-list">
-            <div className="notice"><Dot tone="protect" /><span>Never below <b className="num">{usd(vault.protectedFloor)}</b>, whatever happens.</span></div>
+            <div className="notice"><Dot tone="protect" /><span>Never below <b className="num">{usd(vault.protectedFloor)}</b> for trading. Only a full exit, after its delay, can go under it.</span></div>
             <div className="notice"><Dot tone={remainingToday === 0n ? "pending" : "protect"} /><span>At most <b className="num">{usd(vault.velocityThreshold)}</b> released in 24 hours. <span className="muted">{usd(remainingToday)} left.</span></span></div>
             <div className="notice"><Dot tone={cooldownActive && byRule ? "blocked" : "protect"} /><span>Lose <b className="num">{usd(vault.lossTriggerUsdc)}</b> in a day and new capital pauses for <b>{hoursLabel(vault.lossCooldownSecs)}</b>.</span></div>
             <div className="notice"><Dot tone="pending" /><span>Weakening any rule waits <b>{hoursLabel(vault.loosenCooldownSecs)}</b> and you have to confirm again. Tightening is instant.</span></div>

@@ -3,7 +3,7 @@
  *  - GetMeSafe: hold 2s → an instant tighten that locks new funding until
  *    tomorrow (and, when the user picks them, stricter limits). Real on-chain
  *    transactions; nothing here can weaken anything.
- *  - ResetScreen: 90 calm seconds with the facts, then only safe options.
+ *  - ResetScreen: a short pause with the facts, then only safe options.
  *    It never unlocks protected capital.
  */
 import { useEffect, useState } from "react";
@@ -12,7 +12,6 @@ import { motion } from "motion/react";
 import { useShield } from "../lib/shield";
 import { useAction } from "../lib/actions";
 import { Icon, Sheet } from "./ui";
-import { HoldButton } from "./HoldButton";
 import { usd, clockTime, hoursLabel } from "../lib/format";
 import { OwnerKind, type TightenView } from "../../../client/views";
 import { useVenue } from "../lib/venue";
@@ -76,9 +75,13 @@ export function GetMeSafe({ open, onClose, context }: { open: boolean; onClose: 
               </span>
             </label>
           )}
-          <HoldButton onComplete={() => void go()} disabled={!!busy} className="hold-protect">
-            {busy ? "Confirming…" : "Hold to get safe"}
-          </HoldButton>
+          {/* A press, not a hold. This path only ever tightens, and the landing
+              page promises that moving toward safety is instant — a two-second
+              hold that aborts if a thumb drifts is friction against the one
+              direction Shield says it never resists. */}
+          <button className="btn btn-block btn-lg hold-protect" disabled={!!busy} onClick={() => void go()}>
+            {busy ? "Confirming…" : "Get safe"}
+          </button>
           {context === "blocked" && <p className="tiny muted" style={{ textAlign: "center" }}>Getting safe is always instant, even during a cooldown.</p>}
         </div>
       )}
@@ -89,10 +92,13 @@ export function GetMeSafe({ open, onClose, context }: { open: boolean; onClose: 
 export function ResetScreen({ open, onClose, attempted, onStopForTonight }: { open: boolean; onClose: () => void; attempted: bigint; onStopForTonight: () => void }) {
   const { vault, balance, server, now } = useShield();
   const venue = useVenue();
-  const [left, setLeft] = useState(90);
+  const [left, setLeft] = useState(10);
+  // The two choices below are "carry on with what you already have" and "stop".
+  // Neither can move protected capital — the vault has already refused — so
+  // disabling them buys nothing and turns a pause into a lock.
   useEffect(() => {
     if (!open) return;
-    setLeft(90);
+    setLeft(10);
     const t = setInterval(() => setLeft((v) => Math.max(0, v - 1)), 1000);
     return () => clearInterval(t);
   }, [open]);
@@ -100,17 +106,20 @@ export function ResetScreen({ open, onClose, attempted, onStopForTonight }: { op
   const execLabel = venue.label;
   const bankroll = venue.bankroll ?? 0n;
   const h24 = server?.profile.windows.h24;
-  const loss = h24 ? BigInt(h24.realisedLoss) : 0n;
+  // The number the rule acts on, not the raw flow shortfall — the same fix as
+  // Home, Behaviour and the blocked screen. This tile was the fourth place the
+  // app contradicted itself about the same night.
+  const loss = server ? BigInt(server.assessment.realizedLossUsdc) : 0n;
   const reloads = h24?.topUpCount ?? 0;
-  const pct = left / 90;
+  const pct = left / 10;
   const r = 76, c = 2 * Math.PI * r;
 
   // Portal to <body>: the reset has to cover the topbar and tab bar, and the
   // page's own animated container would otherwise trap it in a stacking context.
   return createPortal(
     <motion.div className="reset-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} role="dialog" aria-modal="true">
-      <p className="eyebrow">Ninety seconds</p>
-      <h2 className="title-l" style={{ marginTop: 10, maxWidth: "18ch" }}>The trade will still exist in {left > 0 ? `${left} second${left === 1 ? "" : "s"}` : "a moment"}.</h2>
+      <p className="eyebrow">A moment</p>
+      <h2 className="title-l" style={{ marginTop: 10, maxWidth: "20ch" }}>Your money will still be here in {left > 0 ? `${left} second${left === 1 ? "" : "s"}` : "a moment"}.</h2>
       <div className="reset-ring" aria-hidden>
         <svg width="168" height="168" viewBox="0 0 168 168">
           <circle cx="84" cy="84" r={r} fill="none" stroke="var(--line)" strokeWidth="6" />
@@ -122,14 +131,14 @@ export function ResetScreen({ open, onClose, attempted, onStopForTonight }: { op
         <div><div className="k">In {execLabel} right now</div><div className="v">{usd(bankroll)}</div></div>
         <div><div className="k">Lost in the last 24h</div><div className="v" style={{ color: loss > 0n ? "var(--blocked)" : undefined }}>{usd(loss)}</div></div>
         <div><div className="k">Releases today</div><div className="v">{reloads}</div></div>
-        <div><div className="k">You just tried to add</div><div className="v">{usd(attempted)}</div></div>
+        {attempted > 0n && <div><div className="k">You just tried to add</div><div className="v">{usd(attempted)}</div></div>}
         <div style={{ gridColumn: "1 / -1" }}><div className="k">Still protected</div><div className="v c-protect">{usd(balance)}</div></div>
       </div>
       <motion.div className="reset-actions" initial={{ opacity: 0.35 }} animate={{ opacity: left === 0 ? 1 : 0.35 }} transition={{ duration: 0.6 }}>
-        <p className="eyebrow" style={{ textAlign: "center", marginBottom: 2 }}>{left === 0 ? "What do you want to do?" : "Options unlock when the timer ends"}</p>
-        <button className="btn btn-secondary btn-lg" disabled={left > 0} onClick={onClose}>Keep trading with my existing {usd(bankroll)}</button>
-        <button className="btn btn-lg" disabled={left > 0} onClick={onStopForTonight}>Stop for tonight</button>
-        <p className="tiny muted" style={{ textAlign: "center" }}>There is no option to add the {usd(attempted)}. That was the point of setting the rule.</p>
+        <p className="eyebrow" style={{ textAlign: "center", marginBottom: 2 }}>What do you want to do?</p>
+        <button className="btn btn-secondary btn-lg" onClick={onClose}>Keep trading with my existing {usd(bankroll)}</button>
+        <button className="btn btn-lg" onClick={onStopForTonight}>Lock new funding for tonight</button>
+        <p className="tiny muted" style={{ textAlign: "center" }}>{attempted > 0n ? `Nothing here adds the ${usd(attempted)}. You already made that call.` : "Nothing here releases protected capital. You already made that call."}</p>
       </motion.div>
       <button className="btn btn-ghost btn-sm" style={{ position: "absolute", top: 16, right: 16 }} onClick={onClose} aria-label="Close">Close</button>
     </motion.div>,

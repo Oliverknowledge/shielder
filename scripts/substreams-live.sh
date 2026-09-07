@@ -18,7 +18,10 @@ case "$STACK" in
   hyperevm)
     ENDPOINT="${SUBSTREAMS_HYPEREVM_ENDPOINT:-hyperevm.substreams.pinax.network:443}"
     TOKEN="${SUBSTREAMS_HYPEREVM_API_TOKEN:-${SUBSTREAMS_API_TOKEN:-}}"
-    DIR="$ROOT/substreams-evm"; MANIFEST="substreams.yaml"; MODULE="map_vault_flows"
+    # The committed .spkg, not the manifest: running the manifest rebuilds the
+    # wasm, which needs Rust + the wasm32 target + protoc. The package is
+    # committed precisely so a judge without that toolchain can run this.
+    DIR="$ROOT/substreams-evm"; MANIFEST="${SHIELD_SPKG_EVM:-shield-evm-behavioral-memory-v0.1.0.spkg}"; MODULE="map_vault_flows"
     if [ -z "$START" ]; then
       RPC="${HYPEREVM_RPC_URL:-https://rpc.hyperliquid.xyz/evm}"
       HEAD_HEX=$(curl -s -X POST "$RPC" -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' | sed -E 's/.*"result":"0x([0-9a-f]+)".*/\1/')

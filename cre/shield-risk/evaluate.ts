@@ -5,7 +5,7 @@
  * `fetch`). No CRE types here, no Node built-ins, no nulls in the result.
  */
 import { deriveProfile, type Flow, type FlowKind } from "../../server/behaviour";
-import { assess, buildUnsignedVerdict, signVerdict, type PolicyView } from "../../server/policy";
+import { assess, buildUnsignedVerdict, signVerdict, type PolicyView, type VenueLoss } from "../../server/policy";
 import { toHex, verdictToJson } from "../../client/verdict";
 import { evmAddressOf, evmVerdictToJson, signEvmVerdict } from "./evm-verdict";
 
@@ -45,6 +45,7 @@ export interface EvaluationResult {
 interface VaultView {
   state: { lossTriggerUsdc: string; lossCooldownSecs: string; cooldownUntil: string; lastVerdictNonce: string; riskVerifier: string };
   verdicts?: Array<{ relayed: boolean; issuedAt: number }>;
+  registry?: Array<{ owner: string; kind: number; route: number; active: boolean }>;
 }
 
 interface FlowsView {
@@ -82,6 +83,30 @@ export function base64Encode(bytes: Uint8Array): string {
   return out;
 }
 
+/** The venue's own settled PnL over the window, read from its public info API. */
+function readVenueLoss(io: EnclaveIO, view: VaultView, config: EnclaveConfig, now: number): VenueLoss | null {
+  const host = config.chainId === 999 ? "https://api.hyperliquid.xyz/info" : config.chainId === 998 ? "https://api.hyperliquid-testnet.xyz/info" : null;
+  if (!host) return null; // no venue API for this chain (Anvil): flow view only
+  const account = (view.registry ?? []).find((r) => r.active && r.kind === 0 && r.route === 1)?.owner;
+  if (!account) return null;
+  try {
+    const since = (now - 86_400) * 1000;
+    const res = io.postJson(host, JSON.stringify({ type: "userFillsByTime", user: account, startTime: since }));
+    if (res.status < 200 || res.status >= 300) return null;
+    const fills = JSON.parse(res.body) as Array<{ closedPnl: string; fee: string; time: number }>;
+    let net = 0;
+    let lastFillAt: number | null = null;
+    for (const f of fills) {
+      net += Number(f.closedPnl) - Number(f.fee);
+      lastFillAt = Math.max(lastFillAt ?? 0, Math.floor(f.time / 1000));
+    }
+    const network = config.chainId === 999 ? "mainnet" : "testnet";
+    return { source: "hyperliquid", network, account, realisedLossUsdc: net < 0 ? BigInt(Math.round(-net * 1e6)) : 0n, fills: fills.length, lastFillAt };
+  } catch {
+    return null; // unreachable: fall back to the flow view, never guess
+  }
+}
+
 export function evaluateVault(io: EnclaveIO, config: EnclaveConfig, vault: string): EvaluationResult {
   if (!vault) throw new Error("trigger payload must include { vault: <address> }");
   const isEvm = config.chain === "evm";
@@ -111,7 +136,21 @@ export function evaluateVault(io: EnclaveIO, config: EnclaveConfig, vault: strin
   };
   const lastRelayed = (view.verdicts ?? []).filter((v) => v.relayed).map((v) => v.issuedAt);
   const sinceLossAt = lastRelayed.length ? Math.max(...lastRelayed) : 0;
-  const a = assess(profile, policy, now, sinceLossAt);
+
+  /**
+   * The flow view cannot tell capital that was lost from capital that is still
+   * deployed, so on its own it books an open position as a realised loss and can
+   * pause a trader the venue says is winning. The server already defers to the
+   * venue's own settlement where the venue answers; the enclave has to do the
+   * same, or the two signers disagree about the rule and the enclave is the one
+   * that signs. It reads the venue directly over its own HTTP capability rather
+   * than taking the server's number, which is the whole point of evaluating here.
+   *
+   * Unreachable venue falls back to the flow view, exactly as the server does:
+   * over-counting exposure is the safe direction to be wrong in.
+   */
+  const venue = readVenueLoss(io, view, config, now);
+  const a = assess(profile, policy, now, sinceLossAt, venue);
 
   io.log(
     `Enclave evaluation: vault=${vault} flows=${flows.length} realisedLoss24h=${a.realizedLossUsdc} trigger=${policy.lossTriggerUsdc} ` +

@@ -71,14 +71,14 @@ export function Welcome() {
       </section>
 
       <div className="notice-list" style={{ margin: "24px 4px 28px" }}>
-        <div className="notice"><Dot tone="protect" /><span><b>Real enforcement.</b> Not a notification, not a setting. When a top-up is blocked, the money cannot move.</span></div>
+        <div className="notice"><Dot tone="protect" /><span><b>Real enforcement.</b> Not a notification, not a setting. When a top-up is blocked, the vault refuses it — and no one at Shield can make an exception.</span></div>
         <div className="notice"><Dot tone="pending" /><span><b>Tighten fast, loosen slowly.</b> Making yourself safer is instant. Making yourself less safe waits 24 hours.</span></div>
         <div className="notice"><Dot tone="bankroll" /><span><b>Your history, your rules.</b> Shield watches what actually came back from your trading wallet and pauses reloads after real losses.</span></div>
       </div>
 
       <div className="card">
         <h2 className="title" style={{ marginBottom: 4 }}>Connect a wallet</h2>
-        <p className="small muted" style={{ marginBottom: 16 }}>Your wallet is the only authority over the vault. Shield never holds keys.</p>
+        <p className="small muted" style={{ marginBottom: 16 }}>Your wallet is the only authority over the vault, and the only key that can move your money. Shield's monitor holds one signing key whose entire power is to extend a cooldown you configured.</p>
         <div className="stack-s">
           {privy.available && (
             <button className="btn btn-block btn-lg" disabled={!privy.ready} onClick={() => privy.login()}>
@@ -138,7 +138,7 @@ export function Welcome() {
       </div>
 
       <p className="tiny muted" style={{ marginTop: 20 }}>
-        {CHAIN === "evm" ? "A vault contract on HyperEVM enforces the rules and funds your Hyperliquid account directly." : "A Solana program enforces the rules."} The Graph Substreams remembers what came back. A Chainlink CRE confidential workflow signs the loss verdicts. All of it is code you can read.
+        {CHAIN === "evm" ? "A vault contract on HyperEVM enforces the rules and funds your Hyperliquid account directly." : "A Solana program enforces the rules."} A Substreams package composed on The Graph is its behavioural memory, streaming live from a Graph Market provider — and returning nothing on testnet, which the app says where it matters. A Chainlink CRE workflow signs the loss verdicts inside a TEE handler. All of it is code you can read.
       </p>
     </main>
   );

@@ -5,7 +5,7 @@ import { usd, ago, dateTime, short, timeOnly, dayLabel, hoursLabel } from "../li
 import { OwnerKind } from "../../../client/views";
 import { getJson, type EvidenceJson, type HlProfileJson } from "../lib/api";
 import { usePrefs } from "../lib/prefs";
-import { VENUE_NAME, HL_NET } from "../lib/venue";
+import { VENUE_NAME, HL_NET, useVenue } from "../lib/venue";
 import { Link } from "react-router-dom";
 
 const KIND_LABEL: Record<string, string> = {
@@ -18,16 +18,24 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 export function Behaviour() {
-  const { server, serverError, serverLoading, wallets, vault, now, signer, chain } = useShield();
+  const { server, serverError, serverLoading, wallets, vault, now, signer, chain, health } = useShield();
   const toast = useToast();
   const [prefs] = usePrefs(signer?.address ?? null);
+  const venue = useVenue();
+  // The one genuinely personal thing in the product — how long this trader
+  // waits before reloading after a loss, how many of their worst sessions
+  // involved a second one — was gated on a localStorage key written once during
+  // onboarding. Sign in on another device, or clear storage, and the whole
+  // section silently vanished. The address is on chain: it is the registered
+  // execution destination, which is the only place Shield can release to.
+  const hlAddress = venue.address ?? prefs.hyperliquidAddress ?? null;
   const [hl, setHl] = useState<HlProfileJson | null>(null);
   useEffect(() => {
     let cancelled = false;
-    if (!prefs.hyperliquidAddress) { setHl(null); return; }
-    getJson<HlProfileJson>(`${API_URL}/api/hyperliquid/${prefs.hyperliquidAddress}?network=${HL_NET}`).then((p) => { if (!cancelled) setHl(p); }).catch(() => null);
+    if (!hlAddress) { setHl(null); return; }
+    getJson<HlProfileJson>(`${API_URL}/api/hyperliquid/${hlAddress}?network=${HL_NET}`).then((p) => { if (!cancelled) setHl(p); }).catch(() => null);
     return () => { cancelled = true; };
-  }, [prefs.hyperliquidAddress]);
+  }, [hlAddress]);
   const [evidence, setEvidence] = useState<EvidenceJson | null>(null);
   const [showAllFlows, setShowAllFlows] = useState(false);
   const labelOf = (owner: string) => wallets.find((w) => w.owner === owner)?.label ?? short(owner);
@@ -67,7 +75,11 @@ export function Behaviour() {
   const tradingLabel = execWallets.map((w) => labelOf(w.owner)).join(" and ") || "your trading wallet";
   const denom = Number(sent > returned ? sent : returned) || 1;
   const w = (x: bigint) => `${(Number(x) / denom) * 100}%`;
-  const loss24 = BigInt(p.windows.h24.realisedLoss);
+  const loss24 = BigInt(server.assessment.realizedLossUsdc);
+  const watchedFor = vault ? Math.max(0, now - Number(vault.createdAt)) : 0;
+  const releases30d = p.windows.d30.topUpCount;
+  /** A verdict that attested more than the current rule would. */
+  const supersededVerdict = server.verdicts.find((v) => BigInt(v.verdict.realizedLossUsdc) > loss24) ?? null;
 
   const openEvidence = async (hash: string) => {
     try {
@@ -98,21 +110,21 @@ export function Behaviour() {
               You released <span className="num">{usd(sent)}</span> to {tradingLabel}. <span className={`num ${returned >= sent ? "c-protect" : "c-blocked"}`}>{usd(returned)}</span> came back.
             </h2>
             <div style={{ marginTop: 20 }}>
-              <div className="capital" style={{ height: 18 }} role="img" aria-label={`Came back ${usd(returned)}, still out ${usd(open)}, lost ${usd(lost)}`}>
+              <div className="capital" style={{ height: 18 }} role="img" aria-label={`Came back ${usd(returned)}, still out ${usd(open)}, not back yet ${usd(lost)}`}>
                 {returned > 0n && <i style={{ flexBasis: w(returned), background: "var(--protect)" }} />}
                 {open > 0n && <i style={{ flexBasis: w(open), background: "var(--bankroll-2)" }} />}
-                {lost > 0n && <i style={{ flexBasis: w(lost), background: "var(--blocked)" }} />}
+                {lost > 0n && <i style={{ flexBasis: w(lost), background: "var(--bankroll-2)" }} />}
               </div>
               <div className="legend">
                 <span><i style={{ background: "var(--protect)" }} />Came back <b>{usd(returned)}</b></span>
                 {open > 0n && <span><i style={{ background: "var(--bankroll-2)" }} />Still out <b>{usd(open)}</b></span>}
-                {lost > 0n && <span><i style={{ background: "var(--blocked)" }} />Realised loss <b>{usd(lost)}</b></span>}
-                {gained > 0n && <span><i style={{ background: "var(--protect)" }} />Realised gain <b>{usd(gained)}</b></span>}
+                {lost > 0n && <span><i style={{ background: "var(--bankroll-2)" }} />Still at the venue <b>{usd(lost)}</b></span>}
+                {gained > 0n && <span><i style={{ background: "var(--protect)" }} />Came back extra <b>{usd(gained)}</b></span>}
               </div>
             </div>
             {loss24 > 0n && (
               <p className="dim" style={{ marginTop: 16 }}>
-                <b className="c-blocked num">{usd(loss24)}</b> of that was lost in the last 24 hours{vault ? `, against your ${usd(vault.lossTriggerUsdc)} trigger` : ""}.
+                <b className="c-blocked num">{usd(loss24)}</b> of that is a realised loss in the last 24 hours{vault ? `, against your ${usd(vault.lossTriggerUsdc)} trigger` : ""}.
               </p>
             )}
           </>
@@ -156,12 +168,17 @@ export function Behaviour() {
           )}
           <div className="notice">
             <Dot tone={p.reloadsAfterLoss7d > 0 ? "blocked" : "protect"} />
-            <span>{p.reloadsAfterLoss7d > 0 ? `You reloaded within 3 hours of a loss ${p.reloadsAfterLoss7d} time${p.reloadsAfterLoss7d === 1 ? "" : "s"} this week.` : "No reloads within 3 hours of a loss this week."}</span>
+            {/* A clean bill of health for a week that has not happened yet is
+                the fastest way to make every other number here look invented. */}
+            <span>{p.reloadsAfterLoss7d > 0 ? `You reloaded within 3 hours of a loss ${p.reloadsAfterLoss7d} time${p.reloadsAfterLoss7d === 1 ? "" : "s"} this week.` : watchedFor < 7 * 86400 ? `No reloads within 3 hours of a loss so far. Shield has been watching for ${hoursLabel(watchedFor)}.` : "No reloads within 3 hours of a loss this week."}</span>
           </div>
           {Number(p.medianTopUp30d) > 0 && (
             <div className="notice">
               <Dot tone="neutral" />
-              <span>Your typical release is {usd(p.medianTopUp30d)}. {usd(p.velocity24h)} went to trading in the last 24 hours.</span>
+              {/* "Typical" from a sample of one is not an observation, and
+                  comparing that median to the same single release makes it a
+                  tautology dressed as insight. */}
+              <span>{releases30d >= 3 ? <>Your typical release is {usd(p.medianTopUp30d)}. {usd(p.velocity24h)} went to trading in the last 24 hours.</> : <>{usd(p.velocity24h)} went to trading in the last 24 hours. That is release {releases30d} — not enough yet to say what is typical for you.</>}</span>
             </div>
           )}
         </div>
@@ -182,6 +199,16 @@ export function Behaviour() {
                 <button className="btn btn-ghost btn-sm" onClick={() => void openEvidence(v.verdict.evidenceHash)}>Evidence</button>
               </div>
             ))}
+            {/* A verdict is permanent once it is on chain, but the rule that
+                produced it is not. Without this, the screen shows "$69.50
+                attested" one inch above "$0, below your trigger" and looks like
+                it cannot count. Saying which rule armed it is both the honest
+                explanation and a better answer than the contradiction. */}
+            {supersededVerdict && (
+              <p className="tiny muted" style={{ marginTop: 10 }}>
+                Verdicts stay on chain once applied, and the pause runs its full length. #{supersededVerdict.verdict.nonce} attested {usd(supersededVerdict.verdict.realizedLossUsdc)} under Shield's earlier rule, which counted money still sitting at the venue as a loss. It doesn't any more: where {VENUE_NAME} answers, its own settlement decides.
+              </p>
+            )}
           </div>
         )}
       </section>
@@ -224,7 +251,12 @@ export function Behaviour() {
               <div key={`${f.signature}-${f.kind}-${f.amount}`} className={`tl-item ${f.outbound ? "out" : "in"}`}>
                 <div className="row-between">
                   <div style={{ minWidth: 0 }}>
-                    <div className="small"><b>{KIND_LABEL[f.kind] ?? f.kind}</b> · {f.outbound ? "to" : "from"} {labelOf(f.counterparty)}</div>
+                    {/* labelOf matches the counterparty against the registered
+                        destinations, so a deposit the owner made from their own
+                        wallet was being labelled "from Hyperliquid" — as if the
+                        venue had funded them. A deposit only ever comes from a
+                        depositor, and naming the venue there is simply wrong. */}
+                    <div className="small"><b>{KIND_LABEL[f.kind] ?? f.kind}</b>{f.kind === "DEPOSIT" ? <> · from {f.counterparty.toLowerCase() === signer?.address.toLowerCase() ? "your wallet" : short(f.counterparty)}</> : <> · {f.outbound ? "to" : "from"} {labelOf(f.counterparty)}</>}</div>
                     <div className="tiny muted">{dateTime(f.blockTime)} · <ExplorerLink sig={f.signature} /></div>
                   </div>
                   <b className="num" style={{ whiteSpace: "nowrap" }}>{f.outbound ? "−" : "+"}{usd(f.amount)}</b>
@@ -236,7 +268,8 @@ export function Behaviour() {
       </section>
 
       <p className="tiny muted" style={{ marginTop: 32 }}>
-        Vault flows above: {server.source.mode === "substreams" ? `live from The Graph Substreams · ${server.source.endpoint}` : `indexed from ${server.network === "anvil" ? "Anvil" : chain === "evm" ? "HyperEVM" : "Solana"} logs at ${server.source.endpoint}. The Graph Substreams package streams the same flows where the network is indexed.`}
+        Vault flows above: {server.source.mode === "substreams" ? `live from The Graph Substreams · ${server.source.endpoint}` : `indexed from ${server.network === "anvil" ? "Anvil" : chain === "evm" ? "HyperEVM" : "Solana"} logs at ${server.source.endpoint}.`}
+        {server.source.mode !== "substreams" && health?.substreamsAvailable ? ` The Graph Substreams package streams the same flows, but not here — ${health.substreamsAvailable.replace(/^no: /, "")}.` : ""}
         {hl ? ` Fills, positions and PnL above: read from ${VENUE_NAME}'s own API — HyperEVM never sees them.` : ""}
       </p>
 

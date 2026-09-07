@@ -145,6 +145,9 @@ export function Setup() {
   // it directly. Shield holds the rest, and keeps a small reserve above the
   // floor so the daily reload has something to draw on.
   const dep = n(draft.deposit);
+  // initializeVault, then one registerOwner per destination — each its own
+  // transaction and its own wallet prompt.
+  const activateTxCount = 1 + 1 + (draft.coldAddress ? 1 : 0);
   const bankroll = Math.min(n(draft.bankroll), dep);
   const treasury = Math.max(0, dep - bankroll);
   const reserve = Math.min(Math.round(treasury * 0.25), n(draft.daily) * 2);
@@ -274,7 +277,7 @@ export function Setup() {
         {step === 1 && (
           <div className="stack">
             <div className="page-head" style={{ marginBottom: 0 }}>
-              <h1>What gets you into trouble?</h1>
+              <h1>What do you want Shield to stop?</h1>
               <p>Pick anything that's true. Shield proposes your rules from it. Nothing here is a diagnosis; it's what you already know about yourself when you're calm.</p>
             </div>
             <div className="stack-s">
@@ -311,7 +314,7 @@ export function Setup() {
               <Field label="Total capital you're allocating">
                 <MoneyInput value={draft.deposit} onChange={(v) => set({ deposit: v })} />
               </Field>
-              <Field label="Trading bankroll" hint={`What you're fine losing. You fund this on ${draft.executionLabel} yourself; the other ${usd(treasury)} goes into Shield, with ${usd(floor)} of it a floor that can never be released.`}>
+              <Field label="Trading bankroll" hint={`What you're fine losing. You fund this on ${draft.executionLabel} yourself; the other ${usd(treasury)} goes into Shield, with ${usd(floor)} of it a floor that can never be released to trading.`}>
                 <MoneyInput value={draft.bankroll} onChange={(v) => { set({ bankroll: v, ...recommend(Number(v || 0), prefs.troubles) }); }} />
                 <div className="chips" style={{ marginTop: 8 }}>
                   {[10, 15, 20, 30].map((p) => (
@@ -334,7 +337,7 @@ export function Setup() {
             </div>
 
             <div>
-              <h2 className="title">Your mandate</h2>
+              <h2 className="title">Your rules</h2>
               <p className="dim" style={{ marginTop: 4 }}>Proposed from your bankroll{prefs.troubles.length ? " and what you told us" : ""}. Edit anything.</p>
             </div>
             <div className="card stack">
@@ -389,7 +392,7 @@ export function Setup() {
                 {[
                   <>Of the <b>{usd(dep)}</b> I am allocating, <b>{usd(treasury)}</b> goes into Shield and <b>{usd(floor)}</b> of that is never released.</>,
                   <>I trade <b>{usd(bankroll)}</b> on {draft.executionLabel} however I like. Shield never interferes with that.</>,
-                  <>Shield releases at most <b>{usd(n(draft.daily))}</b> more in any 24 hours, however I split it.</>,
+                  <>Shield releases at most <b>{usd(n(draft.daily))}</b> more in any 24 hours.</>,
                   <>After I lose <b>{usd(n(draft.lossTrigger))}</b> or more in a day, no new capital is released for <b>{hoursLabel(draft.lossCooldownHours * 3600)}</b>.</>,
                   <>Any single release worth <b>{draft.thresholdPct}%</b> of the treasury or more waits <b>30 minutes</b>.</>,
                   <>Up to <b>$200</b> can move to my safe wallet instantly. Leaving Shield takes <b>7 days</b>.</>,
@@ -415,7 +418,11 @@ export function Setup() {
           <div className="stack">
             <div className="page-head" style={{ marginBottom: 0 }}>
               <h1>{activated ? "Shield is active" : "Activate Shield"}</h1>
-              <p>{activated ? "Now move capital into the treasury. Deposits are always allowed; only what leaves is governed." : "One transaction creates your vault and registers where money can go."}</p>
+              {/* Each call in the batch is its own transaction and its own wallet
+                  prompt, so promising "one" guarantees a surprise second and
+                  sometimes third prompt at the highest-abandonment moment in the
+                  product. Count them from what is actually about to be sent. */}
+              <p>{activated ? "Now move capital into the treasury. Deposits are always allowed; only what leaves is governed." : `${activateTxCount === 1 ? "One transaction creates" : `${activateTxCount} transactions create`} your vault and register where money can go. Your wallet will ask you to sign each one.`}</p>
             </div>
             <div className="card">
               <p className="eyebrow">{usd(dep)}</p>
