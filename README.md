@@ -36,6 +36,24 @@ is checked with `cast tx <hash> --rpc-url https://rpc.hyperliquid-testnet.xyz/ev
 
 > Calm you sets the limits. Tilted you can't instantly undo them.
 
+## First use: the onboarding is the demo
+
+Open the app signed out and it asks for one thing: a Hyperliquid address.
+Shield reads that account's public history (ledger and fills, from
+Hyperliquid's own info API), reconstructs its trading sessions, and finds the
+reloads made while already down. It then shows the single most expensive one —
+"You were down $43 when you added another $300… the session finished at −$848"
+— replays that session as an animated realised-PnL line from the real fills,
+rewinds to the reload and shows what Shield would have kept out of it under
+the plan it recommends from those numbers. One tap accepts the plan, one
+sign-in (Privy, or a local key on testnet) and one amount later, protection is
+active. Everything on those screens is historical; nothing predicts an outcome.
+
+"Try with an example account" uses a public Hyperliquid address with a clear
+pattern (273 sessions, 19 reloads while down). Routes: `/` when signed out,
+`/start` when signed in without a vault; the long-form landing page is `/landing`.
+
+
 **Shield is not a trading venue.** There is no order entry, no market list and
 no leverage control in the app; `/trade` redirects to Home. The user trades on
 Hyperliquid and the primary action on Home is "Open Hyperliquid". Shield is

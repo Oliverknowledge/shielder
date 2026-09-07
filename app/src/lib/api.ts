@@ -180,6 +180,7 @@ export interface HlSessionJson {
   firstLossAt: number | null;
   firstReloadAfterLossAt: number | null;
   hashes: string[];
+  timeline: TimelineEventJson[];
 }
 
 export interface HlProfileJson {
@@ -196,5 +197,17 @@ export interface HlProfileJson {
   worstSessionsWithReload: { worst: number; withReload: number };
   insight: string | null;
   suggestions: Array<{ key: "chasing" | "reloads" | "savings"; text: string }>;
+  replay: ReplayJson | null;
+  recommendation: RecommendationJson | null;
   source: "hyperliquid-info-api";
+}
+
+export interface TimelineEventJson { time: number; kind: "close" | "in" | "out"; amount: number; running: number; afterLoss?: boolean }
+export interface ReplayJson {
+  openedAt: number; closedAt: number | null; timeline: TimelineEventJson[]; reloadIndex: number; reloadAmount: number;
+  pnlAtReload: number; pnlAfter: number; minutesAfter: number; finalPnl: number; deployed: number;
+}
+export interface RecommendationJson {
+  normalDailyUsd: number; reducedDailyUsd: number; reducedAtUsd: number; lockAtUsd: number; basis: string;
+  counterfactual: { reloadAmount: number; available: number; protected: number } | null;
 }

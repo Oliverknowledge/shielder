@@ -1,0 +1,22 @@
+/* Home: one hierarchy. State first, then the one action, then two facts. Everything else folds away. */
+.home-hero { padding: 8px 0 8px; }
+.home-amount { font-size: clamp(56px, 12vw, 104px); font-weight: 600; letter-spacing: -0.05em; line-height: 1; margin: 6px 0 0; font-variant-numeric: tabular-nums; }
+.home-sub { font-size: 15px; color: var(--ink-3); margin: 8px 0 0; }
+.home-line { font-size: 17px; color: var(--ink-2); margin: 14px 0 0; max-width: 46ch; line-height: 1.5; }
+.home-step { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.home-from { font-size: clamp(28px, 6vw, 44px); font-weight: 600; letter-spacing: -0.04em; color: var(--ink-3); text-decoration: line-through; text-decoration-thickness: 2px; font-variant-numeric: tabular-nums; }
+.home-arrow { font-size: 28px; color: var(--pending); }
+.home-reduced .home-amount { color: var(--pending); }
+.home-locked .home-amount { color: var(--blocked); }
+.home-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 26px; }
+.home-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 34px; padding-top: 22px; border-top: 1px solid var(--line-2); }
+.home-facts > div { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.home-facts b { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.home-foot { font-size: 13px; color: var(--ink-3); margin-top: 26px; }
+.home-details { margin-top: 28px; }
+.home-details > summary { cursor: pointer; font-size: 13px; color: var(--ink-3); list-style: none; padding: 10px 0; border-top: 1px solid var(--line); }
+.home-details > summary::-webkit-details-marker { display: none; }
+.home-details > summary::before { content: "+ "; }
+.home-details[open] > summary::before { content: "− "; }
+.c-pending { color: var(--pending); }
+@media (max-width: 560px) { .home-facts { grid-template-columns: 1fr; gap: 18px; } .home-actions .btn { flex: 1 1 auto; } }

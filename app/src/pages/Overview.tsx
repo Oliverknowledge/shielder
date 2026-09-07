@@ -19,6 +19,7 @@ import { getJson } from "../lib/api";
 import { describeLoosen } from "../lib/rules";
 import { describeEvents } from "../lib/events";
 import { GetMeSafe } from "../components/Safety";
+import "../home.css";
 import { WhatHappened } from "../components/WhatHappened";
 import { usePrefs } from "../lib/prefs";
 import { useAttempts } from "../lib/attempts";
@@ -161,7 +162,58 @@ export function Overview() {
 
   return (
     <main className="page fade-in">
-      <section className="card card-hero">
+      {(() => {
+        const sessionPnl = venue.state === "live" && venue.session ? venue.session.closedPnl : null;
+        const reduced = rung === 1;
+        const locked = cooldownActive;
+        const headline = locked ? "Shield stepped in" : reduced ? "Shield stepped in" : "Shield active";
+        return (
+          <section className={`home-hero ${locked ? "home-locked" : reduced ? "home-reduced" : ""}`}>
+            <p className={`eyebrow ${locked ? "c-blocked" : reduced ? "c-pending" : "c-protect"}`}>{headline}</p>
+            {locked ? (
+              <>
+                <h1 className="home-amount">$0</h1>
+                <p className="home-sub">available until {clockTime(Number(vault.cooldownUntil), now)}</p>
+                <p className="home-line">{byRule ? "Your session crossed the loss level you set while calm." : "You paused new capital yourself."} Your existing trades were not touched.</p>
+              </>
+            ) : reduced ? (
+              <>
+                <div className="home-step"><span className="home-from">{usd(vault.velocityThreshold)}</span><span className="home-arrow" aria-hidden>↓</span><h1 className="home-amount">{usd(remainingToday)}</h1></div>
+                <p className="home-sub">available today · your plan reduced it until {clockTime(Number(vault.tierUntil), now)}</p>
+                <p className="home-line">{(server?.verdicts ?? []).some((v) => v.relayed && Number(v.verdict.tier ?? 2) === 1) ? "Your session crossed the loss level you set while calm." : "You dropped to REDUCED yourself."} Your existing trades were not touched.</p>
+              </>
+            ) : (
+              <>
+                <h1 className="home-amount">{usd(canMove)}</h1>
+                <p className="home-sub">available today{probe.path === "gated" ? ` · amounts of ${usd(probe.instantThreshold)}+ wait 30 minutes` : ""}</p>
+              </>
+            )}
+            <div className="home-actions">
+              {!locked && canMove > 0n && <Link to="/add-funds" className="btn btn-lg">Release funds</Link>}
+              {balance === 0n && <button className="btn btn-lg btn-protect" onClick={() => setDepositOpen(true)}>Protect capital</button>}
+              {!locked && <button className="btn btn-lg btn-secondary" onClick={() => setSafeOpen(true)}>Get me safe</button>}
+              {locked && <Link to="/add-funds" className="btn btn-lg btn-secondary">See what happened</Link>}
+            </div>
+            <div className="home-facts">
+              <div>
+                <span className="eyebrow">Session</span>
+                <b className={`num ${sessionPnl !== null && sessionPnl < 0 ? "c-blocked" : sessionPnl !== null && sessionPnl > 0 ? "c-protect" : ""}`}>{sessionPnl !== null ? usd(sessionPnl, { sign: true }) : "—"}</b>
+                <span className="small dim">{venue.state === "simulated" ? "Simulated locally · " : ""}{locked ? "Funding paused" : reduced ? "Available capital reduced" : lossToday ? `${usd(lossToday)} realised in 24h` : "No intervention needed"}</span>
+              </div>
+              <div>
+                <span className="eyebrow">Protection</span>
+                <b>{usd(balance)} in the vault</b>
+                <span className="small dim">{locked ? "Nothing more can be released until the pause ends." : reduced ? `Budget drops further only if the session worsens.` : "Shield will reduce available capital if this session deteriorates."} <Link to="/protection">View protection</Link></span>
+              </div>
+            </div>
+            <p className="home-foot">{wallets.filter((w) => w.kind === 0).length || 1} trading wallet monitored · <Link to="/protection">+ Add wallet</Link></p>
+          </section>
+        );
+      })()}
+
+      <details className="home-details">
+        <summary>Details: capital, venue, rules</summary>
+      <section className="card card-hero" style={{ marginTop: 12 }}>
         <div className="row-between" style={{ alignItems: "flex-start", marginBottom: 20 }}>
           <p className="eyebrow">Your capital</p>
           <Pill tone={status.tone} live={status.tone === "blocked"}>{status.label}</Pill>
@@ -395,6 +447,7 @@ export function Overview() {
           </div>
         </section>
       </div>
+      </details>
 
       <GetMeSafe open={safeOpen} onClose={() => setSafeOpen(false)} context="home" />
       <WhatHappened open={whatOpen} onClose={() => setWhatOpen(false)} />

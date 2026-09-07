@@ -13,7 +13,7 @@ import type { TightenView } from "../../../client/views";
 import { FlowScene } from "../components/FlowScene";
 import { usd, usdInput, clockTime, spanAdjective, hoursLabel } from "../lib/format";
 import { recordAttempt } from "../lib/attempts";
-import { evaluateTopUp, rollingVelocity, usdcToRaw, rawToUsdc, ProposalKind, OwnerKind, COOLDOWN_REASON, type ShieldErrorName } from "../../../client/views";
+import { evaluateTopUp, effectiveVelocityThreshold, rollingVelocity, usdcToRaw, rawToUsdc, ProposalKind, OwnerKind, COOLDOWN_REASON, type ShieldErrorName } from "../../../client/views";
 
 type Phase = "idle" | "moving" | "done" | "blocked";
 
@@ -52,7 +52,8 @@ export function AddFunds() {
   const amountRaw = usdcToRaw(Number(amount || 0));
   const decision = useMemo(() => evaluateTopUp(vault, balance, amountRaw, BigInt(now)), [vault, balance, amountRaw, now]);
   const velocity = rollingVelocity(vault, BigInt(now));
-  const remainingToday = vault.velocityThreshold > velocity ? vault.velocityThreshold - velocity : 0n;
+  const budgetNow = effectiveVelocityThreshold(vault, BigInt(now));
+  const remainingToday = budgetNow > velocity ? budgetNow - velocity : 0n;
   const headroom = balance > vault.protectedFloor ? balance - vault.protectedFloor : 0n;
   const maxInstant = [decision.instantThreshold > 0n ? decision.instantThreshold - 1n : 0n, remainingToday, headroom].reduce((a, b) => (a < b ? a : b));
   const pendingTopUp = proposals.find((p) => p.category === ProposalKind.TopUp);
@@ -129,7 +130,19 @@ export function AddFunds() {
     if (decision.path === "instant") return { tone: "protect", icon: "check" as const, text: <>Moves instantly. <span className="muted">{usd(remainingToday - amountRaw)} of today's limit left after this.</span></> };
     if (decision.path === "gated") return { tone: "pending", icon: "clock" as const, text: <>Large release: waits <b>30 minutes</b> before it can move. Your treasury stays protected until then.</> };
     if (decision.reason === "CooldownActive") return { tone: "blocked", icon: "lock" as const, text: <>Will be blocked: new capital is paused until <b>{clockTime(Number(vault.cooldownUntil), now)}</b>.</> };
-    if (decision.reason === "VelocityThresholdExceeded") return { tone: "blocked", icon: "lock" as const, text: Number(vault.activeTier) === 1 && Number(vault.tierUntil) > now ? <>Reduced by your plan until {clockTime(Number(vault.tierUntil), now)}: only <b>{usd(remainingToday)}</b> of a {usd(vault.reducedVelocityThreshold)} budget is left.</> : <>Over today's limit: only <b>{usd(remainingToday)}</b> of your {usd(vault.velocityThreshold)} is left.</> };
+    if (decision.reason === "VelocityThresholdExceeded") {
+      const reducedNow = Number(vault.activeTier) === 1 && Number(vault.tierUntil) > now;
+      return {
+        tone: "blocked",
+        icon: "lock" as const,
+        text: (
+          <>
+            <b>Can't release {usd(amountRaw)}.</b> Your current Shield limit is <b>{usd(remainingToday)}</b>{reducedNow ? <> until {clockTime(Number(vault.tierUntil), now)}, because your session crossed the level you set</> : " for this 24-hour window"}.
+            {remainingToday > 0n && <> <button className="linkish" onClick={() => setAmount(String(Number(remainingToday) / 1e6))}>Release {usd(remainingToday)} instead</button></>}
+          </>
+        ),
+      };
+    }
     if (decision.reason === "ProtectedFloorBreached") return { tone: "blocked", icon: "lock" as const, text: <>Would breach your floor: only <b>{usd(headroom)}</b> sits above {usd(vault.protectedFloor)}.</> };
     return { tone: "blocked", icon: "lock" as const, text: <>Will be blocked.</> };
   })();
@@ -171,6 +184,14 @@ export function AddFunds() {
               <>
                 <h2 className="not-tonight" style={{ marginTop: 12 }}>Not tonight.</h2>
                 <p className="lead" style={{ marginTop: 10, color: "var(--ink)" }}>You decided this before you started trading.</p>
+              </>
+            ) : shown.reason === "VelocityThresholdExceeded" ? (
+              <>
+                <h2 className="title-l" style={{ marginTop: 10 }}>Can't release {usd(shown.amount)}.</h2>
+                <p className="lead" style={{ marginTop: 8, color: "var(--ink)" }}>Your current Shield limit is <b>{usd(remainingToday)}</b>{Number(vault.activeTier) === 1 && Number(vault.tierUntil) > now ? ` until ${clockTime(Number(vault.tierUntil), now)}` : " for the rest of this 24-hour window"}.</p>
+                {remainingToday > 0n && (
+                  <button className="btn btn-lg" style={{ marginTop: 14 }} disabled={!!busy} onClick={() => { setAmount(String(Number(remainingToday) / 1e6)); setBlocked(null); setPhase("idle"); }}>Release {usd(remainingToday)}</button>
+                )}
               </>
             ) : (
               <h2 className="title-l" style={{ marginTop: 10 }}>{usd(shown.amount)} stays protected.</h2>

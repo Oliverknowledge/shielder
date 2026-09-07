@@ -96,6 +96,22 @@ it in a judge-facing document.
 - Analyser fix: `server/hyperliquid.ts` now counts `accountClassTransfer` (spot→perps) and `send`
   ledger entries as capital flows, so spot-funded reloads are visible.
 
+## Onboarding (first-use flow, 2026-09-07)
+- `app/src/pages/Onboard.tsx` + `app/src/components/Replay.tsx`. Data: `GET /api/hyperliquid/:address?network=mainnet|testnet`
+  (`server/hyperliquid.ts`): sessions rebuilt from ledger updates + fills; each session now carries a `timeline`
+  (closes as closedPnl−fee, capital in/out with `afterLoss`), `replay` = the reload-while-down followed by the most
+  further realised loss, `recommendation` = daily allowance ≈ typical session size, REDUCED ≈ 15% of it, private
+  threshold ≈ min(median losing session, 35%), LOCKED ≈ 75%; `counterfactual` = reload split into available/protected.
+- The counterfactual only says what Shield would have kept out of the session; the app never states a different outcome.
+- Example account `0xfcc9cf78a1494f61d41cf895102a81785a2fe27d` (public, mainnet): 273 sessions, 19 reloads while down,
+  replay session opened Thu 5 Feb 12:29, reload $300 at −$43, finished −$848. Verified through the running server.
+- Full flow verified on Anvil in the headless browser (entry → analysing → reveal → replay → counterfactual →
+  recommendation → local-key sign-in → $250 → vault + ladder commit + faucet + deposit → active → Home). Phone (375)
+  and tablet (820) widths: no horizontal overflow on any step.
+- Home was rebuilt around one hierarchy (state, amount available today, one action, session + protection facts,
+  details folded); REDUCED renders as "Shield stepped in · $250 ↓ $140"; an over-limit release says "Can't release
+  $200. Your current Shield limit is $140 …" with a one-tap "Release $140 instead".
+
 ## Tests and toolchain
 - `cd contracts && forge test` → **64 passed** (41 invariants, 6 fixed-defect regressions, 2 isolation,
   15 ladder). Compiles with `via_ir`; test helpers use `vm.getBlockTimestamp()` because via_ir treats
