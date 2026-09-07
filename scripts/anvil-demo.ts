@@ -14,7 +14,7 @@
  */
 import { createPublicClient, createWalletClient, http, parseAbi, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { SHIELD_VAULT_ABI } from "../client/abi/ShieldVault";
 import { MOCK_USDC_ABI } from "../client/abi/MockUSDC";
 import { MOCK_CORE_DEPOSIT_ABI } from "../client/abi/MockCoreDepositWallet";
@@ -90,6 +90,19 @@ async function main() {
   };
   const statePath = evmStatePath(".shield", network);
   writeFileSync(statePath, JSON.stringify(state, null, 2));
+
+  // Anvil is deterministic, so a re-bootstrap redeploys to the same addresses —
+  // and the server's store, which is keyed by vault address and not by chain
+  // instance, keeps the previous run's history. That includes lastVerdictLossAt,
+  // which suppresses the next verdict as an already-reported loss. The chain has
+  // been reset, so the indexer's view of it has to be as well, or the demo's
+  // whole point (loss → verdict → blocked release) silently does not happen.
+  for (const stale of [`.shield/server-state.${network}.json`, `.shield/evm-cursor.${network}.json`]) {
+    if (existsSync(stale)) {
+      rmSync(stale);
+      console.log(`   cleared ${stale} (the chain was redeployed)`);
+    }
+  }
   console.log(`\nstate written to ${statePath}\nvault ${vault} · balance ${(await pub.readContract({ address: vault, abi: SHIELD_VAULT_ABI, functionName: "getVault", args: [alex.address] }) as { balance: bigint }).balance / USD} USDC`);
   void parseAbi;
 }

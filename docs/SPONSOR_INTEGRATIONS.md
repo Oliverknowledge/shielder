@@ -1,227 +1,236 @@
 # Sponsor integrations
 
-Two partner prizes selected (the rules allow three). Each section states
-the exact bounty, the requirement checklist, what implements it, what a
-judge can inspect, and what a human still has to do.
+Three partner prizes selected — the maximum ETHGlobal allows: **The Graph**,
+**Privy**, **Chainlink**. A partner with several tracks counts once, so the
+tracks we decline are named below with the reason, rather than left ambiguous.
 
----
+Every claim here is checkable from a clone without asking us anything. Code is
+cited as `file:line`. Chain facts are a transaction hash plus a block. The CRE
+simulation and the Graph Market stream each have a verbatim terminal transcript
+committed under `docs/evidence/`.
 
-## The Graph
-
-**Bounty:** "Best AI Tooling or AI Use Case with The Graph (From Scratch)"
-($5,000), pool: Net-new / Start Fresh. Secondary Graph track claimed under
-the same partner selection: "Best Use of Composable or Standardized Graph
-Products" ($5,000).
-
-**Qualification requirements (verbatim) and status**
-
-| Requirement | Status | Where |
-|---|---|---|
-| "Use The Graph as a load-bearing part of the project… the agent/app uses The Graph (Subgraphs, the Subgraph MCP, or Substreams) as its source of blockchain data." | Done | `substreams/` package (7 modules), consumed by `server/substreams-source.ts` via `@substreams/core` |
-| "Consume live data from a Graph provider, for example… streaming Substreams via The Graph Market. Mocked, local-only, or static datasets do not qualify." | Wired; needs the user's API key | Endpoints `SUBSTREAMS_SOLANA_ENDPOINT=devnet.sol.streamingfast.io:443` and `SUBSTREAMS_HYPEREVM_ENDPOINT=hyperevm.substreams.pinax.network:443` (mainnet), one shared Graph Market JWT `SUBSTREAMS_API_TOKEN` (`server/substreams-config.ts`). The JWT switches `/api/health` `source.mode` from `rpc` to `substreams` on both servers. Human action #2 |
-| "Do meaningful work with the data: reasoning, decisions, automation" | Done | `server/behaviour.ts` (sessions, realised loss, streaks, reload-after-loss), `server/policy.ts` (the user's rule → signed verdict), on-chain `apply_risk_verdict` (cooldown) |
-| "Open-source the code with a clear README… public repository plus a short demo video (two to four minutes)" | Code done; video is a human action | `substreams/README.md`, `README.md` |
-| "Select the pool that matches how you built" | Start Fresh | first commit 2026-09-04 10:50 UTC |
-| Featured: "deploying a working Substreams pipeline from a single prompt using the Substreams SKILLs" | Built with the SKILLs; live run needs the key | `docs/substreams-one-prompt.md` |
-
-**Files**
-
-- `substreams/proto/shield/v1/shield.proto`: one typed message per Shield
-  instruction (17) and per event (13); `VaultFlow`; `BehavioralProfile`.
-- `substreams/src/lib.rs`: `map_shield_instructions`, `map_shield_events`,
-  `store_vault_registry`, `store_vault_wallets`, `map_vault_flows`,
-  `store_flow_totals`, `map_behavioral_profiles`.
-- `substreams/substreams.yaml` (network `solana-devnet`), `Cargo.toml`
-  (`substreams 0.7`, `substreams-solana 0.15`), `build.rs`.
-- `server/substreams-source.ts`: streams `map_vault_flows` with a resumable
-  cursor, undo handling and reconnect/backoff.
-- `server/rpc-source.ts`: the labelled fallback with identical classification.
-
-**Package identifier:** `shield_behavioral_memory@v0.2.0`
-(`substreams build` → `shield-behavioral-memory-v0.2.0.spkg`, 575 KB;
-`substreams info` lists the 7 modules). Publishing to substreams.dev
-(`substreams publish`) needs the same account.
-
-**How it is used in the product:** the Behaviour screen ("You sent $1,500 to
-Hyperliquid. $80 came back."), the Overview's loss strip and "What happened
-recently" feed, the top-up blocked card ("You've realised $1,420 in losses in
-the last hour"), and the monitor's verdict all come from flows the pipeline
-classifies. Remove it and none of those exist.
-
-**Demo moment:** Behaviour screen after the trading wallet sends back less
-than it received: "Sent $1,500 · Came back $80 · Net realised flow −$1,420",
-the session bar, the evidence sheet with transaction signatures, and the
-source label.
-
-**Evidence a judge can inspect**
+**How to check a transaction.** No public block explorer indexes HyperEVM
+testnet. `explore-testnet.hyperpc.app`, `app.hyperliquid-testnet.xyz/explorer`,
+`testnet.purrsec.com` and `testnet.hyperevmscan.io` were each tried; none of
+them resolves the hashes below. The verifiable form is the RPC:
 
 ```bash
-cd substreams && substreams build && substreams info shield-behavioral-memory-v0.2.0.spkg
-curl -s localhost:8787/api/health | jq .source        # {"mode":"substreams", ...} once keyed
-curl -s localhost:8787/api/vault/<vault>/flows | jq   # the classified flows the app reasons over
+cast tx     <hash> --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
+cast receipt <hash> --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
 ```
 
-**Feedback for The Graph** (as the bounty requests): the `substreams-solana`
-SKILL was excellent on decoding and manifest hygiene, and the CLI's
-`substreams build` "just worked" once `protoc` was present (the SKILL should
-list `protobuf` next to `buf`). Two things would have removed our biggest
-friction: a Solana devnet endpoint that does not require a key for tiny
-ranges (or a sandbox key), and first-class Substreams-powered subgraphs for
-Solana on the Network so the queryable layer could be GraphQL rather than a
-custom sink. The registry search API and the JS sink reference were
-accurate; the `@substreams/core` peer on `@bufbuild/protobuf@1` collides
-with newer SDKs that pin v2 (we had to install v1 at the root).
+The deployment under test is `ShieldVault.sol` at
+`0xcdB6d631A00857584e70a21d800f51C5776302Fe`, **HyperEVM testnet, chain id
+998**, deploy tx `0x67ffb653…` in block 63561837. It is immutable: no proxy, no
+owner, no upgrade path. One contract holds many vaults, keyed by authority
+address.
 
-**Remaining human step:** create a free key at https://thegraph.market,
-`substreams auth`, set `SUBSTREAMS_API_TOKEN`, restart the server, record
-the `source.mode: "substreams"` health output and a `substreams run`.
+Three things are still open and are stated in each section where they bear on a
+criterion: the repository is private, the vault is on testnet rather than
+mainnet, and the demo video does not exist yet. See `HUMAN_ACTIONS.md`.
 
 ---
 
-## Chainlink
+## Privy — Best Financial Flow ($2,500)
 
-**Bounty:** "Best Confidential Workflow" ($2,000, up to 2 × $1,000).
+Proven on HyperEVM testnet on 2026-09-06. Every transaction below was signed by
+a Privy embedded wallet created from an email address — no seed phrase, no
+extension.
 
-**Qualification requirements (verbatim) and status**
-
-| Requirement | Status | Where |
-|---|---|---|
-| "Build a CRE Workflow that uses the Confidential Workflows to execute a meaningful part of the application." | Done | `cre/shield-risk/main.ts`, `cre/shield-risk/evaluate.ts` |
-| "The workflow must register and use a confidential TEE handler, such as handlerInTee" | Done | `handlerInTee(trigger, onEvaluate, [{ tee: "nitro", regions: ["us-west-2"] }])` |
-| "The confidential portion… must process at least one sensitive input, secret, confidential API response, private parameter, or intermediate value inside the enclave." | Done | secret: the verifier seed (`runtime.getSecret`); sensitive inputs: the user's raw capital flows and policy fetched with `HTTPClient.sendRequest(teeRuntime, …)`; intermediate: derived sessions and the signed verdict |
-| "meaningfully integrated into the project's core functionality" | Done | the verdict is the only external input the vault accepts (`apply_risk_verdict`); it arms the user's loss cooldown |
-| "Demonstrate a successful execution through either: A Confidential Workflow simulation using the CRE CLI or a live deployment" | **Partly.** The same `evaluateVault` function ran against the live HyperEVM testnet vault, signed an EIP-712 verdict with the key the vault pins, and the deployed contract accepted it: tx `0x0c4387ced0f3c775705770119381d992efb50d248fff9e33bf4e39b88803554d`, block 63578192, verdict #1, $70 attested, 12h cooldown armed. That run used `dryrun.ts`, which substitutes plain `fetch` for the enclave HTTP capability and `cre/.env` for the Vault DON — so it is **not** the TEE simulator the bounty names | `cre workflow simulate` needs the `cre` CLI, a separate Go binary that is not on npm or Homebrew. `CRE_API_KEY` is now set; the CLI itself is the remaining gap |
-| "Provide evidence… demo video, terminal output, execution logs" | Local dry-run evidence below; CLI evidence after the human step | |
-
-**Files:** `cre/project.yaml`, `cre/secrets.yaml`, `cre/.env.example`,
-`cre/shield-risk/{workflow.yaml,config.staging.json,main.ts,evaluate.ts,dryrun.ts}`,
-`cre/README.md`, `scripts/print-verifier-seed.ts`. On-chain verifier:
-`programs/shield-vault/src/lib.rs` (`apply_risk_verdict`) and
-`src/ed25519.rs`.
-
-**Artifact:** `cre/shield-risk/dist/shield-risk.wasm` (2.78 MB) built by
-`bunx cre-compile cre/shield-risk/main.ts …` with `@chainlink/cre-sdk`
-1.19.1 through the javy toolchain.
-
-**How it is used:** the enclave function is Shield's monitor. Shield's
-server runs the same `evaluate()` as a deterministic demo path; the vault
-pins one verifier key, so either the enclave or the server is the signer,
-never both. In the demo the server signs; the human step swaps the signer
-to the CLI simulation.
-
-**Demo moment:** the terminal shows the enclave evaluation and verdict
-delivery; the app flips from "Protected" to "Loss cooldown" within a
-polling cycle; a top-up is then rejected on-chain with `CooldownActive`.
-
-**Evidence captured in this environment (localnet, server monitor off, so
-the enclave function was the only signer)**
-
-```
-$ bun run cre/shield-risk/dryrun.ts CMH7osbKjrT67Ye7Zg3Js4gLx2pJjudMFgRLGEvdnAMz
-[USER LOG] Enclave evaluation: vault=CMH7… flows=3 realisedLoss24h=1200000000 trigger=1000000000
-           lossStreak=1 reloadsAfterLoss=0 triggered=true actionable=true
-[USER LOG] Verdict #1 relayed on-chain: 5H17fZbSd9xoETm6nUYUNzDqMw5LXEBeX7Jc6VdjXpDySxBBbYCf8MNF5uQHCM4opjtYDCAnnA5MngY4fCFLiL6h
-{ "triggered": true, "actionable": true, "realisedLossUsdc": "1200000000", "nonce": "1",
-  "verifier": "GL3TVjiPCyF6ZyeUxXYrXZKcr6JFdwQovGrpVakhXHXy", "relayed": true, … }
-$ bun run client/demo.ts scoreboard | grep Cooldown
-  Cooldown               ACTIVE (loss rule) until 9/6/2026, 5:25:40 PM — 17h 59m left
-$ bun run client/demo.ts top-up 100
-❌ instant top-up rejected on-chain: CooldownActive
-```
-
-`dryrun.ts` runs the same `evaluateVault()` the TEE handler runs, with
-`fetch` and `cre/.env` standing in for the enclave HTTP capability and the
-Vault DON. It is not a CRE simulation; it demonstrates the logic and the
-on-chain effect while the CLI evidence is pending.
-
-**Feedback for Chainlink:** the TS SDK's `handlerInTee` + `TeeRuntime`
-overloads were clear and the compile toolchain was painless. Friction: the
-simulator requires an account even for local runs (a no-auth simulate for
-workflows with no chain writes would help hackathon teams); `CreSerializable`
-rejecting `null` is surprising (an error message naming the offending field
-would help); zod `.default()` breaks the `configSchema` typing; QuickJS
-lacking `atob`/`btoa` meant hand-rolling base64 for the HTTP body. A native
-Ed25519 report signer, or a Solana `on_report` receiver example for Anchor,
-would make the Solana path first-class.
-
-**Remaining human step:** `export CRE_API_KEY=…` (or `cre login`), then the
-one-line simulate command in `cre/README.md`; capture the terminal output.
-
-
----
-
-# 2026-09-06 additions: the Hyperliquid-first stack
-
-The sections above describe the Solana (v0) stack, which still runs unchanged.
-This section is what changed for the Hyperliquid-first build; where a claim
-is credential-gated it says so.
-
-## Privy — Best financial flow ($2,500): evidence
-
-Proven on HyperEVM testnet (chain 998) on 2026-09-06. Every transaction below
-was signed by a Privy **embedded wallet created from an email address**, with
-no seed phrase and no extension.
-
-| Requirement | Evidence |
+| Requirement (verbatim) | Evidence |
 |---|---|
-| Integrate Privy as a core part of the product | The embedded wallet *is* the vault authority. `ShieldVault._own()` reverts for every other address, so this wallet is the only thing that can move the protected capital — deposit, release, tighten, or exit |
-| Create or use at least one Privy wallet | `0x83144b99D89947703714Ee9aA3A3614985041D2B`, created on login |
-| Complete at least one functional financial flow using a generally available Privy feature | **A $5 release from the vault into a Hyperliquid account**: tx `0x94960d1f937a3e36e1b16e69922a2579e77b584ed25b2ced044da7991fe889be`, block 63581864, `from` = the Privy wallet. USDC left the contract through Circle's `CoreDepositWallet.depositFor` and arrived on HyperCore (211.06 → 216.06 USDC) |
-| Working demo + source | Public repo; the app runs the whole flow |
-| Explain how Privy improves the UX | Without it the only way in is pasting a raw private key. With it: type an email, get a code, and the wallet guarding your protected capital exists — no seed-phrase ceremony for a product whose entire premise is that future-you cannot get at the money |
+| "Integrate Privy as a core part of the product" | `app/src/lib/privy.tsx` wraps the app in `PrivyProvider` (email / passkey / wallet). `privy.tsx:37` hands the embedded wallet's EIP-1193 provider to `app/src/lib/shield.tsx:132`, which builds the signing engine at `app/src/lib/evm-engine.ts:51`; every vault transaction goes out through it. On chain the wallet *is* the vault's authority — `ShieldVault.sol` gates deposit, release, tighten, loosen and exit on `msg.sender`, so no other address can move the protected capital |
+| "Create or use at least one Privy wallet" | Created by Privy, not imported: `createOnLogin: "users-without-wallets"` (`app/src/lib/privy.tsx:67`). Wallet `0x83144b99D89947703714Ee9aA3A3614985041D2B`, **nonce 4** — it signed four transactions itself |
+| "Complete at least one functional financial flow using a generally available Privy feature" | **$5.00 released from the vault into a Hyperliquid account.** tx `0x94960d1f937a3e36e1b16e69922a2579e77b584ed25b2ced044da7991fe889be`, block 63581864, `from` = the Privy wallet. Logs in that single transaction: USDC `Approval`; `Transfer` vault → Circle's `CoreDepositWallet`; on to the HyperCore system address `0x2000…0000`; a HyperCore credit of $5.00 to `0x05a7a130…`; and `TopUpExecuted(amount = $5, instant = true, balanceAfter = $45, route = 1)` |
+| "Eligible flows include transfers, bridging, stablecoin conversions, swaps, self-service Earn vaults, onramps" | A stablecoin transfer that also bridges HyperEVM → HyperCore, in one transaction, through Circle's real deposit wallet |
+| "Provide a working demo and access to the project's source code" | Source: this repository — **it is still private**, `HUMAN_ACTIONS.md` #1. Video: `HUMAN_ACTIONS.md` #3, script in `docs/DEMO_SCRIPT.md` |
+| "Clearly explain how Privy improves the user experience" | Without Privy the only way into a self-custodial vault is pasting a raw private key. With it: type an email, get a code, and the wallet that guards your protected capital exists. Shield's whole premise is that future-you cannot get at the money on impulse; a seed-phrase ceremony at the front door would lose the user before the premise is ever tested |
 
 Supporting transactions, same wallet, same session:
 
-- Registered the Hyperliquid account as the only release destination: `0x80c2a48aeeb2825fc427c2eb6b90821bc5c75fe8db38eddb3db745f55426f8f0`
-- Scheduled a weakening (daily reload $5 → $100), which the contract holds for
-  24 hours and then re-asks: `0xeeea692a9a7c25ada3918ceff2992c3465fff356b560b6c80a5e191cf2224b85`
+- `registerOwner` — the Hyperliquid account registered as a release destination:
+  `0x80c2a48aeeb2825fc427c2eb6b90821bc5c75fe8db38eddb3db745f55426f8f0`, block 63581683.
+- `proposeLoosen` — a weakening the contract holds for 24 hours before it takes
+  effect: `0xeeea692a9a7c25ada3918ceff2992c3465fff356b560b6c80a5e191cf2224b85`, block 63581938.
 
-The vault was funded by a different address (`deposit(authority, amount)` pulls
-from `msg.sender`), so the money never had to pass through the Privy wallet —
-only the *authority* over it did.
+Vault state for that authority today: **$45 balance, floor $10, $50 deposited,
+$5 released.**
 
-## The Graph — HyperEVM package (composable track evidence)
+**Not claimed.** Privy policies, quorums, session signers, Cards and
+`useFundWallet` are not used anywhere in the repository. **Best B2B Financial
+Product ($2,500) is declined** for exactly that reason: it needs those control
+primitives, and Shield is a B2C product.
 
-**Files:** `substreams-evm/` (`substreams.yaml`, `src/lib.rs`, proto). Imports
-The Graph's foundational `ethereum-common@v0.3.3` package and uses its
-`index_events` block index as the `blockFilter` for both maps (`evt_addr:` of
-the vault contract and of native USDC), so blocks with nothing relevant are
-skipped before any decoding. Module shape is identical to the Solana package:
-typed events → registry store → capital flows (incl. USDC returns) → totals →
-profiles. Network: `hyper-evm` (Pinax on The Graph Market:
-`hyperevm.substreams.pinax.network:443`).
+**Weaknesses, stated rather than hidden.** The vault was funded by a different
+address — `deposit(authority, amount)` pulls from `msg.sender` — so the money
+never passed through the Privy wallet; only the *authority* over it did. The
+financial flow is a single $5 release: real chain, real Circle contract, small
+number. There is no hosted deployment, so a judge runs the app locally.
 
-**Standards leverage:** the same five modules run on Solana devnet and HyperEVM.
-The behaviour engine (`server/behaviour.ts`), the policy (`server/policy.ts`)
-and the CRE workflow consume `map_vault_flows` from either without change.
+**Feedback for Privy.** Two things cost us time. First, `PrivyProvider` took a
+hand-written chain object, and because it had no explorer entry and no testnet
+flag the confirmation modal offered no way to inspect the transaction it was
+asking you to sign — on a product whose pitch is that you can check everything
+yourself. We now build Privy's chain from the same `viemChain` the engine signs
+with so the two cannot drift; a `viem` `Chain` accepted directly would have
+removed the class of bug. Second, when `wallet` is an enabled login method a
+user can connect an external wallet through Privy, and the account state reads
+the same as an embedded one; distinguishing "Privy created this key" from
+"Privy is brokering someone else's" needed more digging than it should have.
 
-**Remaining blocker:** a Graph Market key and a HyperEVM mainnet deployment
-of the vault (HUMAN_ACTIONS.md #2–#3). Testnet HyperEVM is not indexed by
-The Graph.
+---
 
-## Chainlink CRE — EIP-712 verdicts
+## Chainlink — Best Confidential Workflow ($2,000, up to 2 × $1,000)
 
-**Files:** `cre/shield-risk/evm-verdict.ts` (dependency-light EIP-712 hashing
-+ secp256k1 signing that runs in the enclave's JS runtime; verified against
-`ShieldVault.hashVerdict` and `ecrecover`), `cre/shield-risk/evaluate.ts`
-(`chain: "evm"` path), `cre/shield-risk/config.evm.json`, secret
-`SHIELD_EVM_VERIFIER_KEY` in `cre/secrets.yaml`.
+| Requirement (verbatim) | Evidence |
+|---|---|
+| "Build a CRE Workflow that uses the Confidential Workflows to execute a meaningful part" | `cre/shield-risk/main.ts:84-89` registers the workflow; the entire evaluation — fetching the vault view and its flows, deriving sessions and realised loss, applying the user's rule, signing the verdict — is `evaluateVault` in `cre/shield-risk/evaluate.ts`, called only from inside the TEE handler |
+| "The workflow must register and use a confidential TEE handler, such as handlerInTee in TypeScript or cre.HandlerInTee" | `handlerInTee(trigger, onEvaluate, [{ tee: "nitro", regions: ["us-west-2"] }])` — `cre/shield-risk/main.ts:88`. The CLI confirms the placement it was given: "Trigger requested TEE Execution … AWS Nitro in us-west-2" (`docs/evidence/cre-simulate.txt`) |
+| "The confidential portion must process at least one sensitive input, secret, confidential API response, private parameter" | The **verifier private key**, read in-enclave with `runtime.getSecret({ id })` at `cre/shield-risk/evaluate.ts:89`, mapped in `cre/secrets.yaml`, and used to produce the EIP-712 signature (`cre/shield-risk/evm-verdict.ts`). It is the key the vault pins as `riskVerifier`; only signatures leave the enclave. **What is deliberately not claimed:** the capital flows are *not* confidential. They are read over plain HTTP from an unauthenticated local endpoint and they are on-chain anyway |
+| "meaningfully integrated into the project's core functionality" | The signed verdict is the only external input `ShieldVault.sol` accepts (`applyRiskVerdict`, `contracts/src/ShieldVault.sol:536`). Remove CRE and the pause becomes "trust Shield's server" |
+| "Demonstrate successful execution through simulation using the CRE CLI or live deployment on the CRE network" | **Done — `cre workflow simulate` ran.** Verbatim transcript: `docs/evidence/cre-simulate.txt`, ending "Simulation complete!" |
+| "Provide evidence of successful simulation or deployment in the submission, such as demo video or execution logs" | That transcript, plus the on-chain result below. Video: `HUMAN_ACTIONS.md` #3 |
 
-**Evidence produced this sprint:** `bun run cre/shield-risk/dryrun.ts --evm
-0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc` against the Anvil server with the
-server monitor disabled: the enclave function derived a $1,420 realised loss,
-signed verdict #1, the relayer landed it
-(`0x94d38cc9bd0e27468d9857a0db19de2755f24abfb2bb5afd29624db6da9e66ac` on the
-local chain) and the vault's cooldown armed (`cooldownReason = 2`).
+**The command, run from the repository root:**
 
-**Remaining blocker:** `cre workflow simulate` needs a Chainlink account
-(HUMAN_ACTIONS.md #4); the dry-run exercises the same function.
+```bash
+cre workflow simulate shield-risk --target evm-settings --non-interactive \
+  --trigger-index 0 --http-payload '{"vault":"0x751D1e26d79FeffE95F8a8662aB7A022780ED023"}' \
+  -R cre -e cre/.env
+```
 
-## Hyperliquid (venue, not a sponsor)
+`--target staging-settings` is the Solana configuration and demands a Solana
+keypair the EVM path never uses; `-R cre` is what makes the workflow path
+`shield-risk` rather than `cre/shield-risk`.
 
-`server/hyperliquid.ts` reads any account's public history (ledger updates +
-fills) from the official info API and derives sessions, reloads after loss,
-typical and largest losing sessions, and a single data-backed insight used in
-onboarding and on the Behaviour screen. `app/src/lib/hyperliquid.ts` +
-`Trade.tsx` show live prices (real on every build) and place orders with an
-Hyperliquid's own info API: equity, positions, fills and session PnL for the registered account. Shield has no order entry.
+**On-chain result, verified log by log.** The first CLI simulation signed a
+verdict and the deployed contract accepted it: tx
+`0x2e411cea49a5c8edff69dddb7376aca1b5c2eee9f92be1fcb12f78733676bb35`, block
+63584417, status 1, emitting
+`RiskVerdictApplied(nonce = 1, reasonCode = 1, realizedLossUsdc = 3500000,
+cooldownUntil = 1788776770, extended = true, evidenceHash = 0x4c7946…918b)`.
+Vault state after: `cooldownReason = 2 (RISK_VERDICT)`, `lastVerdictNonce = 1`.
+
+**Read the transcript with that in mind.** The committed transcript is a *later*
+reproduction of the same command against the same vault. It shows the TEE
+banner, the enclave evaluation
+(`realisedLoss24h=3500000 trigger=3000000 triggered=true`) and a clean exit, but
+`"actionable": false` and an empty `signature`: verdict nonce 1 had already been
+consumed by the run above, and the workflow will not re-issue a verdict for a
+loss the vault has already been told about. The signing path is what the
+transaction proves; the transcript proves the confidential execution.
+
+**Why the pause cannot be abused — verified in Solidity**
+(`contracts/src/ShieldVault.sol:536-558`, tested at
+`contracts/test/ShieldVault.t.sol:259-261`): a verdict carries no duration, no
+floor, no limit and no destination. `cooldownUntil` only ever moves forward, so
+a verdict can never shorten a pause the user set. The user's own
+`lossTriggerUsdc` is the floor below which a verdict is rejected outright. Cold
+transfers and full exit are never gated by it — the user can always leave.
+Worst case is bounded by `MAX_LOSS_COOLDOWN_SECS = 30 days`.
+
+**Tracks declined.** *Best Chainlink-Powered Upgrade (Continuity, $500)* — it
+requires an existing project the integration improves, and Shield is net-new
+(first commit 2026-09-04). *Automated Liquidation Protection Challenge ($500)* —
+a different product (a virtual ETH/USDC position on Sepolia).
+
+**Weaknesses, stated rather than hidden.** The CRE simulator is not real
+hardware; its own banner says so, and no part of this submission claims an
+attested enclave ran. There is no deployment on the CRE network — that needs
+`cre account access`. And the enclave reaches Shield's server over HTTP with no
+authentication, which is fine for a simulation against a local process and would
+need `authorizedKeys` restricted in production (`cre/shield-risk/main.ts`).
+
+**Feedback for Chainlink.** The TS SDK's `handlerInTee` and `TeeRuntime`
+overloads were clear and the `cre-compile` toolchain was painless. The friction
+was all in what only the real CLI could surface: `configSchema` is a zod object
+that strips undeclared fields, so two config keys silently never reached the
+enclave and every EVM run was interpreted as Solana until we compared the parsed
+config to the file; the project's target validates *every* declared chain, so an
+EVM-only simulation demanded a funded Solana keypair it never touches (we added
+a separate `evm-settings` target); `CreSerializable` rejecting `null` is
+surprising and the error does not name the offending field; zod `.default()`
+breaks `configSchema` typing; and QuickJS has no `atob`/`btoa`, so base64 had to
+be hand-rolled for HTTP bodies. A native Ed25519 report signer, or a Solana
+`on_report` receiver example for Anchor, would make the Solana path first-class.
+
+---
+
+## The Graph — Best Use of Composable or Standardized Graph Products ($5,000)
+
+| Requirement (verbatim) | Evidence |
+|---|---|
+| "Either compose two or more of The Graph's products, or build meaningfully on a standardized schema" | `substreams-evm/substreams.yaml` imports The Graph's foundational `ethereum-common@v0.3.3` and declares its `index_events` module as the `blockFilter` for **both** maps (`substreams-evm/substreams.yaml:51` and `:76`), so the provider skips every block that carries no log from the vault or from USDC. `substreams info` prints the populated filter query — reproduced verbatim in `docs/evidence/substreams-live.txt` §1 |
+| "Consume live data from a Graph provider, for example Subgraph Studio for Subgraphs or The Graph Market for Substreams" | **Done, with a limitation that must be read alongside it.** `docs/evidence/substreams-live.txt` §2: the full stateful pipeline (`map_vault_flows`) streamed from `hyperevm.substreams.pinax.network:443`, a Graph Market provider, 20 blocks received / 620 processed, ending "Completed successfully". The Graph Market JWT is valid to 2027-10-28. Reproduce with `bun run substreams:hyperevm` (`scripts/substreams-live.sh`). **The run emits no rows.** The Graph indexes HyperEVM **mainnet (999)** only — there is no HyperEVM testnet entry in its networks registry — and the vault is on testnet (998). The server is honest about this rather than papering over it: `source.mode` is `"rpc"` and `/api/health` returns `substreamsAvailable: "no: The Graph indexes HyperEVM mainnet only"` (`server/evm-index.ts:558`). `HUMAN_ACTIONS.md` #2 is the deploy that fixes it |
+| "Simply querying one Subgraph with no composition or standardization does not qualify" | Not applicable: no Subgraph is queried. This is two authored Substreams packages with stateful stores, one of them composed on a foundational Graph package |
+| "Authoring or extending a Standardized Subgraph, or contributing a reusable composable Substreams module, is in scope" | Two packages authored, both committed as built `.spkg` so a judge without the Rust wasm toolchain can still inspect them: `substreams-evm/shield-evm-behavioral-memory-v0.1.0.spkg` (**five** modules: `map_shield_events`, `store_vault_registry`, `map_vault_flows`, `store_flow_totals`, `map_behavioral_profiles`) and `substreams/shield-behavioral-memory-v0.2.0.spkg` (**seven** — the same five plus `map_shield_instructions` and `store_vault_wallets`, which exist because Solana carries the vault's own instruction stream and EVM logs do not) |
+| "Make the standards leverage clear: show what became easier because a shared schema or composed product was used" | See "What the shared schema actually bought" below |
+| "Submit a public repository and a short demo video (two to four minutes)" | **Neither exists yet.** The repository is private (`HUMAN_ACTIONS.md` #1) and the video is unrecorded (`HUMAN_ACTIONS.md` #3). These are the two hard fails on this track today |
+
+**What the shared schema actually bought.** The reuse claim is narrower than
+"the same pipeline runs on two chains", and this is the accurate version:
+
+- The flow schema is shared by construction. `FlowKind` has the same seven
+  variants with the same numbers in both packages
+  (`substreams/proto/shield/v1/shield.proto` and
+  `substreams-evm/proto/shield/evm/v1/shield_evm.proto`), and the flow message
+  has identical field numbering and semantics — only the chain-native
+  identifiers differ (`slot`/`signature` on Solana, `block`/`tx_hash` on EVM).
+- Because of that, everything downstream of `map_vault_flows` is written once.
+  `server/behaviour.ts` (`Flow`, `deriveProfile`) and `server/policy.ts`
+  (`assess`) are imported unchanged by both servers — `server/index.ts:45-46`
+  and `server/evm-index.ts:17-18` — and the CRE workflow consumes the same
+  shape. Adding the EVM chain meant a new decoder and a new manifest; the
+  behaviour engine, the loss rule and the verdict path did not change.
+- Composing `ethereum-common`'s `index_events` meant not writing a block index.
+  The manifest declares which addresses matter and the provider does the
+  filtering upstream; the package's own code never sees an irrelevant block.
+
+**Tracks declined.** *Best AI Tooling or AI Use Case with The Graph* (both the
+From Scratch and the Continuity pools) — **there is no AI in the shipped
+product.** `docs/AI_USAGE.md` documents AI being used to write the repository,
+which is a different thing entirely, and claiming the track on that basis would
+be a misrepresentation. Pool for the track we do enter: **Start Fresh** — first
+commit 2026-09-04, after the event opened.
+
+**Weaknesses, stated rather than hidden.** The pipeline has never produced a
+single flow row from a real vault, because the only chain The Graph can see does
+not yet hold one. Everything else — the composition, the authentication, the
+five-module graph, the store construction — runs live against a Graph Market
+provider today. The fix is one deployment: `substreams-evm/substreams.yaml`'s
+two `evt_addr` filters and its `initialBlock` move to the mainnet vault, and
+nothing else about the package changes. Until then the app runs on
+`server/rpc-source.ts`, a labelled fallback with identical classification, and
+says so in the UI.
+
+**Feedback for The Graph.** The `substreams-ethereum` and `substreams-solana`
+SKILLs were genuinely good on decoding and manifest hygiene, and `substreams
+build` worked first time once `protoc` was installed (worth naming `protobuf`
+next to `buf` in the prerequisites). Three things cost us real time. The
+networks registry has no HyperEVM testnet entry, and nothing in the tooling says
+so — a package that is correct in every other way simply returns nothing, and it
+took a while to be sure that was the reason rather than our filters; a "this
+network is mainnet-only" signal from the CLI would have saved an hour. A
+Solana devnet endpoint that serves small ranges without a key (or a sandbox key)
+would let a team prove a package works before signing up. And `@substreams/core`
+still pins `@bufbuild/protobuf@1`, which collides with newer SDKs that pin v2 —
+we had to install v1 at the repository root.
+
+---
+
+## Hyperliquid — the venue, not a sponsor
+
+Hyperliquid is not a sponsor of this event; it is where the money goes. Shield
+reads it and never trades on it.
+
+`server/hyperliquid.ts` reads any account's public history — ledger updates and
+fills — from the official info API and derives sessions, reloads after loss,
+typical and largest losing sessions, and one data-backed insight used in
+onboarding and on the Behaviour screen. `app/src/lib/hyperliquid.ts`, through
+`app/src/lib/venue.ts`, reads the registered account's equity, positions and
+recent PnL for the Setup and Behaviour screens.
+
+**Shield has no order entry.** There is no trade ticket, no order form and no
+signing of exchange actions anywhere in the app. The only value-moving action
+Shield performs is a release from the vault to a destination the vault already
+has registered.
