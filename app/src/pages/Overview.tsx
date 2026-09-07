@@ -371,7 +371,7 @@ export function Overview() {
             <Link to="/protection">Change</Link>
           </div>
           <div className="notice-list">
-            <div className="notice"><Dot tone="protect" /><span>Never below <b className="num">{usd(vault.protectedFloor)}</b>, whatever happens.</span></div>
+            <div className="notice"><Dot tone="protect" /><span>Never below <b className="num">{usd(vault.protectedFloor)}</b> for trading. Only a full exit, after its delay, can go under it.</span></div>
             <div className="notice"><Dot tone={remainingToday === 0n ? "pending" : "protect"} /><span>At most <b className="num">{usd(vault.velocityThreshold)}</b> released in 24 hours. <span className="muted">{usd(remainingToday)} left.</span></span></div>
             <div className="notice"><Dot tone={cooldownActive && byRule ? "blocked" : "protect"} /><span>Lose <b className="num">{usd(vault.lossTriggerUsdc)}</b> in a day and new capital pauses for <b>{hoursLabel(vault.lossCooldownSecs)}</b>.</span></div>
             <div className="notice"><Dot tone="pending" /><span>Weakening any rule waits <b>{hoursLabel(vault.loosenCooldownSecs)}</b> and you have to confirm again. Tightening is instant.</span></div>
