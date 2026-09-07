@@ -61,7 +61,8 @@ export function WhatHappened({ open, onClose }: { open: boolean; onClose: () => 
 
   const h24 = server?.profile.windows.h24;
   const sent = h24 ? BigInt(h24.sent) : 0n;
-  const loss = h24 ? BigInt(h24.realisedLoss) : 0n;
+  // The number the rule acts on, not the raw shortfall — see Overview.tsx.
+  const loss = server ? BigInt(server.assessment.realizedLossUsdc) : 0n;
   const blocked = attempts.filter((a) => a.ts >= since).reduce((a, b) => a + BigInt(b.amount), 0n);
   const byRule = vault?.cooldownReason === COOLDOWN_REASON.RISK_VERDICT;
 

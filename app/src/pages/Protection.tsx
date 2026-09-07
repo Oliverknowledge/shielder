@@ -143,7 +143,7 @@ export function Protection() {
           <div className="grow">
             <b>{vault.cooldownReason === COOLDOWN_REASON.SELF_PAUSE ? "New capital paused by you" : "Loss cooldown active"}</b> until {clockTime(Number(vault.cooldownUntil), now)}. Safe-wallet moves and cancellations still work.
           </div>
-          <span className="num right hide-xs" style={{ fontWeight: 600 }}><Countdown until={vault.cooldownUntil} now={now} /></span>
+          <span className="num right" style={{ fontWeight: 600 }}><Countdown until={vault.cooldownUntil} now={now} /></span>
         </div>
       )}
 

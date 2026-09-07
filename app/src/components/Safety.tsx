@@ -12,7 +12,6 @@ import { motion } from "motion/react";
 import { useShield } from "../lib/shield";
 import { useAction } from "../lib/actions";
 import { Icon, Sheet } from "./ui";
-import { HoldButton } from "./HoldButton";
 import { usd, clockTime, hoursLabel } from "../lib/format";
 import { OwnerKind, type TightenView } from "../../../client/views";
 import { useVenue } from "../lib/venue";
@@ -76,9 +75,13 @@ export function GetMeSafe({ open, onClose, context }: { open: boolean; onClose: 
               </span>
             </label>
           )}
-          <HoldButton onComplete={() => void go()} disabled={!!busy} className="hold-protect">
-            {busy ? "Confirming…" : "Hold to get safe"}
-          </HoldButton>
+          {/* A press, not a hold. This path only ever tightens, and the landing
+              page promises that moving toward safety is instant — a two-second
+              hold that aborts if a thumb drifts is friction against the one
+              direction Shield says it never resists. */}
+          <button className="btn btn-block btn-lg hold-protect" disabled={!!busy} onClick={() => void go()}>
+            {busy ? "Confirming…" : "Get safe"}
+          </button>
           {context === "blocked" && <p className="tiny muted" style={{ textAlign: "center" }}>Getting safe is always instant, even during a cooldown.</p>}
         </div>
       )}
@@ -90,6 +93,9 @@ export function ResetScreen({ open, onClose, attempted, onStopForTonight }: { op
   const { vault, balance, server, now } = useShield();
   const venue = useVenue();
   const [left, setLeft] = useState(90);
+  // The two choices below are "carry on with what you already have" and "stop".
+  // Neither can move protected capital — the vault has already refused — so
+  // disabling them buys nothing and turns a pause into a lock.
   useEffect(() => {
     if (!open) return;
     setLeft(90);
@@ -110,7 +116,7 @@ export function ResetScreen({ open, onClose, attempted, onStopForTonight }: { op
   return createPortal(
     <motion.div className="reset-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} role="dialog" aria-modal="true">
       <p className="eyebrow">Ninety seconds</p>
-      <h2 className="title-l" style={{ marginTop: 10, maxWidth: "18ch" }}>The trade will still exist in {left > 0 ? `${left} second${left === 1 ? "" : "s"}` : "a moment"}.</h2>
+      <h2 className="title-l" style={{ marginTop: 10, maxWidth: "20ch" }}>Your money will still be here in {left > 0 ? `${left} second${left === 1 ? "" : "s"}` : "a moment"}.</h2>
       <div className="reset-ring" aria-hidden>
         <svg width="168" height="168" viewBox="0 0 168 168">
           <circle cx="84" cy="84" r={r} fill="none" stroke="var(--line)" strokeWidth="6" />
@@ -126,10 +132,10 @@ export function ResetScreen({ open, onClose, attempted, onStopForTonight }: { op
         <div style={{ gridColumn: "1 / -1" }}><div className="k">Still protected</div><div className="v c-protect">{usd(balance)}</div></div>
       </div>
       <motion.div className="reset-actions" initial={{ opacity: 0.35 }} animate={{ opacity: left === 0 ? 1 : 0.35 }} transition={{ duration: 0.6 }}>
-        <p className="eyebrow" style={{ textAlign: "center", marginBottom: 2 }}>{left === 0 ? "What do you want to do?" : "Options unlock when the timer ends"}</p>
-        <button className="btn btn-secondary btn-lg" disabled={left > 0} onClick={onClose}>Keep trading with my existing {usd(bankroll)}</button>
-        <button className="btn btn-lg" disabled={left > 0} onClick={onStopForTonight}>Stop for tonight</button>
-        <p className="tiny muted" style={{ textAlign: "center" }}>There is no option to add the {usd(attempted)}. That was the point of setting the rule.</p>
+        <p className="eyebrow" style={{ textAlign: "center", marginBottom: 2 }}>What do you want to do?</p>
+        <button className="btn btn-secondary btn-lg" onClick={onClose}>Keep trading with my existing {usd(bankroll)}</button>
+        <button className="btn btn-lg" onClick={onStopForTonight}>Lock new funding for tonight</button>
+        <p className="tiny muted" style={{ textAlign: "center" }}>{attempted > 0n ? `Nothing here adds the ${usd(attempted)}. You already made that call.` : "Nothing here releases protected capital. You already made that call."}</p>
       </motion.div>
       <button className="btn btn-ghost btn-sm" style={{ position: "absolute", top: 16, right: 16 }} onClick={onClose} aria-label="Close">Close</button>
     </motion.div>,

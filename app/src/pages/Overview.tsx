@@ -79,7 +79,10 @@ export function Overview() {
   const pending = proposals.filter((p) => p.category !== ProposalKind.TopUp);
   const topUpPending = proposals.find((p) => p.category === ProposalKind.TopUp);
   const h24 = server?.profile.windows.h24;
-  const lossToday = h24 && Number(h24.realisedLoss) > 0 ? h24.realisedLoss : null;
+  // The assessment, not the raw flow window: the flow view books capital that
+  // is still open at the venue as a loss, which is how this screen once told a
+  // user they had lost $69 directly above the venue reporting a $5 gain.
+  const lossToday = server && Number(server.assessment.realizedLossUsdc) > 0 ? server.assessment.realizedLossUsdc : null;
   const labelOf = (owner: string) => wallets.find((w) => w.owner === owner)?.label ?? `${owner.slice(0, 4)}…`;
 
   const approaching = !cooldownActive && vault.velocityThreshold > 0n && remainingToday * 4n <= vault.velocityThreshold;
@@ -102,7 +105,7 @@ export function Overview() {
             <b>No new trading capital</b> until {clockTime(Number(vault.cooldownUntil), now)}{byRule ? ` · your loss rule fired${lossToday ? ` after ${usd(lossToday)} in losses` : ""}` : " · you paused it"}. What is already in {venue.label} is still yours to trade.
           </>
         ),
-        right: <span className="num right hide-xs" style={{ fontWeight: 600 }}><Countdown until={vault.cooldownUntil} now={now} format="compact" /></span>,
+        right: <span className="num right" style={{ fontWeight: 600 }}><Countdown until={vault.cooldownUntil} now={now} format="compact" /></span>,
       };
     }
     if (topUpPending && topUpPending.action.kind === "topUp") {
@@ -148,7 +151,7 @@ export function Overview() {
 
         <div className="split">
           <div className="split-side">
-            <div className="k">Protected</div>
+            <div className="k">{balance > vault.protectedFloor ? "In the vault" : "Protected"}</div>
             <div className="v">{usd(balance)}</div>
             <div className="s">{balance === 0n ? <>Nothing deposited yet · floor {usd(vault.protectedFloor)}</> : balance <= vault.protectedFloor ? <>All of it is at or below your {usd(vault.protectedFloor)} floor.</> : <>{usd(vault.protectedFloor)} of it can never be released.</>}</div>
           </div>

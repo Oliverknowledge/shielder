@@ -219,7 +219,7 @@ function Principles() {
         <h2 className="l-h2" style={{ marginTop: 14, maxWidth: "18ch" }}>Freedom inside your plan. Friction when expanding it.</h2>
         <div className="l-cols">
           {[
-            ["Toward safety", "Instant", "Close a position, move idle capital back, pause funding, tighten a rule. Anything that makes you safer applies the moment you ask. Shield never traps you in risk."],
+            ["Toward safety", "Instant", "Pause funding, tighten a rule, move idle treasury to your safe wallet. Anything that makes you safer applies the moment you ask. Shield doesn't trade and can't close your positions; what it can do is stop feeding them."],
             ["Within your plan", "Invisible", "Trade the bankroll you allocated as fast as you like. No confirmations, no warnings, no nagging. A quiet \"within your plan\" and nothing else."],
             ["Expanding the plan", "Slow", "More capital after losses, a lower floor, a removed cooldown. Weaker changes wait 24 hours, and tomorrow-you has to say yes again."],
           ].map(([k, t, b]) => (
@@ -270,7 +270,7 @@ function Product() {
             When you reach for capital you decided not to risk, Shield doesn't lecture. It shows what happened, what's still protected, and when you can decide again. The refusal comes from the vault contract itself, so it holds whatever you do next.
           </p>
           <div className="l-insights">
-            <div className="l-insight warn"><i /><span>You've realised $1,420 in losses in the last hour. Your 18-hour cooldown is active until 6:02 PM.</span></div>
+            <div className="l-insight warn"><i /><span>You've realised $1,420 in losses in the last hour. Your 12-hour cooldown is active until 6:02 PM.</span></div>
             <div className="l-insight"><i /><span>You sent $1,500 to Hyperliquid. $80 came back. Shield remembers the real numbers, from the chain, not your memory of them.</span></div>
             <div className="l-insight"><i /><span>Yesterday at 22:13 you asked to remove your loss protection. Still want to?</span></div>
           </div>
@@ -287,7 +287,7 @@ function Product() {
               <div><div className="k">Still in the treasury</div><div className="v">$8,500</div></div>
               <div><div className="k">Top up again in</div><div className="v">10:42:07</div></div>
             </div>
-            <p className="small dim" style={{ marginTop: 14 }}>This is the rule you set while calm, doing exactly what you asked. Nothing was lost: the money never left.</p>
+            <p className="small dim" style={{ marginTop: 14 }}>This is the rule you set while calm, doing exactly what you asked. The $1,080 is real. The $1,500 you just reached for never left the treasury.</p>
             <div className="row wrap" style={{ marginTop: 14, gap: 8 }}>
               <span className="btn btn-secondary btn-sm">See what happened</span>
               <span className="btn btn-sm">Get me safe</span>

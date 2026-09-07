@@ -145,6 +145,9 @@ export function Setup() {
   // it directly. Shield holds the rest, and keeps a small reserve above the
   // floor so the daily reload has something to draw on.
   const dep = n(draft.deposit);
+  // initializeVault, then one registerOwner per destination — each its own
+  // transaction and its own wallet prompt.
+  const activateTxCount = 1 + 1 + (draft.coldAddress ? 1 : 0);
   const bankroll = Math.min(n(draft.bankroll), dep);
   const treasury = Math.max(0, dep - bankroll);
   const reserve = Math.min(Math.round(treasury * 0.25), n(draft.daily) * 2);
@@ -415,7 +418,11 @@ export function Setup() {
           <div className="stack">
             <div className="page-head" style={{ marginBottom: 0 }}>
               <h1>{activated ? "Shield is active" : "Activate Shield"}</h1>
-              <p>{activated ? "Now move capital into the treasury. Deposits are always allowed; only what leaves is governed." : "One transaction creates your vault and registers where money can go."}</p>
+              {/* Each call in the batch is its own transaction and its own wallet
+                  prompt, so promising "one" guarantees a surprise second and
+                  sometimes third prompt at the highest-abandonment moment in the
+                  product. Count them from what is actually about to be sent. */}
+              <p>{activated ? "Now move capital into the treasury. Deposits are always allowed; only what leaves is governed." : `${activateTxCount === 1 ? "One transaction creates" : `${activateTxCount} transactions create`} your vault and register where money can go. Your wallet will ask you to sign each one.`}</p>
             </div>
             <div className="card">
               <p className="eyebrow">{usd(dep)}</p>

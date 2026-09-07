@@ -1,7 +1,8 @@
-import { createPublicClient, createWalletClient, custom, http, isAddress, type Address, type EIP1193Provider, type Hex, type WalletClient } from "viem";
+import { createPublicClient, createWalletClient, custom, decodeFunctionData, http, isAddress, type Address, type EIP1193Provider, type Hex, type WalletClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { MOCK_CORE_DEPOSIT_ABI } from "../../../client/abi/MockCoreDepositWallet";
-import { evmCalls, readProposals, readRegistry, readUsdcBalance, readVault, readVaultBundle, shieldErrorFromRevert, supportsBundledReads, viemChain, type EvmConfig } from "../../../client/evm";
+import { MOCK_USDC_ABI } from "../../../client/abi/MockUSDC";
+import { evmCalls, readProposals, readRegistry, readUsdcAllowance, readUsdcBalance, readVault, readVaultBundle, shieldErrorFromRevert, supportsBundledReads, viemChain, type EvmConfig } from "../../../client/evm";
 import { Route } from "../../../client/views";
 import { ShieldTxError, type Actions, type Engine, type PreparedTx, type Signer, type VaultSnapshot } from "./engine";
 
@@ -51,6 +52,21 @@ async function hyperCoreAccountValue(network: "mainnet" | "testnet", user: strin
 export function evmEngine(cfg: EvmEngineConfig, demoKey: () => Hex | null, provider: () => EIP1193Provider | null): Engine {
   const chain = viemChain(cfg);
   const pub = createPublicClient({ chain, transport: http(cfg.rpcUrl) });
+
+  /** True when this call is an approve(vault, n) the current allowance already covers. */
+  async function isRedundantApproval(call: { to: Address; data: Hex }, owner: Address): Promise<boolean> {
+    let decoded;
+    try {
+      decoded = decodeFunctionData({ abi: MOCK_USDC_ABI, data: call.data });
+    } catch {
+      return false;
+    }
+    if (decoded.functionName !== "approve") return false;
+    const [spender, amount] = decoded.args as [Address, bigint];
+    if (spender.toLowerCase() !== cfg.vault.toLowerCase()) return false;
+    const current = await readUsdcAllowance(pub, cfg, owner);
+    return current >= amount;
+  }
   const network = cfg.chainId === 999 ? "hyperevm" : cfg.chainId === 998 ? "hyperevm-testnet" : cfg.chainId === 31337 ? "anvil" : `evm-${cfg.chainId}`;
 
   const walletClient = (signer: Signer): WalletClient => {
@@ -156,6 +172,13 @@ export function evmEngine(cfg: EvmEngineConfig, demoKey: () => Hex | null, provi
       let last: Hex | null = null;
       let confirmedAt: bigint | null = null;
       for (const call of prepared.calls) {
+        // A deposit is [approve, deposit]: two wallet prompts to move your own
+        // money into your own vault, every single time, on the one action Shield
+        // never gates. Skip the approve when the allowance already covers it.
+        if (call.to.toLowerCase() === cfg.usdc.toLowerCase()) {
+          const skip = await isRedundantApproval(call, account.address).catch(() => false);
+          if (skip) continue;
+        }
         // A batch like activate() is [initializeVault, registerOwner, ...],
         // where each call's precondition is created by the one before. The
         // public RPC is load balanced, so a receipt can be confirmed by one

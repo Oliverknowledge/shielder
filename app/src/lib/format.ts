@@ -1,10 +1,18 @@
+/**
+ * Money, formatted the same way everywhere.
+ *
+ * A partial amount under $100 keeps both decimals: "$69.50", never "$69.5" and
+ * never "$70". The loss figure is the number a block is justified by, and a
+ * product whose landing page says it "remembers the real numbers, from the
+ * chain, not your memory of them" cannot print that number three ways on three
+ * screens. server/policy.ts uses the identical rule so the headline it produces
+ * agrees with the figures rendered around it.
+ */
 export const usd = (raw: bigint | string | number, opts: { cents?: boolean; sign?: boolean } = {}): string => {
   const n = typeof raw === "bigint" ? Number(raw) / 1_000_000 : typeof raw === "string" ? Number(raw) / 1_000_000 : raw;
   const abs = Math.abs(n);
-  const body = abs.toLocaleString("en-US", {
-    minimumFractionDigits: opts.cents ? 2 : 0,
-    maximumFractionDigits: opts.cents ? 2 : abs < 100 && abs % 1 !== 0 ? 2 : 0,
-  });
+  const digits = opts.cents || (abs < 100 && abs % 1 !== 0) ? 2 : 0;
+  const body = abs.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
   const sign = n < 0 ? "−" : opts.sign && n > 0 ? "+" : "";
   return `${sign}$${body}`;
 };

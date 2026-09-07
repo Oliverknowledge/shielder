@@ -67,7 +67,7 @@ export function Behaviour() {
   const tradingLabel = execWallets.map((w) => labelOf(w.owner)).join(" and ") || "your trading wallet";
   const denom = Number(sent > returned ? sent : returned) || 1;
   const w = (x: bigint) => `${(Number(x) / denom) * 100}%`;
-  const loss24 = BigInt(p.windows.h24.realisedLoss);
+  const loss24 = BigInt(server.assessment.realizedLossUsdc);
 
   const openEvidence = async (hash: string) => {
     try {
@@ -98,7 +98,7 @@ export function Behaviour() {
               You released <span className="num">{usd(sent)}</span> to {tradingLabel}. <span className={`num ${returned >= sent ? "c-protect" : "c-blocked"}`}>{usd(returned)}</span> came back.
             </h2>
             <div style={{ marginTop: 20 }}>
-              <div className="capital" style={{ height: 18 }} role="img" aria-label={`Came back ${usd(returned)}, still out ${usd(open)}, lost ${usd(lost)}`}>
+              <div className="capital" style={{ height: 18 }} role="img" aria-label={`Came back ${usd(returned)}, still out ${usd(open)}, not back yet ${usd(lost)}`}>
                 {returned > 0n && <i style={{ flexBasis: w(returned), background: "var(--protect)" }} />}
                 {open > 0n && <i style={{ flexBasis: w(open), background: "var(--bankroll-2)" }} />}
                 {lost > 0n && <i style={{ flexBasis: w(lost), background: "var(--blocked)" }} />}
@@ -106,13 +106,13 @@ export function Behaviour() {
               <div className="legend">
                 <span><i style={{ background: "var(--protect)" }} />Came back <b>{usd(returned)}</b></span>
                 {open > 0n && <span><i style={{ background: "var(--bankroll-2)" }} />Still out <b>{usd(open)}</b></span>}
-                {lost > 0n && <span><i style={{ background: "var(--blocked)" }} />Realised loss <b>{usd(lost)}</b></span>}
-                {gained > 0n && <span><i style={{ background: "var(--protect)" }} />Realised gain <b>{usd(gained)}</b></span>}
+                {lost > 0n && <span><i style={{ background: "var(--blocked)" }} />Not back yet <b>{usd(lost)}</b></span>}
+                {gained > 0n && <span><i style={{ background: "var(--protect)" }} />Came back extra <b>{usd(gained)}</b></span>}
               </div>
             </div>
             {loss24 > 0n && (
               <p className="dim" style={{ marginTop: 16 }}>
-                <b className="c-blocked num">{usd(loss24)}</b> of that was lost in the last 24 hours{vault ? `, against your ${usd(vault.lossTriggerUsdc)} trigger` : ""}.
+                <b className="c-blocked num">{usd(loss24)}</b> of that is a realised loss in the last 24 hours{vault ? `, against your ${usd(vault.lossTriggerUsdc)} trigger` : ""}.
               </p>
             )}
           </>
@@ -224,7 +224,12 @@ export function Behaviour() {
               <div key={`${f.signature}-${f.kind}-${f.amount}`} className={`tl-item ${f.outbound ? "out" : "in"}`}>
                 <div className="row-between">
                   <div style={{ minWidth: 0 }}>
-                    <div className="small"><b>{KIND_LABEL[f.kind] ?? f.kind}</b> · {f.outbound ? "to" : "from"} {labelOf(f.counterparty)}</div>
+                    {/* labelOf matches the counterparty against the registered
+                        destinations, so a deposit the owner made from their own
+                        wallet was being labelled "from Hyperliquid" — as if the
+                        venue had funded them. A deposit only ever comes from a
+                        depositor, and naming the venue there is simply wrong. */}
+                    <div className="small"><b>{KIND_LABEL[f.kind] ?? f.kind}</b>{f.kind === "DEPOSIT" ? <> · from {f.counterparty.toLowerCase() === signer?.address.toLowerCase() ? "your wallet" : short(f.counterparty)}</> : <> · {f.outbound ? "to" : "from"} {labelOf(f.counterparty)}</>}</div>
                     <div className="tiny muted">{dateTime(f.blockTime)} · <ExplorerLink sig={f.signature} /></div>
                   </div>
                   <b className="num" style={{ whiteSpace: "nowrap" }}>{f.outbound ? "−" : "+"}{usd(f.amount)}</b>

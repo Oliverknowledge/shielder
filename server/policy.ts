@@ -90,9 +90,14 @@ export interface Assessment {
   newestLossAt: number | null;
 }
 
+/** Identical rule to app/src/lib/format.ts, so the headline agrees with the
+ *  figures the UI renders beside it. Rounding $69.50 to "$70" here while the
+ *  screen shows "$69.50" makes the product look like it is guessing. */
 const usd = (raw: bigint) => {
   const n = Number(raw) / 1_000_000;
-  return `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  const abs = Math.abs(n);
+  const digits = abs < 100 && abs % 1 !== 0 ? 2 : 0;
+  return `$${abs.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 };
 const agoLabel = (secs: number) => {
   if (secs < 90) return "just now";
@@ -109,14 +114,30 @@ export function assess(profile: BehaviourProfile, policy: PolicyView, now: numbe
   const w = profile.windows.h24;
   const flowLoss = w.realisedLoss;
   const venueLoss = venue && venue.realisedLossUsdc > 0n ? venue.realisedLossUsdc : 0n;
-  // Two independent views of the same 24 hours: what did not come back to the
-  // vault, and what the venue itself settled. Take the larger, never the sum,
-  // so a loss that both can see is never double counted.
-  const venueDominates = venueLoss > flowLoss;
-  const realizedLossUsdc = venueDominates ? venueLoss : flowLoss;
+  /**
+   * Two views of the same 24 hours, and only one of them can tell a loss from
+   * an open position.
+   *
+   * The flow view sees money leave the vault and some of it come back, and
+   * books the shortfall. It cannot see the difference between capital that was
+   * lost and capital that is still deployed — so a session that sent $100,
+   * received $30 back and still holds $246 at the venue reads as a $70 loss
+   * while the account is actually up. That is not a hypothetical: it fired on
+   * the live testnet vault and blocked an account showing a $5 gain, which is
+   * the worst thing this product can do. Block someone who is winning once and
+   * they will never trust the rule again.
+   *
+   * So where the venue answers, the venue decides: it settles its own trades
+   * and knows what is closed. The flow view is the fallback for when it does
+   * not answer, or for a destination with no API at all, where over-counting
+   * exposure as loss is at least the safe direction to be wrong in.
+   */
+  const venueDecides = !!venue;
+  const realizedLossUsdc = venueDecides ? venueLoss : flowLoss;
+  const venueDominates = venueDecides && venueLoss > 0n;
   const triggered = policy.lossTriggerUsdc > 0n && realizedLossUsdc >= policy.lossTriggerUsdc;
 
-  const newestLossAt = venueDominates ? (venue?.lastFillAt ?? profile.lastLossAt) : profile.lastLossAt;
+  const newestLossAt = venueDominates ? (venue?.lastFillAt ?? profile.lastLossAt) : venueDecides ? null : profile.lastLossAt;
   const newLoss = newestLossAt !== null && newestLossAt > sinceLossAt;
   const target = BigInt(now) + policy.lossCooldownSecs;
   const wouldExtend = policy.lossCooldownSecs > 0n && target > policy.cooldownUntil;
@@ -130,9 +151,13 @@ export function assess(profile: BehaviourProfile, policy: PolicyView, now: numbe
   const sessionsInWindow = profile.sessions.filter((s) => s.realised && s.lastActivityAt >= now - 86400);
   for (const s of sessionsInWindow.slice(-3)) {
     const ago = agoLabel(now - s.lastActivityAt);
+    // With the venue answering, a shortfall is money still at the venue, not
+    // money lost. Saying "lost" there would contradict the number above it.
     lines.push(
       s.net < 0n
-        ? `Sent ${usd(s.sent)}, ${usd(s.returned)} came back: ${usd(-s.net)} lost, ${ago}.`
+        ? venueDecides
+          ? `Sent ${usd(s.sent)}, ${usd(s.returned)} came back: ${usd(-s.net)} still at the venue, ${ago}.`
+          : `Sent ${usd(s.sent)}, ${usd(s.returned)} came back: ${usd(-s.net)} lost, ${ago}.`
         : `Sent ${usd(s.sent)}, ${usd(s.returned)} came back: ${usd(s.net)} gained, ${ago}.`
     );
   }
