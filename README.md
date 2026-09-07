@@ -7,21 +7,29 @@ control. Tightening a rule is instant; weakening one waits 24 hours and needs
 your yes again tomorrow. Adding capital after a loss is the one thing Shield
 is strict about.
 
-**Live on HyperEVM testnet, chain id 998.** `ShieldVault.sol` is deployed at
-`0xcdB6d631A00857584e70a21d800f51C5776302Fe` in tx
-`0x67ffb6531f406758758adb98fb81008f1888e6793b9a39fb79bde9ee6df66ebc`
-(block 63561837). It is immutable — no owner, no proxy, no upgrade path. Its
-USDC balance today is 696.5 test USDC:
+**Live on HyperEVM testnet, chain id 998.** `ShieldVault.sol` **v3** is deployed at
+`0xDaA8B6a85391d54397c3847F006a49A16d0F37b3` in tx
+`0x70a98bffe313a28fcdc9d0989ea691ca3c3e6dedf0bcc2b454d107292176234b`
+(block 63634061). It is immutable — no owner, no proxy, no upgrade path. v3 adds
+the **risk ladder**: NORMAL / REDUCED / LOCKED, written while calm. The reload
+budget ratchets down with the session, on chain; a verifier may only move a
+vault down it, to a rung the user pre-wrote; the threshold that selects REDUCED
+never goes on chain (a salted hash there, the plaintext only in the Chainlink
+enclave); moving back up early waits and needs a reconfirmation.
 
 ```bash
+cast call 0xDaA8B6a85391d54397c3847F006a49A16d0F37b3 "VERSION()(uint8)" --rpc-url https://rpc.hyperliquid-testnet.xyz/evm   # 3
 cast call 0x2B3370eE501B4a559b57D449569354196457D8Ab "balanceOf(address)(uint256)" \
-  0xcdB6d631A00857584e70a21d800f51C5776302Fe --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
+  0xDaA8B6a85391d54397c3847F006a49A16d0F37b3 --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
 ```
 
-Four vaults exist on it, holding $600, $45, $21 and $0. That is $666, not
-$696.50: `deposit` is the only path that credits a vault
-(`ShieldVault.sol:333`), so USDC sent to the contract address directly belongs
-to no vault and can never be released.
+Four vaults exist on it today ($60, $10, $8, $5); one of them was moved to
+REDUCED by the Chainlink enclave against its private ladder. v1 and v2 (see
+`docs/THREAT_MODEL.md`, Known gaps, for the three v1 defects fixed in v2) are
+still on chain as history. A Sepolia twin of the same bytecode streams real rows
+through The Graph (`docs/evidence/substreams-live.txt`). `deposit` is the only path that credits a vault, so
+USDC sent to the contract address directly belongs to no vault and can never be
+released — return money with `deposit()`, never a raw transfer.
 
 No public block explorer indexes HyperEVM testnet, so every hash in this file
 is checked with `cast tx <hash> --rpc-url https://rpc.hyperliquid-testnet.xyz/evm`.
@@ -84,9 +92,11 @@ minutes, with no accounts and no credentials.
 | Foundry (`forge`, `anvil`, `cast`) | `curl -L https://foundry.paradigm.xyz \| bash && foundryup` |
 
 That is all this section needs. Three later sections need more, and each says
-so where it appears: the full test suite needs the Solana toolchain,
-`substreams build` needs the `substreams` CLI, and `cre workflow simulate`
-needs the `cre` CLI.
+so where it appears: the full test suite needs the Solana toolchain;
+`substreams build` needs the `substreams` CLI, `protoc`, `buf` and the Rust
+`wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`),
+while `substreams run` on the committed `.spkg` needs only the CLI and a Graph
+Market JWT in `.env`; and `cre workflow simulate` needs the `cre` CLI.
 
 ### Bring the stack up
 
@@ -101,10 +111,9 @@ bun run dev:app:evm               # http://localhost:5175
 
 What each step should print:
 
-- `forge test` → `44 tests passed, 0 failed, 0 skipped (44 total tests)` —
-  41 invariants in `ShieldVault.t.sol` and 3 pinned defects in
-  `KnownDefects.t.sol`, which assert what the contract *does*, not what it
-  should do. See "Known gaps" in `docs/THREAT_MODEL.md`.
+- `forge test` → `64 tests passed, 0 failed, 0 skipped (64 total tests)` —
+  41 invariants in `ShieldVault.t.sol`, 6 regressions in `FixedDefects.t.sol`,
+  2 in `Isolation.t.sol`, and 15 in `Ladder.t.sol` for the v3 risk ladder.
 - `bootstrap:evm` deploys MockUSDC, a mock CoreDepositWallet and
   `ShieldVault`, then initializes one vault — $6,000 floor, $2,000 per 24h,
   large top-ups over 20% of balance wait 30 minutes, $750 of realised loss
@@ -189,9 +198,11 @@ curl -s localhost:8788/api/vault/0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006
 curl -s localhost:8788/api/health
 ```
 
-The demo vault, authority `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006`: $600
-protected, $500 floor, $100 per 24h, loss rule $50 → 12h, presently in a loss
-cooldown from an applied risk verdict. Acting on a vault needs its authority's
+The demo vault, authority `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006`: $60
+protected, $40 floor, $12 per 24h, loss rule $7 → 12h, ladder committed. The
+ladder demo vault (`0xaA8cfBd0…`) is presently REDUCED by a verdict the CRE
+simulator signed against its private ladder after a real loss on Hyperliquid
+testnet. Acting on a vault needs its authority's
 private key, which is not in this repository; the app's read paths and the
 server API do not.
 
@@ -215,7 +226,7 @@ plainly that it is not done.
 
 | Claim | Status |
 |---|---|
-| `ShieldVault.sol` enforces the rules in `docs/THREAT_MODEL.md`; no owner, admin or upgrade path | **Verified, with three disclosed defects.** 44 Foundry tests (41 invariants, 3 pinning known defects); deployed and immutable on chain 998; `usdc()`, `coreDeposit()` and the EIP-712 domain separator read back correctly |
+| `ShieldVault.sol` enforces the rules in `docs/THREAT_MODEL.md`; no owner, admin or upgrade path | **Verified.** 64 Foundry tests (41 invariants, 6 fixed-defect regressions, 2 isolation, 15 ladder); deployed and immutable on chain 998; `usdc()`, `coreDeposit()` and the EIP-712 domain separator read back correctly |
 | The vault funds a Hyperliquid Core account directly | **Verified on chain 998.** tx `0x94960d1f…f889be`, block 63581864: one transaction carrying USDC approval, vault → CoreDepositWallet → HyperCore system address `0x2000…0000`, a HyperCore credit of $5.00, and `TopUpExecuted(amount=$5, instant=true, balanceAfter=$45, route=1)` |
 | **Privy**: an embedded wallet is a vault's authority and completed a financial flow | **Verified.** Privy created the wallet on login (`createOnLogin: "users-without-wallets"`, `app/src/lib/privy.tsx:67`). Wallet `0x83144b99…1D2B`, nonce 4 — it signed four transactions itself: `registerOwner` (`0x80c2a48a…f8f0`), the $5 release above, `proposeLoosen` (`0xeeea692a…4b85`). The contract gates every path on `msg.sender`, so Privy *is* the authority |
 | **Chainlink CRE**: the confidential handler is load-bearing, and its verdict changes chain state | **Verified.** `handlerInTee` from `@chainlink/cre-sdk` registered at `cre/shield-risk/main.ts:88` with `[{ tee: "nitro", regions: ["us-west-2"] }]`; the verifier key is read in-enclave via `runtime.getSecret` (`cre/shield-risk/evaluate.ts:89`) and used to produce the EIP-712 signature. On-chain result: tx `0x2e411cea…6bb35`, block 63584417, `RiskVerdictApplied(nonce=1, reasonCode=1, realizedLossUsdc=3500000, extended=true)` |
@@ -273,7 +284,7 @@ Three things are genuinely open. They are decisions, not code:
 ## Verify everything
 
 ```bash
-cd contracts && forge test && cd ..    # 44: 41 invariants + 3 pinned defects
+cd contracts && forge test && cd ..    # 64: 41 invariants + 6 fixed-defect regressions + 2 isolation + 15 ladder
                                        #     (after forge install, above)
 bun run build:program && bun test tests/ server/
                                        # 66: 46 program invariants (LiteSVM), 20 server
@@ -368,8 +379,8 @@ stale and cannot execute. Monitor verdicts never bump it.
 ## Repository
 
 ```
-contracts/               ShieldVault.sol, mocks, 44 Foundry tests
-                         (ShieldVault.t.sol invariants + KnownDefects.t.sol)
+contracts/               ShieldVault.sol (v3), mocks, 64 Foundry tests
+                         (ShieldVault.t.sol, FixedDefects.t.sol, Isolation.t.sol, Ladder.t.sol)
 server/                  evm-index.ts (chain 998/Anvil), index.ts (Solana v0),
                          behaviour.ts, policy.ts, hyperliquid.ts, substreams-source.ts
 client/                  views.ts (chain-agnostic), evm.ts, solana-adapter.ts, demo CLIs

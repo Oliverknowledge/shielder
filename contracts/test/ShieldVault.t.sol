@@ -244,7 +244,7 @@ contract ShieldVaultTest is Test {
         vm.expectRevert(ShieldVault.VerdictExpired.selector);
         vault.applyRiskVerdict(rv, sig);
         vm.warp(GENESIS);
-        ShieldVault.RiskVerdict memory f = ShieldVault.RiskVerdict(alex, 1, GENESIS + 10 minutes, GENESIS + 30 minutes, 1, 1_420 * USD, bytes32("e"));
+        ShieldVault.RiskVerdict memory f = ShieldVault.RiskVerdict(alex, 1, GENESIS + 10 minutes, GENESIS + 30 minutes, 2, bytes32(0), 1_420 * USD, bytes32("e"));
         bytes memory fs = _sign(f, verifierKey);
         vm.expectRevert(ShieldVault.VerdictNotYetValid.selector);
         vault.applyRiskVerdict(f, fs);
@@ -266,7 +266,7 @@ contract ShieldVaultTest is Test {
         address bob = address(0xB0B2);
         vm.prank(bob);
         vault.initializeVault(ShieldVault.InitParams(address(0), 0, 2000, CAP, VEL, TRIGGER, LOSS_CD));
-        ShieldVault.RiskVerdict memory rv = ShieldVault.RiskVerdict(bob, 1, GENESIS, GENESIS + 15 minutes, 1, 1_420 * USD, bytes32("e"));
+        ShieldVault.RiskVerdict memory rv = ShieldVault.RiskVerdict(bob, 1, GENESIS, GENESIS + 15 minutes, 2, bytes32(0), 1_420 * USD, bytes32("e"));
         bytes memory sig = _sign(rv, verifierKey);
         vm.expectRevert(ShieldVault.NoRiskVerifier.selector);
         vault.applyRiskVerdict(rv, sig);
@@ -442,12 +442,14 @@ contract ShieldVaultTest is Test {
     function _loosenDaily(uint64 d) internal pure returns (ShieldVault.LoosenParams memory p) { p.hasVelocityThreshold = true; p.velocityThreshold = d; }
 
     function _verdict(uint64 nonce, uint64 loss, uint256 key) internal view returns (ShieldVault.RiskVerdict memory rv, bytes memory sig) {
-        rv = ShieldVault.RiskVerdict(alex, nonce, uint64(block.timestamp), uint64(block.timestamp) + 15 minutes, 1, loss, keccak256("evidence"));
+        // vm.getBlockTimestamp(): under via_ir the optimizer treats block.timestamp as constant within one test transaction, so a warp between two verdicts would be ignored.
+        uint64 nowTs = uint64(vm.getBlockTimestamp());
+        rv = ShieldVault.RiskVerdict(alex, nonce, nowTs, nowTs + 15 minutes, 2, bytes32(0), loss, keccak256("evidence"));
         sig = _sign(rv, key);
     }
 
     function _sign(ShieldVault.RiskVerdict memory rv, uint256 key) internal view returns (bytes memory) {
-        bytes32 structHash = keccak256(abi.encode(vault.VERDICT_TYPEHASH(), rv.vault, rv.nonce, rv.issuedAt, rv.expiry, rv.reasonCode, rv.realizedLossUsdc, rv.evidenceHash));
+        bytes32 structHash = keccak256(abi.encode(vault.VERDICT_TYPEHASH(), rv.vault, rv.nonce, rv.issuedAt, rv.expiry, rv.tier, rv.ladderHash, rv.realizedLossUsdc, rv.evidenceHash));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", vault.domainSeparator(), structHash));
         (uint8 vv, bytes32 r, bytes32 s) = vm.sign(key, digest);
         return abi.encodePacked(r, s, vv);

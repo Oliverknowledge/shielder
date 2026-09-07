@@ -98,7 +98,7 @@ nothing else in the pipeline changes:
 
 1. The two `evt_addr` filter strings and the `params:` block name the mainnet
    vault and `0xb88339CB…630f` instead of the testnet addresses.
-2. `initialBlock` (currently `45220000`) becomes the vault's deploy block.
+2. `initialBlock` (currently `45260000`, a recent mainnet block behind one YAML anchor) becomes the vault's deploy block.
 
 ```bash
 bun run substreams:hyperevm                      # expect flow rows, not just "Completed successfully"
@@ -135,14 +135,28 @@ but empty dashboard that looks like a bug.
 
 | Vault authority | State | Use it? |
 |---|---|---|
-| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | $600 balance, floor $500, $100/24h | **Yes** — key in `.shield/hyperevm-keys.json` under `authority` |
-| `0x83144b99D89947703714Ee9aA3A3614985041D2B` | $45, floor $10 — the Privy embedded wallet | Yes, for the Privy beat: sign in with email, not a pasted key |
+| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | v3: $60, floor $40, $12/24h, $7 loss trigger, ladder committed (REDUCED budget $5, private threshold $3 in `.shield/ladders/`). LOCKED until ~00:00 UTC 2026-09-08 by today's real loss | **Yes, after the cooldown clears** — key `.shield/hyperevm-keys.json` → `authority` |
+| `0xaA8cfBd03CD4e043228bCCe42b5adD98866F7D8b` | v3: $5, $4/day; already REDUCED by the enclave (until ~13:17 UTC 2026-09-08), budget $3 | To show a vault already REDUCED; key → `ladderAuthority2` |
+| `0x751D1e26d79FeffE95F8a8662aB7A022780ED023` | v3: $10, LOCKED today | Only to show LOCKED; nonce 1 consumed |
+| `0x83144b99D89947703714Ee9aA3A3614985041D2B` | the Privy embedded wallet — **no vault on v2 yet**, holds $20 test USDC + 0.3 HYPE | **Yes, and this is the Privy beat:** sign in with email, walk onboarding, and make the deposit *from the Privy wallet itself*. That closes the one gap in the v1 evidence (the v1 vault was funded by another address) |
 | `0x05a7a130869a793719BB6B341009ea3B70588DCb` | $0 balance, floor $6,000 | **No.** The floor exceeds anything you can deposit and lowering it waits 24 hours. This is the funder and the registered Hyperliquid destination, not a vault to demo |
 
 ```bash
 SHIELD_PORT=8788 bun run server:evm    # indexer + monitor + relayer + API on :8788
 bun run dev:app:hyperevm               # http://localhost:5174
 ```
+
+**The REDUCED beat (the strongest 36 seconds, `docs/internal/research/I-wow-judge.md`).**
+On the demo vault once NORMAL: release $5 (allowed; `cast call … instantTopUp` returns `0x`),
+run `EVM_EXECUTION_KEY=<execution> bun run scripts/hyperevm-losing-trade.ts 3.5 0 30` so the
+trading account realises a loss above the private $3 threshold but below the $7 public trigger
+(watch the printed realised figure; stop early if it nears $7), then
+`cre workflow simulate shield-risk --target evm-settings … '{"vault":"0x9872f09D…"}'`. The enclave
+logs `decision=reduced` and a relay hash; `currentTier` reads 1; the same $5 call now reverts
+`VelocityThresholdExceeded` (`0x54debb02`) and a $0 … $0 release under the $5 budget still
+returns `0x`. Say "the reload budget changed" — never "permissions" or "signing authority".
+Trader-sized numbers need the Hyperliquid testnet drip (app.hyperliquid-testnet.xyz/drip with
+the mainnet-active deployer) and `scripts/hyperevm-bridge.ts`; test USDC is exhausted today.
 
 **Filming the cooldown needs a fresh loss.** A verdict only lands when there is
 one, and nonce 1 is already consumed on both the demo vault and the CRE vault
@@ -214,30 +228,33 @@ in #1 afterwards.
 
 ---
 
-## 6. Optional, and the best Solidity work available: fix the three defects
+## 6. Publish both Substreams packages to the registry (10 minutes, no cost)
 
-Not needed for the submission. Worth doing because you said you wanted to write
-some of the contract yourself, and because this is real work with real value
-rather than an exercise.
+The Graph's composable track names "contributing a reusable composable
+Substreams module" as in scope. Both packages already pass
+`substreams registry verify`; publishing needs a substreams.dev login, which is
+a browser step.
 
-`contracts/test/KnownDefects.t.sol` holds three failing-by-design tests that
-assert what `ShieldVault.sol` currently *does*. Each one is a bug, each one is
-disclosed in `docs/THREAT_MODEL.md`, and each one has a small, self-contained
-fix that cannot be made to the deployed contract because it is immutable:
+```bash
+substreams registry login                       # opens substreams.dev, paste the token
+cd substreams-evm && substreams registry publish shield-evm-behavioral-memory-v0.1.0.spkg && cd ..
+cd substreams     && substreams registry publish shield-behavioral-memory-v0.2.0.spkg && cd ..
+```
 
-1. `_refundVelocity` refunds into the bucket index stored at proposal time,
-   which after a full lap of the window is current again and holds unrelated
-   spend. Store the reservation's absolute timestamp and refund only if the
-   window has not rolled since.
-2. `tighten` bounds `lossCooldownSecs` and the self-pause but places no upper
-   bound on `loosenCooldownSecs` or `fullExitCooldownSecs`, so a user can lock
-   themselves out of their own exit in one instant, unconfirmed call. Add the
-   bounds.
-3. `_rollBuckets` clamps `elapsed` before using it to advance `bucketStart` and
-   never advances `currentBucketIndex` in the long-idle branch, so an idle gap
-   refunds the whole daily limit once per idle day, in a single block. Advance
-   `bucketStart` to the current window and the index with it.
+Then paste the two registry URLs into `docs/SPONSOR_INTEGRATIONS.md` (The
+Graph table, last row) and `docs/SUBMISSION.md`.
 
-The tests are already written and they describe the bug precisely. Invert each
-assertion, make it pass, and you have a v2 worth deploying. Nothing else in the
-contract needs to change.
+## Done since the last pass (so you do not redo it)
+
+- **v3 with the risk ladder is deployed** at `0xDaA8B6a85391d54397c3847F006a49A16d0F37b3`
+  (block 63634061); a Sepolia twin (`0xf1ef03Ea…`) gives The Graph real rows; the enclave
+  moved a live vault to REDUCED against a private ladder (`docs/evidence/cre-simulate.txt`).
+  The dynamic trading-authority ratchet was researched and found impossible for a
+  self-custodial trader (`docs/ARCHITECTURE_DECISION.md`, addendum); nothing claims it.
+- The three v1 contract defects are **fixed** (v2), pinned in `contracts/test/FixedDefects.t.sol`.
+- The demo vault and the CRE vault were re-created on v2; a real $7.12 loss on
+  Hyperliquid testnet drove a CRE-signed verdict on-chain
+  (`docs/evidence/cre-simulate.txt`, tx `0xa02e2fcb…`).
+- The Graph evidence was regenerated with two providers and a no-token
+  negative control (`docs/evidence/substreams-live.txt`).
+- `.env` is now gitignored (it was not) and the Graph Market JWT lives there.

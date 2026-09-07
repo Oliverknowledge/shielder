@@ -42,6 +42,25 @@ contract ShieldVault {
     uint64 public constant MIN_FULL_EXIT_COOLDOWN_SECS = 1 hours;
     uint64 public constant MAX_LOSS_COOLDOWN_SECS = 30 days;
     uint64 public constant MAX_SELF_PAUSE_SECS = 30 days;
+    // v2: every delay the user can set on themselves is bounded, so "you can
+    // always leave" cannot be broken by a single tighten() call.
+    uint64 public constant MAX_TOP_UP_COOLDOWN_SECS = 30 days;
+    uint64 public constant MAX_LOOSEN_COOLDOWN_SECS = 30 days;
+    uint64 public constant MAX_FULL_EXIT_COOLDOWN_SECS = 30 days;
+    /// @dev Contract revision. v1 had three velocity/bound defects (pinned in
+    ///      test/FixedDefects.t.sol); v2 fixed them; v3 adds the risk ladder
+    ///      (NORMAL / REDUCED / LOCKED), resets the verdict nonce when the
+    ///      verifier changes, and re-checks the budget on gated top-ups.
+    uint8 public constant VERSION = 3;
+    // Risk ladder: a verifier may only move a vault DOWN it (to a rung the
+    // user pre-wrote); moving back up early is a delayed, reconfirmed change.
+    uint8 public constant TIER_NORMAL = 0;
+    uint8 public constant TIER_REDUCED = 1;
+    uint8 public constant TIER_LOCKED = 2;
+    uint64 public constant MIN_TIER_RESET_SECS = 1 hours;
+    uint64 public constant MAX_TIER_RESET_SECS = 7 days;
+    uint64 public constant DEFAULT_TIER_RESET_SECS = 24 hours;
+    uint8 public constant CATEGORY_LADDER = 3;
     uint64 public constant VERDICT_CLOCK_SKEW_SECS = 5 minutes;
     uint256 public constant BPS_DENOM = 10_000;
 
@@ -98,6 +117,8 @@ contract ShieldVault {
     error FullExitDestinationNotRegisteredCold();
     error TransferFailed();
     error Reentrancy();
+    error LadderMismatch();
+    error NoLadder();
 
     // ------------------------------------------------------------------
     // Storage
@@ -118,7 +139,6 @@ contract ShieldVault {
         uint8 cooldownReason;
         uint64 cooldownSetAt;
         uint64 lastVerdictNonce;
-        uint8 lastVerdictReason;
         bytes32 lastVerdictEvidence;
         uint64[6] velocityBuckets;
         uint64 bucketStart;
@@ -127,6 +147,27 @@ contract ShieldVault {
         uint64 proposalNonceCounter;
         uint64 createdAt;
         uint64 balance;
+        // v3 risk ladder. The thresholds that select a rung live off-chain
+        // (private to the user and the enclave); the chain holds their salted
+        // commitment, the rung's public allowance, and the rung itself.
+        bytes32 ladderHash;
+        uint64 reducedVelocityThreshold; // 24h release budget while REDUCED (<= velocityThreshold)
+        uint64 tierResetSecs; // how long REDUCED lasts once set
+        uint8 activeTier;
+        uint64 tierUntil;
+    }
+
+    struct LadderProposal {
+        bool exists;
+        bool resetTier; // true = move back to NORMAL early; false = replace the ladder
+        uint64 nonce;
+        uint64 createdAt;
+        uint64 executeAfter;
+        uint64 expiry;
+        uint64 configVersionAtCreation;
+        bytes32 ladderHash;
+        uint64 reducedVelocityThreshold;
+        uint64 tierResetSecs;
     }
 
     struct RegistryEntry {
@@ -200,8 +241,9 @@ contract ShieldVault {
         uint64 nonce;
         uint64 issuedAt;
         uint64 expiry;
-        uint8 reasonCode;
-        uint64 realizedLossUsdc;
+        uint8 tier; // TIER_REDUCED or TIER_LOCKED: the rung the verifier selects
+        bytes32 ladderHash; // must match the vault's commitment for TIER_REDUCED
+        uint64 realizedLossUsdc; // checked against the public lossTriggerUsdc for TIER_LOCKED
         bytes32 evidenceHash;
     }
 
@@ -212,12 +254,11 @@ contract ShieldVault {
     mapping(address => mapping(address => RegistryEntry)) internal registry;
     mapping(address => address[]) internal registryOwners; // enumeration for clients
     mapping(address => mapping(uint8 => Proposal)) internal proposals;
+    mapping(address => LadderProposal) internal ladderProposals;
 
     uint256 private _lock = 1;
 
-    bytes32 public constant VERDICT_TYPEHASH = keccak256(
-        "RiskVerdict(address vault,uint64 nonce,uint64 issuedAt,uint64 expiry,uint8 reasonCode,uint64 realizedLossUsdc,bytes32 evidenceHash)"
-    );
+    bytes32 public constant VERDICT_TYPEHASH = keccak256("RiskVerdict(address vault,uint64 nonce,uint64 issuedAt,uint64 expiry,uint8 tier,bytes32 ladderHash,uint64 realizedLossUsdc,bytes32 evidenceHash)");
     bytes32 private immutable _DOMAIN_SEPARATOR;
 
     // ------------------------------------------------------------------
@@ -235,7 +276,11 @@ contract ShieldVault {
     event ColdTransferExecuted(address indexed vault, address indexed destinationOwner, uint64 amount, bool instant);
     event FullExitProposed(address indexed vault, address indexed destinationOwner, uint64 nonce, uint64 executeAfter, bool uninstall, uint64 amount);
     event FullExitExecuted(address indexed vault, address indexed destinationOwner, uint64 amount);
-    event RiskVerdictApplied(address indexed vault, uint64 nonce, uint8 reasonCode, uint64 realizedLossUsdc, uint64 cooldownUntil, bool extended, bytes32 evidenceHash);
+    event RiskVerdictApplied(address indexed vault, uint64 nonce, uint8 tier, uint64 realizedLossUsdc, uint64 cooldownUntil, bool extended, bytes32 evidenceHash);
+    event LadderCommitted(address indexed vault, bytes32 ladderHash, uint64 reducedVelocityThreshold, uint64 tierResetSecs, uint64 configVersion);
+    event LadderChangeProposed(address indexed vault, uint64 nonce, uint64 executeAfter, bool resetTier);
+    event LadderChangeExecuted(address indexed vault, uint64 nonce, bool resetTier);
+    event RiskTierChanged(address indexed vault, uint8 tier, uint64 until, uint64 verdictNonce, bytes32 ladderHash, bool byVerifier);
 
     constructor(address usdc_, address coreDeposit_) {
         usdc = IERC20(usdc_);
@@ -271,6 +316,20 @@ contract ShieldVault {
 
     function getRegistryOwners(address authority) external view returns (address[] memory) {
         return registryOwners[authority];
+    }
+
+    function getLadderProposal(address authority) external view returns (LadderProposal memory) {
+        return ladderProposals[authority];
+    }
+
+    /// The rung in force right now (REDUCED and LOCKED both expire on their own clocks).
+    function currentTier(address authority) external view returns (uint8) {
+        return _currentTier(vaults[authority]);
+    }
+
+    /// The 24h release budget in force right now.
+    function effectiveVelocityThreshold(address authority) external view returns (uint64) {
+        return _effectiveVelocity(vaults[authority]);
     }
 
     function getProposal(address authority, uint8 category) external view returns (Proposal memory) {
@@ -368,9 +427,21 @@ contract ShieldVault {
             if (p.lossCooldownSecs > MAX_LOSS_COOLDOWN_SECS) revert InvalidParameter();
             v.lossCooldownSecs = p.lossCooldownSecs; changed = true;
         }
-        if (p.hasTopUpCooldownSecs) { if (p.topUpCooldownSecs < v.topUpCooldownSecs) revert NotATightening(); v.topUpCooldownSecs = p.topUpCooldownSecs; changed = true; }
-        if (p.hasLoosenCooldownSecs) { if (p.loosenCooldownSecs < v.loosenCooldownSecs) revert NotATightening(); v.loosenCooldownSecs = p.loosenCooldownSecs; changed = true; }
-        if (p.hasFullExitCooldownSecs) { if (p.fullExitCooldownSecs < v.fullExitCooldownSecs) revert NotATightening(); v.fullExitCooldownSecs = p.fullExitCooldownSecs; changed = true; }
+        if (p.hasTopUpCooldownSecs) {
+            if (p.topUpCooldownSecs < v.topUpCooldownSecs) revert NotATightening();
+            if (p.topUpCooldownSecs > MAX_TOP_UP_COOLDOWN_SECS) revert InvalidParameter();
+            v.topUpCooldownSecs = p.topUpCooldownSecs; changed = true;
+        }
+        if (p.hasLoosenCooldownSecs) {
+            if (p.loosenCooldownSecs < v.loosenCooldownSecs) revert NotATightening();
+            if (p.loosenCooldownSecs > MAX_LOOSEN_COOLDOWN_SECS) revert InvalidParameter();
+            v.loosenCooldownSecs = p.loosenCooldownSecs; changed = true;
+        }
+        if (p.hasFullExitCooldownSecs) {
+            if (p.fullExitCooldownSecs < v.fullExitCooldownSecs) revert NotATightening();
+            if (p.fullExitCooldownSecs > MAX_FULL_EXIT_COOLDOWN_SECS) revert InvalidParameter();
+            v.fullExitCooldownSecs = p.fullExitCooldownSecs; changed = true;
+        }
         if (p.hasPauseTopUpsUntil) {
             if (p.pauseTopUpsUntil <= nowTs) revert NotATightening();
             if (p.pauseTopUpsUntil <= v.cooldownUntil) revert NotATightening();
@@ -445,7 +516,12 @@ contract ShieldVault {
         if (p.hasTopUpCooldownSecs) v.topUpCooldownSecs = p.topUpCooldownSecs;
         if (p.hasLoosenCooldownSecs) v.loosenCooldownSecs = p.loosenCooldownSecs;
         if (p.hasFullExitCooldownSecs) v.fullExitCooldownSecs = p.fullExitCooldownSecs;
-        if (p.hasRiskVerifier) v.riskVerifier = p.riskVerifier;
+        if (p.hasRiskVerifier) {
+            // v3: a new verifier starts its own nonce sequence, so a rogue key that
+            // burned the top of the range cannot leave the vault unprotectable.
+            v.riskVerifier = p.riskVerifier;
+            v.lastVerdictNonce = 0;
+        }
         uint64 nonce = pr.nonce;
         delete proposals[msg.sender][CATEGORY_RULE_CHANGE];
         emit LoosenExecuted(msg.sender, nonce);
@@ -456,7 +532,13 @@ contract ShieldVault {
         Vault storage v = _own();
         Proposal storage pr = proposals[msg.sender][category];
         if (!pr.exists) revert NoPendingProposal();
-        if (pr.action == ACTION_TOP_UP) _refundVelocity(v, pr.amount, pr.reservedBucketIndex);
+        if (pr.action == ACTION_TOP_UP) {
+            // v2: the reservation is refunded only if the bucket it was made in
+            // is still the same 4h window. After a full lap the bucket has been
+            // recycled and holds unrelated spend, which must not be erased.
+            _rollBuckets(v, uint64(block.timestamp));
+            if (_reservationStillCurrent(v, pr.reservedBucketIndex, pr.createdAt)) _refundVelocity(v, pr.amount, pr.reservedBucketIndex);
+        }
         uint64 nonce = pr.nonce;
         delete proposals[msg.sender][category];
         emit ProposalCancelled(msg.sender, category, nonce);
@@ -520,6 +602,10 @@ contract ShieldVault {
         if (uint64(block.timestamp) < v.cooldownUntil) revert CooldownActive();
         RegistryEntry storage e = registry[msg.sender][pr.destinationOwner];
         if (!(e.active && e.kind == KIND_EXECUTION)) revert DestinationNotExecution();
+        // v3: the budget was reserved at proposal time; if the vault has since
+        // dropped to REDUCED, the reservation must still fit the smaller budget.
+        _rollBuckets(v, uint64(block.timestamp));
+        if (uint256(_velocitySum(v)) > _effectiveVelocity(v)) revert VelocityThresholdExceeded();
         uint64 amount = pr.amount;
         address dest = pr.destinationOwner;
         uint64 nonce = pr.nonce;
@@ -541,24 +627,155 @@ contract ShieldVault {
         if (nowTs > rv.expiry) revert VerdictExpired();
         if (rv.issuedAt > nowTs + VERDICT_CLOCK_SKEW_SECS) revert VerdictNotYetValid();
         if (rv.nonce <= v.lastVerdictNonce) revert VerdictReplayed();
-        if (rv.realizedLossUsdc < v.lossTriggerUsdc) revert VerdictBelowLossTrigger();
+        if (rv.tier == TIER_LOCKED) {
+            // The deepest rung stays checkable against a public number.
+            if (rv.realizedLossUsdc < v.lossTriggerUsdc) revert VerdictBelowLossTrigger();
+        } else if (rv.tier == TIER_REDUCED) {
+            // A private threshold selected this rung; the enclave attests which
+            // ladder it evaluated, and a stale or swapped ladder is refused.
+            if (v.ladderHash == bytes32(0)) revert NoLadder();
+            if (rv.ladderHash != v.ladderHash) revert LadderMismatch();
+            if (_currentTier(v) > TIER_REDUCED) revert NotATightening();
+        } else {
+            revert InvalidParameter(); // a verdict can never select NORMAL
+        }
         if (_recoverVerdictSigner(rv, signature) != v.riskVerifier) revert InvalidVerifier();
 
         v.lastVerdictNonce = rv.nonce;
-        v.lastVerdictReason = rv.reasonCode;
         v.lastVerdictEvidence = rv.evidenceHash;
-        uint64 target = nowTs + v.lossCooldownSecs;
-        bool extended = target > v.cooldownUntil;
-        if (extended) {
-            v.cooldownUntil = target;
-            v.cooldownReason = COOLDOWN_REASON_RISK_VERDICT;
-            v.cooldownSetAt = nowTs;
+        bool extended = false;
+        uint64 until;
+        if (rv.tier == TIER_LOCKED) {
+            uint64 target = nowTs + v.lossCooldownSecs;
+            extended = target > v.cooldownUntil;
+            if (extended) {
+                v.cooldownUntil = target;
+                v.cooldownReason = COOLDOWN_REASON_RISK_VERDICT;
+                v.cooldownSetAt = nowTs;
+            }
+            until = v.cooldownUntil;
+        } else {
+            until = nowTs + v.tierResetSecs;
         }
-        emit RiskVerdictApplied(rv.vault, rv.nonce, rv.reasonCode, rv.realizedLossUsdc, v.cooldownUntil, extended, rv.evidenceHash);
+        v.activeTier = rv.tier;
+        v.tierUntil = until;
+        emit RiskVerdictApplied(rv.vault, rv.nonce, rv.tier, rv.realizedLossUsdc, v.cooldownUntil, extended, rv.evidenceHash);
+        emit RiskTierChanged(rv.vault, rv.tier, until, rv.nonce, v.ladderHash, true);
+    }
+
+    // ------------------------------------------------------------------
+    // Risk ladder: written while calm, descended by verdict, ascended slowly
+    // ------------------------------------------------------------------
+    /// Commit (or tighten) the ladder. Instant when there is no ladder yet, or when
+    /// the commitment is unchanged and the REDUCED allowance / duration only get
+    /// stricter. Any other change is a loosening: the chain cannot compare two
+    /// commitments for strictness, so it waits and must be reconfirmed.
+    function commitLadder(bytes32 ladderHash, uint64 reducedVelocityThreshold, uint64 tierResetSecs) external {
+        Vault storage v = _own();
+        if (ladderHash == bytes32(0)) revert InvalidParameter();
+        uint64 reset = _validResetSecs(tierResetSecs);
+        if (v.ladderHash != bytes32(0)) {
+            if (ladderHash != v.ladderHash) revert NotATightening();
+            if (reducedVelocityThreshold > v.reducedVelocityThreshold) revert NotATightening();
+            if (reset < v.tierResetSecs) revert NotATightening();
+        }
+        v.ladderHash = ladderHash;
+        v.reducedVelocityThreshold = reducedVelocityThreshold;
+        v.tierResetSecs = reset;
+        v.configVersion += 1;
+        emit LadderCommitted(msg.sender, ladderHash, reducedVelocityThreshold, reset, v.configVersion);
+    }
+
+    /// Drop to REDUCED now ("get me safe" without a full pause). Instant.
+    function setReducedTier() external {
+        Vault storage v = _own();
+        if (v.ladderHash == bytes32(0)) revert NoLadder();
+        if (_currentTier(v) >= TIER_REDUCED) revert NotATightening();
+        uint64 nowTs = uint64(block.timestamp);
+        v.activeTier = TIER_REDUCED;
+        v.tierUntil = nowTs + v.tierResetSecs;
+        v.configVersion += 1;
+        emit RiskTierChanged(msg.sender, TIER_REDUCED, v.tierUntil, 0, v.ladderHash, false);
+    }
+
+    /// Replace the ladder, or leave REDUCED early: waits loosenCooldownSecs, then needs executeLadderChange().
+    function proposeLadderChange(bytes32 ladderHash, uint64 reducedVelocityThreshold, uint64 tierResetSecs, bool resetTier) external {
+        Vault storage v = _own();
+        LadderProposal storage lp = ladderProposals[msg.sender];
+        if (lp.exists) revert ProposalSlotOccupied();
+        uint64 reset = resetTier ? v.tierResetSecs : _validResetSecs(tierResetSecs);
+        if (!resetTier && ladderHash == bytes32(0)) revert InvalidParameter();
+        uint64 nowTs = uint64(block.timestamp);
+        uint64 nonce = ++v.proposalNonceCounter;
+        uint64 executeAfter = nowTs + v.loosenCooldownSecs;
+        lp.exists = true;
+        lp.resetTier = resetTier;
+        lp.nonce = nonce;
+        lp.createdAt = nowTs;
+        lp.executeAfter = executeAfter;
+        lp.expiry = executeAfter + PROPOSAL_EXECUTION_GRACE_SECS;
+        lp.configVersionAtCreation = v.configVersion;
+        lp.ladderHash = ladderHash;
+        lp.reducedVelocityThreshold = reducedVelocityThreshold;
+        lp.tierResetSecs = reset;
+        emit LadderChangeProposed(msg.sender, nonce, executeAfter, resetTier);
+    }
+
+    /// Positive reconfirmation. Any tightening in between (including a verdict-free
+    /// setReducedTier) bumped configVersion and makes this stale.
+    function executeLadderChange() external {
+        Vault storage v = _own();
+        LadderProposal storage lp = ladderProposals[msg.sender];
+        if (!lp.exists) revert NoPendingProposal();
+        uint64 nowTs = uint64(block.timestamp);
+        if (nowTs < lp.executeAfter) revert ProposalNotMatured();
+        if (nowTs > lp.expiry) revert ProposalExpired();
+        if (lp.configVersionAtCreation != v.configVersion) revert ProposalStale();
+        bool resetTier = lp.resetTier;
+        if (resetTier) {
+            // Only the rung moves; a LOCKED cooldown is never shortened by this path.
+            if (_currentTier(v) == TIER_REDUCED) { v.activeTier = TIER_NORMAL; v.tierUntil = 0; }
+            emit RiskTierChanged(msg.sender, _currentTier(v), v.tierUntil, 0, v.ladderHash, false);
+        } else {
+            v.ladderHash = lp.ladderHash;
+            v.reducedVelocityThreshold = lp.reducedVelocityThreshold;
+            v.tierResetSecs = lp.tierResetSecs;
+            emit LadderCommitted(msg.sender, lp.ladderHash, lp.reducedVelocityThreshold, lp.tierResetSecs, v.configVersion);
+        }
+        uint64 nonce = lp.nonce;
+        delete ladderProposals[msg.sender];
+        emit LadderChangeExecuted(msg.sender, nonce, resetTier);
+    }
+
+    function cancelLadderChange() external {
+        _own();
+        LadderProposal storage lp = ladderProposals[msg.sender];
+        if (!lp.exists) revert NoPendingProposal();
+        uint64 nonce = lp.nonce;
+        delete ladderProposals[msg.sender];
+        emit ProposalCancelled(msg.sender, CATEGORY_LADDER, nonce);
+    }
+
+    function _validResetSecs(uint64 secs) internal pure returns (uint64) {
+        if (secs == 0) return DEFAULT_TIER_RESET_SECS;
+        if (secs < MIN_TIER_RESET_SECS || secs > MAX_TIER_RESET_SECS) revert InvalidParameter();
+        return secs;
+    }
+
+    function _currentTier(Vault storage v) internal view returns (uint8) {
+        uint64 nowTs = uint64(block.timestamp);
+        if (v.activeTier == TIER_LOCKED) return nowTs < v.cooldownUntil ? TIER_LOCKED : TIER_NORMAL;
+        if (v.activeTier == TIER_REDUCED) return nowTs < v.tierUntil ? TIER_REDUCED : TIER_NORMAL;
+        return TIER_NORMAL;
+    }
+
+    function _effectiveVelocity(Vault storage v) internal view returns (uint64) {
+        if (_currentTier(v) == TIER_REDUCED && v.reducedVelocityThreshold < v.velocityThreshold) return v.reducedVelocityThreshold;
+        return v.velocityThreshold;
     }
 
     function hashVerdict(RiskVerdict calldata rv) public view returns (bytes32) {
-        bytes32 structHash = keccak256(abi.encode(VERDICT_TYPEHASH, rv.vault, rv.nonce, rv.issuedAt, rv.expiry, rv.reasonCode, rv.realizedLossUsdc, rv.evidenceHash));
+        bytes32 structHash = keccak256(abi.encode(VERDICT_TYPEHASH, rv.vault, rv.nonce, rv.issuedAt, rv.expiry, rv.tier, rv.ladderHash, rv.realizedLossUsdc, rv.evidenceHash));
         return keccak256(abi.encodePacked("\x19\x01", _DOMAIN_SEPARATOR, structHash));
     }
 
@@ -705,15 +922,27 @@ contract ShieldVault {
         if (elapsed == 0) return;
         if (elapsed >= NUM_VELOCITY_BUCKETS) {
             for (uint256 i = 0; i < NUM_VELOCITY_BUCKETS; i++) v.velocityBuckets[i] = 0;
-            elapsed = uint64(NUM_VELOCITY_BUCKETS);
         } else {
             for (uint64 i = 0; i < elapsed; i++) {
                 uint256 idx = (uint256(v.currentBucketIndex) + 1 + i) % NUM_VELOCITY_BUCKETS;
                 v.velocityBuckets[idx] = 0;
             }
-            v.currentBucketIndex = uint8((uint256(v.currentBucketIndex) + elapsed) % NUM_VELOCITY_BUCKETS);
         }
+        // v2: the ring pointer and the window start always advance by the real
+        // number of elapsed buckets. v1 clamped `elapsed` to the ring size
+        // before advancing `bucketStart`, so after an idle gap every call
+        // re-entered the long-idle branch and re-zeroed the window with no
+        // time passing in between.
+        v.currentBucketIndex = uint8((uint256(v.currentBucketIndex) + elapsed) % NUM_VELOCITY_BUCKETS);
         v.bucketStart += elapsed * BUCKET_LEN_SECS;
+    }
+
+    /// @dev True if bucket `index` still represents the 4h window in which a
+    ///      reservation made at `reservedAt` was placed. Call after _rollBuckets.
+    function _reservationStillCurrent(Vault storage v, uint8 index, uint64 reservedAt) internal view returns (bool) {
+        uint256 behind = (uint256(v.currentBucketIndex) + NUM_VELOCITY_BUCKETS - (uint256(index) % NUM_VELOCITY_BUCKETS)) % NUM_VELOCITY_BUCKETS;
+        uint64 windowStart = v.bucketStart - uint64(behind) * BUCKET_LEN_SECS;
+        return reservedAt >= windowStart && reservedAt < windowStart + BUCKET_LEN_SECS;
     }
 
     function _velocitySum(Vault storage v) internal view returns (uint64 s) {
@@ -721,7 +950,7 @@ contract ShieldVault {
     }
 
     function _checkVelocity(Vault storage v, uint64 amount) internal view {
-        if (uint256(_velocitySum(v)) + amount > v.velocityThreshold) revert VelocityThresholdExceeded();
+        if (uint256(_velocitySum(v)) + amount > _effectiveVelocity(v)) revert VelocityThresholdExceeded();
     }
 
     function _reserveVelocity(Vault storage v, uint64 amount) internal {

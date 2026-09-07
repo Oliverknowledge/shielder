@@ -1,25 +1,42 @@
-Chainlink CRE Confidential Workflow — cre CLI evidence
-======================================================
+Chainlink CRE Confidential Workflow — cre CLI evidence (ShieldVault v3, risk ladder)
+====================================================================================
 
-Captured: 2026-09-07T01:57:37Z (taken from the run's own log lines, below)
+Captured: 2026-09-07T12:24:55Z (each run carries its own timestamps)
 CLI: CRE CLI version v1.32.0
+Contract: ShieldVault v3, 0xDaA8B6a85391d54397c3847F006a49A16d0F37b3, HyperEVM testnet (998), block 63634061
+Workflow: cre/shield-risk (handlerInTee, AWS Nitro placement; the simulator is not real hardware and this
+file never claims an attested enclave ran)
 
-Two runs. The first shows the confidential handler executing. The second
-shows what happens when the secret it depends on is wrong — which is the
-part that proves the secret is load-bearing rather than merely present.
+What the enclave holds that the chain does not: the user's risk ladder — the trailing realised
+session drawdown at which their reload budget shrinks — read with runtime.getSecret as
+LADDER_<vault>, plus the verifier key. The chain holds keccak256(thresholds ‖ salt), the
+REDUCED allowance and duration, and the rung. The verdict carries {tier, ladderHash, nonce,
+expiry} and, for REDUCED, no dollar figure. Nothing in the [USER LOG] lines below prints the
+threshold or the drawdown.
 
-Both use the evm-dry-settings target: identical to evm-settings but with
-deliver:false, so the workflow runs end to end without broadcasting a
-verdict to a live vault. Anyone can reproduce these without spending gas.
+RUN 1  evm-settings (deliver:true), vault 0xaA8cfBd0…7D8b (a $5 v3 vault, $4/day, NORMAL, ladder
+       committed in tx 0x5d21c2bc…). The registered trading account had realised a $7.35 loss on
+       Hyperliquid testnet earlier today (two BTC round trips). The enclave: public LOCKED rule not
+       met (trigger $20) → reads the private ladder → hash matches the chain → drawdown above the
+       private threshold → signs tier=REDUCED bound to the ladder hash → relayed:
+       tx 0x089727605059be589a27d668386df4c488204e3feea20fda4a79bbb022b5e2ca.
+       On chain after: currentTier()=1, effectiveVelocityThreshold()=3000000 (was 4000000),
+       RiskTierChanged(tier=1, byVerifier=true). A $0.50 eth_call release still returns 0x.
+RUN 2  evm-dry-settings, vault 0x751D1e26…ED023 (already LOCKED today by the public loss rule via the
+       server monitor, tx 0xd62796c5…). The enclave reports tierInForce=LOCKED and refuses to descend
+       further: decision=already-reduced-or-locked. A verdict can never move a vault up.
+RUN 3  Negative control: verifier secret replaced by 0xdeadbeef → the workflow dies before any HTTP call.
+RUN 4  Second control: the ladder secret withheld → the CLI refuses to start the run at all
+       (the secret is declared in cre/secrets.yaml and must resolve), which is what proves the
+       private thresholds are load-bearing rather than decorative.
 
-===============================================================================
-RUN 1 — the confidential handler executes
-===============================================================================
-
+Reproduce (bun run server:evm running on :8788; secrets in cre/.env, see cre/secrets.yaml):
   cre workflow simulate shield-risk --target evm-dry-settings --non-interactive \
-    --trigger-index 0 --http-payload '{"vault":"0x751D1e26d79FeffE95F8a8662aB7A022780ED023"}' \
-    -R cre -e cre/.env
+    --trigger-index 0 --http-payload '{"vault":"0xaA8cfBd03CD4e043228bCCe42b5adD98866F7D8b"}' -R cre -e cre/.env
 
+===============================================================================
+RUN 1 — evm-settings: private ladder evaluated in the enclave, REDUCED verdict relayed
+===============================================================================
 Initializing...
 Loading settings...
 Checking RPC connectivity...
@@ -27,15 +44,14 @@ Compiling workflow...
 ✓ Workflow compiled
 ✓ Simulation limits enabled
   HTTP: req=120kb resp=250kb timeout=10s | ConfHTTP: req=125kb resp=500kb timeout=1m30s | Consensus obs=25kb | ChainWrite evm_report=50kb evm_gas=10000000 solana_report=265b solana_cu=300000 | WASM binary=100mb compressed=20mb
-  Binary hash: 796686054503d7765a6ebff54292b1cd538a4bb21c12325aed1ac6ffe4a7862d
-  Config hash: 3ebd8bcdef81b1ad9b720373afc776f825b1b32b10b1f07d32542a3e826a4f2b
+  Binary hash: ed9dbffa98a6ff844e1367a328ca075d63c525448c6df50bccb7b813c93066bd
+  Config hash: ab89c5020688db097950a9559b936a51d8b8576be982b66c6a1f45554207d354
 ! Secret "SHIELD_VERIFIER_SEED_B64" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_VERIFIER_SEED_B64").
 ! Secret "SHIELD_EVM_VERIFIER_KEY" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_EVM_VERIFIER_KEY").
 ✓ Parsed JSON input successfully
 ✓ Created HTTP trigger payload with 1 fields
-2026-09-07T01:57:37Z [SIMULATION] Simulator Initialized
-
-2026-09-07T01:57:37Z [SIMULATION] Running trigger trigger=http-trigger@1.0.0-alpha
+2026-09-07T13:17:54Z [SIMULATION] Simulator Initialized
+2026-09-07T13:17:54Z [SIMULATION] Running trigger trigger=http-trigger@1.0.0-alpha
 ╭────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Trigger requested TEE Execution your trigger will run in one of the following Tees:                │
 │     - AWS Nitro in us-west-2                                                                       │
@@ -45,28 +61,27 @@ Compiling workflow...
 │ They are presented in the simulator for debugging only.                                            │
 │                                                                                                    │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
-
-2026-09-07T01:57:37Z [USER LOG] Enclave evaluation: vault=0x751D1e26d79FeffE95F8a8662aB7A022780ED023 flows=3 realisedLoss24h=0 trigger=3000000 lossStreak=0 reloadsAfterLoss=0 triggered=false actionable=false
-
+2026-09-07T13:17:55Z [USER LOG] Enclave evaluation: vault=0xaA8cfBd03CD4e043228bCCe42b5adD98866F7D8b flows=2 realisedLoss24h=7349085 trigger=20000000 lossStreak=0 reloadsAfterLoss=0 triggered=false actionable=false
+2026-09-07T13:17:55Z [USER LOG] Enclave ladder: vault=0xaA8cfBd03CD4e043228bCCe42b5adD98866F7D8b ladder=present tierInForce=NORMAL decision=reduced
+2026-09-07T13:17:55Z [USER LOG] Enclave ladder verdict: vault=0xaA8cfBd03CD4e043228bCCe42b5adD98866F7D8b tier=REDUCED ladderHash=0xeba788efc5edf83342fb4e0dd39512217386dfd9fdc7fc12dc566a2e5fb5cec0 nonce=1
+2026-09-07T13:17:59Z [USER LOG] Verdict #1 relayed on-chain: 0x089727605059be589a27d668386df4c488204e3feea20fda4a79bbb022b5e2ca
 ✓ Workflow Simulation Result:
 {
-  "actionable": false,
+  "actionable": true,
   "error": "",
-  "evidenceHash": "c4e84f1b94195a2b4da8f53a88e6ead6f699b02c3ab8620793904bd501fa2428",
-  "headline": "Realised losses in the last 24 hours: $0, below your $3 trigger.",
-  "lossTriggerUsdc": "3000000",
-  "nonce": "",
-  "realisedLossUsdc": "0",
-  "relayed": false,
-  "signature": "",
-  "triggered": false,
-  "vault": "0x751D1e26d79FeffE95F8a8662aB7A022780ED023",
-  "verifier": ""
+  "evidenceHash": "0xd234e2520f6f695edccdec75ddd155e91c12f72f40a87b465330fe0ed83c7a98",
+  "headline": "Your ladder moved you to REDUCED.",
+  "lossTriggerUsdc": "20000000",
+  "nonce": "1",
+  "realisedLossUsdc": "7349085",
+  "relayed": true,
+  "signature": "0x089727605059be589a27d668386df4c488204e3feea20fda4a79bbb022b5e2ca",
+  "triggered": true,
+  "vault": "0xaA8cfBd03CD4e043228bCCe42b5adD98866F7D8b",
+  "verifier": "0x4a41fa3dbc3e7129b1441441522a80bcd0e08f3f"
 }
-
-2026-09-07T01:57:37Z [SIMULATION] Execution finished signal received
-2026-09-07T01:57:37Z [SIMULATION] Skipping WorkflowEngineV2
-
+2026-09-07T13:17:59Z [SIMULATION] Execution finished signal received
+2026-09-07T13:17:59Z [SIMULATION] Skipping WorkflowEngineV2
 ╭──────────────────────────────────────────────────────╮
 │ Simulation complete! Ready to deploy your workflow?  │
 │                                                      │
@@ -74,15 +89,8 @@ Compiling workflow...
 ╰──────────────────────────────────────────────────────╯
 
 ===============================================================================
-RUN 2 — the same workflow with a bad secret
+RUN 2 — evm-dry-settings: a vault already LOCKED; the enclave will not descend further
 ===============================================================================
-
-Identical command, with SHIELD_EVM_VERIFIER_KEY set to 0xdeadbeef in the
-env file the simulator releases secrets from. The handler reads the secret
-as its first statement (io.getSecret in evaluateVault) and validates it
-before any other work, so a wrong value stops the workflow before it can
-reach the HTTP calls or the evaluation.
-
 Initializing...
 Loading settings...
 Checking RPC connectivity...
@@ -90,15 +98,14 @@ Compiling workflow...
 ✓ Workflow compiled
 ✓ Simulation limits enabled
   HTTP: req=120kb resp=250kb timeout=10s | ConfHTTP: req=125kb resp=500kb timeout=1m30s | Consensus obs=25kb | ChainWrite evm_report=50kb evm_gas=10000000 solana_report=265b solana_cu=300000 | WASM binary=100mb compressed=20mb
-  Binary hash: 796686054503d7765a6ebff54292b1cd538a4bb21c12325aed1ac6ffe4a7862d
-  Config hash: 3ebd8bcdef81b1ad9b720373afc776f825b1b32b10b1f07d32542a3e826a4f2b
+  Binary hash: ed9dbffa98a6ff844e1367a328ca075d63c525448c6df50bccb7b813c93066bd
+  Config hash: c5a5ee4e780ce972296a9875b6c66631e4302ef3587554ab75212f2cd74fd419
 ! Secret "SHIELD_VERIFIER_SEED_B64" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_VERIFIER_SEED_B64").
 ! Secret "SHIELD_EVM_VERIFIER_KEY" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_EVM_VERIFIER_KEY").
 ✓ Parsed JSON input successfully
 ✓ Created HTTP trigger payload with 1 fields
-2026-09-07T01:57:41Z [SIMULATION] Simulator Initialized
-
-2026-09-07T01:57:41Z [SIMULATION] Running trigger trigger=http-trigger@1.0.0-alpha
+2026-09-07T13:19:51Z [SIMULATION] Simulator Initialized
+2026-09-07T13:19:51Z [SIMULATION] Running trigger trigger=http-trigger@1.0.0-alpha
 ╭────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Trigger requested TEE Execution your trigger will run in one of the following Tees:                │
 │     - AWS Nitro in us-west-2                                                                       │
@@ -108,23 +115,72 @@ Compiling workflow...
 │ They are presented in the simulator for debugging only.                                            │
 │                                                                                                    │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
+2026-09-07T13:19:51Z [USER LOG] Enclave evaluation: vault=0x751D1e26d79FeffE95F8a8662aB7A022780ED023 flows=1 realisedLoss24h=7349085 trigger=3000000 lossStreak=0 reloadsAfterLoss=0 triggered=true actionable=false
+2026-09-07T13:19:51Z [USER LOG] Enclave ladder: vault=0x751D1e26d79FeffE95F8a8662aB7A022780ED023 ladder=present tierInForce=LOCKED decision=already-reduced-or-locked
+✓ Workflow Simulation Result:
+{
+  "actionable": false,
+  "error": "",
+  "evidenceHash": "5aad28f50620dbb31f5ac675e487bb55286b5c5589e349c075cae98a31848426",
+  "headline": "You realised $7.349085 in losses in the last 24 hours. Your rule pauses new capital for 12h.",
+  "lossTriggerUsdc": "3000000",
+  "nonce": "",
+  "realisedLossUsdc": "7349085",
+  "relayed": false,
+  "signature": "",
+  "triggered": true,
+  "vault": "0x751D1e26d79FeffE95F8a8662aB7A022780ED023",
+  "verifier": ""
+}
+2026-09-07T13:19:51Z [SIMULATION] Execution finished signal received
+2026-09-07T13:19:51Z [SIMULATION] Skipping WorkflowEngineV2
+╭──────────────────────────────────────────────────────╮
+│ Simulation complete! Ready to deploy your workflow?  │
+│                                                      │
+│ Run cre account access to request deployment access. │
+╰──────────────────────────────────────────────────────╯
 
-2026-09-07T01:57:41Z [SIMULATION] Received interrupt signal, stopping execution
-2026-09-07T01:57:41Z [SIMULATION] Skipping WorkflowEngineV2
+===============================================================================
+RUN 3 — negative control: the verifier secret replaced by 0xdeadbeef
+===============================================================================
+Initializing...
+Loading settings...
+Checking RPC connectivity...
+Compiling workflow...
+✓ Workflow compiled
+✓ Simulation limits enabled
+  HTTP: req=120kb resp=250kb timeout=10s | ConfHTTP: req=125kb resp=500kb timeout=1m30s | Consensus obs=25kb | ChainWrite evm_report=50kb evm_gas=10000000 solana_report=265b solana_cu=300000 | WASM binary=100mb compressed=20mb
+  Binary hash: ed9dbffa98a6ff844e1367a328ca075d63c525448c6df50bccb7b813c93066bd
+  Config hash: ab89c5020688db097950a9559b936a51d8b8576be982b66c6a1f45554207d354
+! Secret "SHIELD_VERIFIER_SEED_B64" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_VERIFIER_SEED_B64").
+! Secret "SHIELD_EVM_VERIFIER_KEY" uses itself as the env var name — this is fragile and may cause confusion. Consider using a distinct env var name (e.g. "CRE_SHIELD_EVM_VERIFIER_KEY").
+✓ Parsed JSON input successfully
+✓ Created HTTP trigger payload with 1 fields
+2026-09-07T13:19:54Z [SIMULATION] Simulator Initialized
+2026-09-07T13:19:54Z [SIMULATION] Running trigger trigger=http-trigger@1.0.0-alpha
+╭────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Trigger requested TEE Execution your trigger will run in one of the following Tees:                │
+│     - AWS Nitro in us-west-2                                                                       │
+│ The simulator is not a real TEE, and is meant to debug.                                            │
+│ Do not use it for sensitive information.                                                           │
+│ During real execution, user logs for this trigger will not be visible, and will not leave the TEE. │
+│ They are presented in the simulator for debugging only.                                            │
+│                                                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
+2026-09-07T13:19:54Z [SIMULATION] Received interrupt signal, stopping execution
+2026-09-07T13:19:54Z [SIMULATION] Skipping WorkflowEngineV2
 ✗ workflow execution failed: EVM verifier secret must be a 0x-prefixed 32-byte private key
 
 ===============================================================================
-What these show, and what they do not
+RUN 4 — control: the ladder secret withheld
 ===============================================================================
-
-They show: a confidential TEE handler is registered (handlerInTee in
-cre/shield-risk/main.ts) and the CLI reports the enclave it would run in;
-the workflow reads a secret inside that handler and cannot proceed without
-a valid one; and the enclave derives the loss independently, from the
-vault's own flows and from the venue's settled PnL, then applies the user's
-own on-chain rule.
-
-They do not show a signature, because neither run is actionable: this
-vault's realised loss is zero once the venue's own settlement is taken into
-account, so there is nothing to attest. The signing path is evidenced
-separately by the verdict that is on chain — see docs/SPONSOR_INTEGRATIONS.md.
+Initializing...
+Loading settings...
+Checking RPC connectivity...
+Compiling workflow...
+✓ Workflow compiled
+✓ Simulation limits enabled
+  HTTP: req=120kb resp=250kb timeout=10s | ConfHTTP: req=125kb resp=500kb timeout=1m30s | Consensus obs=25kb | ChainWrite evm_report=50kb evm_gas=10000000 solana_report=265b solana_cu=300000 | WASM binary=100mb compressed=20mb
+  Binary hash: ed9dbffa98a6ff844e1367a328ca075d63c525448c6df50bccb7b813c93066bd
+  Config hash: c5a5ee4e780ce972296a9875b6c66631e4302ef3587554ab75212f2cd74fd419
+✗ failed to replace secret names with environment variables: environment variable LADDER_LADDER2_VAULT for secret value not found, please export it to your environment

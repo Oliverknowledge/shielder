@@ -60,7 +60,7 @@ const envPath = new URL("../.env", import.meta.url).pathname;
 const env: Record<string, string> = {};
 if (existsSync(envPath)) {
   for (const line of readFileSync(envPath, "utf-8").split("\n")) {
-    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+    const m = line.match(/^([A-Za-z0-9_]+)=(.*)$/);
     if (m) env[m[1]] = m[2];
   }
 }
@@ -84,9 +84,24 @@ const ANVIL_DEV_KEYS: Record<string, string> = {
 };
 const IS_ANVIL = Number(config.chainId ?? 0) === 31337;
 
+// cre/secrets.yaml maps a secret id to the env var(s) that hold it (what the CLI does).
+const secretAliases: Record<string, string[]> = {};
+{
+  const y = readFileSync(new URL("../secrets.yaml", import.meta.url).pathname, "utf-8").split("\n");
+  let cur: string | null = null;
+  for (const line of y) {
+    const id = line.match(/^    ([A-Za-z0-9_]+):\s*$/);
+    const alias = line.match(/^        - ([A-Za-z0-9_]+)\s*$/);
+    if (id) cur = id[1];
+    else if (alias && cur) (secretAliases[cur] ??= []).push(alias[1]);
+  }
+}
+
 const io: EnclaveIO = {
   getSecret: (id) => {
-    const v = process.env[id] ?? env[id] ?? (IS_ANVIL ? ANVIL_DEV_KEYS[id] : undefined);
+    const names = [id, ...(secretAliases[id] ?? [])];
+    // On Anvil the vault pins the public dev key, whatever cre/.env holds for the live network.
+    const v = (IS_ANVIL && ANVIL_DEV_KEYS[id]) || names.map((n) => process.env[n] ?? env[n]).find(Boolean);
     if (!v) throw new Error(`secret ${id} missing: set it in cre/.env (see cre/.env.example)`);
     return v;
   },

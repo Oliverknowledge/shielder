@@ -9,7 +9,7 @@
 # to the CLI only via the environment and is never printed.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-STACK="${1:-hyperevm}"; START="${2:-}"; RANGE="${3:-+20}"
+STACK="${1:-hyperevm}"; START="${2:-}"; RANGE="${3:-+20}"; MODULE_OVERRIDE="${4:-}"
 [ -f "$ROOT/.env" ] && { set -a; . "$ROOT/.env"; set +a; }
 SUBSTREAMS_BIN="${SUBSTREAMS_BIN:-$(command -v substreams || echo "$HOME/.local/bin/substreams")}"
 [ -x "$SUBSTREAMS_BIN" ] || { echo "substreams CLI not found (install: docs/substreams-one-prompt.md)"; exit 2; }
@@ -49,5 +49,6 @@ if [ -n "$TOKEN" ]; then
   TOKEN_NOTE="token present (${#TOKEN} chars${EXP:+, exp $(date -r "$EXP" -u +%Y-%m-%dT%H:%MZ 2>/dev/null || echo "$EXP")})"
 fi
 echo "stack=$STACK endpoint=$ENDPOINT module=$MODULE start=$START range=$RANGE $TOKEN_NOTE"
+[ -n "$MODULE_OVERRIDE" ] && MODULE="$MODULE_OVERRIDE"
 cd "$DIR"
 SUBSTREAMS_API_TOKEN="$TOKEN" exec "$SUBSTREAMS_BIN" run "$MANIFEST" "$MODULE" -e "$ENDPOINT" -s "$START" -t "$RANGE" -o jsonl ${EXTRA[@]+"${EXTRA[@]}"}

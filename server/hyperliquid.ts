@@ -116,10 +116,19 @@ export function capitalFlows(ledger: LedgerUpdate[], user: string): Array<{ time
         else if ((d.user ?? "").toLowerCase() === me) amt = -v;
         break;
       }
-      case "spotTransfer": {
+      case "spotTransfer":
+      case "send": {
         const v = Number(d.usdcValue ?? d.amount ?? 0);
         if ((d.destination ?? "").toLowerCase() === me) amt = v;
         else if ((d.user ?? "").toLowerCase() === me) amt = -v;
+        break;
+      }
+      // Spot -> perps inside the same account is how a spot-funded trader
+      // reloads a perps bankroll; without this a "you never reloaded" line
+      // can be false for exactly the users the product is for.
+      case "accountClassTransfer": {
+        const v = Number(d.usdc ?? 0);
+        amt = d.toPerp ? v : -v;
         break;
       }
       default: break;

@@ -48,13 +48,32 @@ export interface VaultView {
   cooldownReason: number;
   cooldownSetAt: bigint;
   lastVerdictNonce: bigint;
-  lastVerdictReason: number;
+  lastVerdictReason: number; // Solana v0 only; 0 on EVM v3
   velocityBuckets: bigint[];
+  /** v3 risk ladder (EVM). Solana v0 reports no ladder. */
+  ladderHash: string | null; // 0x… salted commitment, null when no ladder is committed
+  reducedVelocityThreshold: bigint;
+  tierResetSecs: bigint;
+  activeTier: number; // raw stored tier; use currentTier for the rung in force
+  tierUntil: bigint;
   bucketStart: bigint;
   currentBucketIndex: number;
   configVersion: bigint;
   proposalNonceCounter: bigint;
   createdAt: bigint;
+}
+
+/** v3: a pending ladder change (replace the commitment, or leave REDUCED early). */
+export interface LadderProposalView {
+  nonce: bigint;
+  createdAt: bigint;
+  executeAfter: bigint;
+  expiry: bigint;
+  configVersionAtCreation: bigint;
+  resetTier: boolean;
+  ladderHash: string;
+  reducedVelocityThreshold: bigint;
+  tierResetSecs: bigint;
 }
 
 export interface RegistryView {
@@ -132,6 +151,7 @@ export const SHIELD_ERROR_NAMES = [
   "ProposalNotMatured", "ProposalExpired", "ProposalStale", "NoPendingProposal", "ProposalSlotOccupied",
   "ProposalRequiresRegistrationPath", "ProposalHasNoRegistration", "NoRiskVerifier", "InvalidVerifier",
   "VerdictExpired", "VerdictNotYetValid", "VerdictWrongBinding", "VerdictReplayed", "VerdictBelowLossTrigger",
+  "LadderMismatch", "NoLadder",
   "NotATightening", "NotALoosening", "PauseTooLong", "MathOverflow", "WrongMint", "TokenAccountOwnerMismatch",
   "CannotDowngradeExecutionToCold", "FullExitDestinationNotRegisteredCold", "TransferFailed", "Reentrancy",
 ] as const;
@@ -172,9 +192,16 @@ export interface TopUpDecision {
   floorHeadroom: bigint;
 }
 
+/** The 24h release budget in force: the REDUCED allowance while that rung is active (mirrors ShieldVault._effectiveVelocity). */
+export function effectiveVelocityThreshold(v: VaultView, now: bigint): bigint {
+  const reduced = Number(v.activeTier) === 1 && v.tierUntil > now && v.reducedVelocityThreshold < v.velocityThreshold;
+  return reduced ? v.reducedVelocityThreshold : v.velocityThreshold;
+}
+
 export function evaluateTopUp(v: VaultView, balance: bigint, amount: bigint, now: bigint): TopUpDecision {
   const velocity = rollingVelocity(v, now);
-  const velocityRemaining = v.velocityThreshold > velocity ? v.velocityThreshold - velocity : 0n;
+  const budget = effectiveVelocityThreshold(v, now);
+  const velocityRemaining = budget > velocity ? budget - velocity : 0n;
   const instantThreshold = (balance * BigInt(v.topUpThresholdBps)) / 10_000n;
   const floorHeadroom = balance > v.protectedFloor ? balance - v.protectedFloor : 0n;
   const base = { velocityRemaining, instantThreshold, floorHeadroom };

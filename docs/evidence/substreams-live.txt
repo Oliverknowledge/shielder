@@ -1,88 +1,181 @@
-The Graph — live Substreams stream from The Graph Market
-========================================================
+The Graph — live Substreams streams from Graph Market providers
+==============================================================
 
-Captured: 2026-09-07T01:06:50Z (UTC)   substreams CLI: substreams version 1.22.0 (Commit be35ad3, Commit Date 2026-08-24T13:58:05Z)
-Provider: hyperevm.substreams.pinax.network:443 (HyperEVM mainnet, chain 999)
-Package:  substreams-evm/shield-evm-behavioral-memory-v0.1.0.spkg (committed to this repo)
+Captured: 2026-09-07T12:24:55Z (UTC)   substreams CLI: substreams version 1.22.0
+One Graph Market JWT (SUBSTREAMS_API_TOKEN in .env, valid to 2027-10-28), four endpoints.
 
-The package composes The Graph's foundational ethereum-common v0.3.3: its
-index_events module is the declared blockFilter for both maps, so the
-provider only delivers blocks carrying a log from the vault or from USDC.
-The run below uses the committed .spkg, not the manifest, so it needs no
-Rust toolchain — which is why the artefact is committed.
+What this file proves:
+- §1–2  REAL ROWS. The same ShieldVault v3 bytecode runs on Ethereum Sepolia
+        (0xf1ef03Ea258EF652939bAC0250d1CDe9B5EF4f6A, block 11654048, ROUTE_EVM only, mock USDC)
+        with a staged history: $10,000 deposit, $1,500 release to the registered trading
+        wallet, $80 returned through deposit(). The package's Sepolia manifest
+        (substreams-evm/substreams.sepolia.yaml: same modules, same ABI, network: sepolia)
+        streams those three flows from BOTH Sepolia providers in the networks registry.
+        Reproduce: cd substreams-evm && substreams run shield-evm-behavioral-memory-sepolia-v0.1.0.spkg \
+          map_vault_flows -e sepolia.eth.streamingfast.io:443 -s 11654048 -t +12 -o jsonl
+- §3    HyperEVM: the product chain's package streams and completes from Pinax with zero rows,
+        because The Graph indexes HyperEVM mainnet only and the product vault is on testnet 998.
+- §4    Solana devnet: the sister package's decoder streams with the same JWT (zero rows: the
+        v0 program is not on devnet).
+- §5    Without the JWT the HyperEVM request is refused: authentication is load-bearing.
+- §0    Composition as built: both maps are filtered by the foundational ethereum-common
+        index_events block index.
 
-Note on the Usage Report: 'Processed Blocks' depends on what the provider
-has already cached and varies between runs. 'Received Blocks' is the
-requested range. Neither number is a claim about Shield.
-
-### 1. Composition, as built
+### 0. Composition, as built (substreams info)
 
 Package name: shield_evm_behavioral_memory
 Version: v0.1.0
+Doc: # Shield behavioural memory — EVM Substreams
+    
+    The same five-module pipeline as `../substreams` (Solana), for `ShieldVault.sol`
+    on HyperEVM or any EVM chain, composed on The Graph's foundational
+    `ethereum-common@v0.3.3` package: its `index_events` block index filters both
+    maps by `evt_addr:` (the vault contract and native USDC) so blocks with no
+    relevant log are skipped before decoding.
+    
+    ```
+    map_shield_events       Block ⨯ index_events(params) -> ShieldEvents      typed ShieldVault events (Abigen)
+    store_vault_registry    set   exec:<vault>:<owner> -> 1|0                   which addresses are trading wallets
+    map_vault_flows         Block ⨯ events ⨯ registry -> VaultFlows            boundary crossings incl. USDC returns
+    store_flow_totals       add   sent/returned/deposited/topups/returns per vault
+    map_behavioral_profiles deltas -> BehavioralProfiles
+    ```
+    
+    Build: `substreams build` (Rust + wasm32 target; Foundry's ABI is copied to
+    `abi/ShieldVault.json`). Run against The Graph Market with the shared JWT in
+    `.env` (`SUBSTREAMS_API_TOKEN`; endpoint `SUBSTREAMS_HYPEREVM_ENDPOINT`,
+    default `hyperevm.substreams.pinax.network:443`, HyperEVM mainnet only):
+    
+    ```bash
+    bun run substreams:hyperevm                  # last 20 blocks, proves auth + package load
+    bun run substreams:hyperevm <deploy block> +200   # with EVM_CHAIN_ID=999, SHIELD_VAULT_ADDRESS, USDC_ADDRESS set
+    # equivalent raw CLI:
+    SUBSTREAMS_API_TOKEN=<jwt> substreams run substreams.yaml map_vault_flows \
+      -e hyperevm.substreams.pinax.network:443 -s <vault deploy block> -t +200 \
+      -p map_shield_events="evt_addr:<vault>" \
+      -p map_vault_flows="evt_addr:<vault> || evt_addr:<native usdc>"
+    ```
+    
+    `server/evm-index.ts` consumes the same module through `@substreams/core`
+    when `EVM_CHAIN_ID=999` and the JWT is set (`/api/health` → `source.mode:
+    "substreams"`).
+    
+    Output `Flow` messages carry the same fields the Solana package emits, so
+    `server/behaviour.ts`, `server/policy.ts` and the Chainlink CRE workflow
+    consume either chain's stream unchanged: one pipeline shape, reused across
+    chains.
+    
+Modules:
+----
 Name: map_shield_events
-Initial block: 45220000
+Initial block: 45260000
 Kind: map
-Input: params: evt_addr:0xcdb6d631a00857584e70a21d800f51c5776302fe
+Input: params: evt_addr:0xba1bb356e546ad2d036f4caa8d25fbba4f5c1006
 Input: source: sf.ethereum.type.v2.Block
-Block Filter: (using *ethereum_common:index_events*): `&{evt_addr:0xcdb6d631a00857584e70a21d800f51c5776302fe}`
+Block Filter: (using *ethereum_common:index_events*): `&{evt_addr:0xba1bb356e546ad2d036f4caa8d25fbba4f5c1006}`
 Output Type: proto:shield.evm.v1.ShieldEvents
+Hash: 5ee71401820eca67df6733f7294bf2980a632a0a
+
 Name: store_vault_registry
-Initial block: 45220000
+Initial block: 45260000
 Kind: store
 Input: map: map_shield_events
+Value Type: string
+Update Policy: set
+Hash: 0c9f087c0644f92546afe362ad988b8bafabd51d
+
 Name: map_vault_flows
-Initial block: 45220000
+Initial block: 45260000
 Kind: map
-Input: params: evt_addr:0xcdb6d631a00857584e70a21d800f51c5776302fe || evt_addr:0x2b3370ee501b4a559b57d449569354196457d8ab
+Input: params: evt_addr:0xba1bb356e546ad2d036f4caa8d25fbba4f5c1006 || evt_addr:0x2b3370ee501b4a559b57d449569354196457d8ab
 Input: source: sf.ethereum.type.v2.Block
 Input: map: map_shield_events
 Input: store: store_vault_registry
-Block Filter: (using *ethereum_common:index_events*): `&{evt_addr:0xcdb6d631a00857584e70a21d800f51c5776302fe || evt_addr:0x2b3370ee501b4a559b57d449569354196457d8ab}`
+Block Filter: (using *ethereum_common:index_events*): `&{evt_addr:0xba1bb356e546ad2d036f4caa8d25fbba4f5c1006 || evt_addr:0x2b3370ee501b4a559b57d449569354196457d8ab}`
 Output Type: proto:shield.evm.v1.VaultFlows
+Hash: cf55018a41946cc23ec5d11624f28568ff73a8ed
+
 Name: store_flow_totals
-Initial block: 45220000
+Initial block: 45260000
 Kind: store
 Input: map: map_vault_flows
+Value Type: int64
+Update Policy: add
+Hash: 7927389e5ba4eb64adb803dfc3cb9eac3dbcabc7
+
 Name: map_behavioral_profiles
-Initial block: 45220000
+Initial block: 45260000
 Kind: map
 Input: store: store_flow_totals
 Output Type: proto:shield.evm.v1.BehavioralProfiles
+Hash: 9a7a5104004bf6c1b9c1bc50a78bc8c5f7ba2f7f
+
 Name: ethereum_common:all_events
 Initial block: 0
 Kind: map
 Input: source: sf.ethereum.type.v2.Block
 Output Type: proto:sf.substreams.ethereum.v1.Events
+Hash: 433686393b184c57628660f7dbe6cfed4d72a9e9
+Doc:  `all_events` gives you all the events in a block (from successful transactions), with basic block hash/number/timestamp and transaction hash
+  
+
 Name: ethereum_common:index_events
 Initial block: 0
 Kind: index
 Input: map: ethereum_common:all_events
 Output Type: proto:sf.substreams.index.v1.Keys
+Hash: 8375ddd2cb44363ab1691748ecb6303603f29568
+Doc:  `index_events` sets the following keys on the block:
+   * Event signatures evt_sig:0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef (signature in hex, prefixed by 0x)
+   * Event address    evt_addr:0x0123456789abcdef0123456789abcdef01234567 (address in hex, prefixed by 0x)
+  
 
-### 2. The full stateful pipeline, live at mainnet head
+Network: hyper-evm
 
-stack=hyperevm endpoint=hyperevm.substreams.pinax.network:443 module=map_vault_flows start=45228344 range=+20 token present (992 chars, exp 2027-10-28T12:39Z)
-TraceID: e3c2aed9c13ada002c65931280e2433f
+### 1. Sepolia rows — sepolia.eth.streamingfast.io:443
 This request will be processed in a single stage
-Blocks to process to prepare the stores in 1 stage: 1000 (7000 already cached)
-Blocks to process in requested range: 364 (0 already cached)
-
+Blocks to process in requested range: 12 (0 already cached)
+{"@module":"map_vault_flows","@block":11654055,"@type":"shield.evm.v1.VaultFlows","@data":{"flows":[{"block":"11654055","blockTime":"1788782724","txHash":"0x59386782750306d458152b174e8b1a65cfe11fe10353d5f752e80fbd01996ee8","vault":"0x9872f09d96bca7f878cee9c4bdc8bcca269db006","kind":"DEPOSIT","counterparty":"0x9872f09d96bca7f878cee9c4bdc8bcca269db006","amount":"10000000000"}]}}
+{"@module":"map_vault_flows","@block":11654056,"@type":"shield.evm.v1.VaultFlows","@data":{"flows":[{"block":"11654056","blockTime":"1788782736","txHash":"0x13a483a32f3948fdb43b76ed5cd1044f49f831298669aef9f814641f1589e495","vault":"0x9872f09d96bca7f878cee9c4bdc8bcca269db006","kind":"TOP_UP_INSTANT","outbound":true,"counterparty":"0xe7c2adb44064e705a2e955770440c527373967a1","amount":"1500000000","counterpartyIsExecution":true}]}}
+{"@module":"map_vault_flows","@block":11654058,"@type":"shield.evm.v1.VaultFlows","@data":{"flows":[{"block":"11654058","blockTime":"1788782760","txHash":"0x59e0566df0c43caa94ac59e03a3f1c3087ac4fe579a5b5b9bcf88e08a6db27d0","vault":"0x9872f09d96bca7f878cee9c4bdc8bcca269db006","kind":"DEPOSIT","counterparty":"0xe7c2adb44064e705a2e955770440c527373967a1","amount":"80000000"}]}}
 📊 Usage Report
- • Egress Bytes (uncompressed): 7.5 KiB
- • Processed Blocks: 1,364 blocks
- • Received Blocks: 20 blocks
-
+ • Egress Bytes (uncompressed): 5.7 KiB
+ • Processed Blocks: 21 blocks
+ • Received Blocks: 12 blocks
 Completed successfully
 
-### 3. The honest result
+### 2. Sepolia rows — sepolia.substreams.pinax.network:443
+This request will be processed in a single stage
+Blocks to process in requested range: 12 (0 already cached)
+{"@module":"map_vault_flows","@block":11654055,"@type":"shield.evm.v1.VaultFlows","@data":{"flows":[{"block":"11654055","blockTime":"1788782724","txHash":"0x59386782750306d458152b174e8b1a65cfe11fe10353d5f752e80fbd01996ee8","vault":"0x9872f09d96bca7f878cee9c4bdc8bcca269db006","kind":"DEPOSIT","counterparty":"0x9872f09d96bca7f878cee9c4bdc8bcca269db006","amount":"10000000000"}]}}
+{"@module":"map_vault_flows","@block":11654056,"@type":"shield.evm.v1.VaultFlows","@data":{"flows":[{"block":"11654056","blockTime":"1788782736","txHash":"0x13a483a32f3948fdb43b76ed5cd1044f49f831298669aef9f814641f1589e495","vault":"0x9872f09d96bca7f878cee9c4bdc8bcca269db006","kind":"TOP_UP_INSTANT","outbound":true,"counterparty":"0xe7c2adb44064e705a2e955770440c527373967a1","amount":"1500000000","counterpartyIsExecution":true}]}}
+{"@module":"map_vault_flows","@block":11654058,"@type":"shield.evm.v1.VaultFlows","@data":{"flows":[{"block":"11654058","blockTime":"1788782760","txHash":"0x59e0566df0c43caa94ac59e03a3f1c3087ac4fe579a5b5b9bcf88e08a6db27d0","vault":"0x9872f09d96bca7f878cee9c4bdc8bcca269db006","kind":"DEPOSIT","counterparty":"0xe7c2adb44064e705a2e955770440c527373967a1","amount":"80000000"}]}}
+📊 Usage Report
+ • Egress Bytes (uncompressed): 5.7 KiB
+ • Processed Blocks: 21 blocks
+ • Received Blocks: 12 blocks
+Completed successfully
 
-'Completed successfully' with no flow rows is what this should print today.
-The composition, the authentication and all five modules run live against a
-Graph Market provider. There are no rows because ShieldVault.sol is deployed
-on HyperEVM *testnet* (998) and The Graph indexes HyperEVM *mainnet* (999)
-only — there is no testnet entry in its networks registry. The running
-server reports the same thing at /api/health as
-  substreamsAvailable: "no: The Graph indexes HyperEVM mainnet only"
-and the app prints that sentence on its Behaviour screen. The addresses in
-substreams.yaml move to the mainnet vault the moment it is deployed;
-nothing else about this pipeline changes.
+### 3. HyperEVM (product chain) — hyperevm.substreams.pinax.network:443, zero rows by construction
+stack=hyperevm endpoint=hyperevm.substreams.pinax.network:443 module=map_vault_flows start=45260712 range=+20 token present (992 chars, exp 2027-10-28T12:39Z)
+This request will be processed in a single stage
+Blocks to process in requested range: 20 (0 already cached)
+📊 Usage Report
+ • Egress Bytes (uncompressed): 7.5 KiB
+ • Processed Blocks: 732 blocks
+ • Received Blocks: 20 blocks
+Completed successfully
+
+### 4. Solana devnet — devnet.sol.streamingfast.io:443, same JWT
+stack=solana endpoint=devnet.sol.streamingfast.io:443 module=map_vault_flows start=494527894 range=+20 token present (992 chars, exp 2027-10-28T12:39Z)
+This request will be processed in a single stage
+Blocks to process in requested range: 20 (0 already cached)
+📊 Usage Report
+ • Egress Bytes (uncompressed): 6.4 KiB
+ • Processed Blocks: 20 blocks
+ • Received Blocks: 20 blocks
+Completed successfully
+
+### 5. Negative control — no JWT
+📊 Usage Report: no data received
+Error: stream auth failure: rpc error: code = Unauthenticated desc = unauthenticated

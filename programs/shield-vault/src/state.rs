@@ -174,20 +174,23 @@ impl Vault {
         if elapsed < 0 {
             return Ok(());
         }
-        let buckets_elapsed = (elapsed / BUCKET_LEN_SECS).min(NUM_VELOCITY_BUCKETS as i64);
+        // v2: never clamp `buckets_elapsed` before advancing `bucket_start`,
+        // and always advance `current_bucket_index`; otherwise an idle gap
+        // re-zeroes the whole window on every call (see ShieldVault.sol v2).
+        let buckets_elapsed = elapsed / BUCKET_LEN_SECS;
         if buckets_elapsed == 0 {
             return Ok(());
         }
         if buckets_elapsed >= NUM_VELOCITY_BUCKETS as i64 {
-            self.velocity_buckets = [0u64; NUM_VELOCITY_BUCKETS];
+            self.velocity_buckets = [0; NUM_VELOCITY_BUCKETS];
         } else {
             for i in 0..buckets_elapsed {
                 let idx = (self.current_bucket_index as i64 + 1 + i) as usize % NUM_VELOCITY_BUCKETS;
                 self.velocity_buckets[idx] = 0;
             }
-            self.current_bucket_index =
-                ((self.current_bucket_index as i64 + buckets_elapsed) % NUM_VELOCITY_BUCKETS as i64) as u8;
         }
+        self.current_bucket_index =
+            ((self.current_bucket_index as i64 + buckets_elapsed) % NUM_VELOCITY_BUCKETS as i64) as u8;
         self.bucket_start = self
             .bucket_start
             .checked_add(buckets_elapsed.checked_mul(BUCKET_LEN_SECS).ok_or(ShieldError::MathOverflow)?)
