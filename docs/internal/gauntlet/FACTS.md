@@ -108,6 +108,14 @@ it in a judge-facing document.
 - Full flow verified on Anvil in the headless browser (entry → analysing → reveal → replay → counterfactual →
   recommendation → local-key sign-in → $250 → vault + ladder commit + faucet + deposit → active → Home). Phone (375)
   and tablet (820) widths: no horizontal overflow on any step.
+- Third loop (2026-09-07 evening), all verified in the headless browser on Anvil: "+ Add trading wallet" sheet adds a
+  second address and the analysis merges wallets (`/api/hyperliquid/0x…,0x…` → `analyseHyperliquidMany`; example +
+  `0x3b8e31fc…` = 408 sessions, 32 reloads while down, worst reload $201 at −$725, finished −$2,172); the analyser caches
+  sessions per address for 10 minutes (warm reveal in ~6 s); a no-history address (`0x662148b0…` on mainnet) lands on the
+  two-decision baseline ("How much do you usually put into a session?" / "In a bad session, how much should still be
+  addable per day?" → Build my baseline); with the history service down the entry screen says "Couldn't reach Shield's
+  history service…"; the LOCKED Home reads "Shield stepped in · $0 available until … · You paused new capital yourself."
+  Activation registers every added wallet as an execution destination.
 - Home was rebuilt around one hierarchy (state, amount available today, one action, session + protection facts,
   details folded); REDUCED renders as "Shield stepped in · $250 ↓ $140"; an over-limit release says "Can't release
   $200. Your current Shield limit is $140 …" with a one-tap "Release $140 instead".

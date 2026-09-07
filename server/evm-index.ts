@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { Store, type VerdictRecord } from "./store";
 import { deriveProfile, serialize, type BehaviourProfile, type Flow } from "./behaviour";
 import { assess, REASON_LABEL, type Assessment, type PolicyView, type VenueLoss } from "./policy";
-import { analyseHyperliquid, fetchFills, type HlNetwork } from "./hyperliquid";
+import { analyseHyperliquid, analyseHyperliquidMany, fetchFills, type HlNetwork } from "./hyperliquid";
 import { describeSubstreams, resolveSubstreams } from "./substreams-config";
 import { runSubstreamsSource } from "./substreams-source";
 import { SHIELD_VAULT_ABI } from "../client/abi/ShieldVault";
@@ -617,10 +617,11 @@ Bun.serve({
       });
     }
 
-    const hl = path.match(/^\/api\/hyperliquid\/(0x[0-9a-fA-F]{40})$/);
+    const hl = path.match(/^\/api\/hyperliquid\/((?:0x[0-9a-fA-F]{40})(?:,0x[0-9a-fA-F]{40})*)$/);
     if (hl && req.method === "GET") {
       const network = (url.searchParams.get("network") === "testnet" ? "testnet" : "mainnet") as HlNetwork;
-      try { return json(await analyseHyperliquid(hl[1], network)); } catch (e) { return json({ error: e instanceof Error ? e.message : String(e) }, 502); }
+      const addrs = hl[1].split(",");
+      try { return json(addrs.length === 1 ? await analyseHyperliquid(addrs[0], network) : await analyseHyperliquidMany(addrs, network)); } catch (e) { return json({ error: e instanceof Error ? e.message : String(e) }, 502); }
     }
 
     if (path === "/api/vaults") return json([...views.values()].map((v) => ({ vault: v.key, authority: v.vault.authority, balance: v.balance })));

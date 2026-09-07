@@ -36,6 +36,11 @@ export function Onboard() {
   const reduce = useReducedMotion();
   const [step, setStep] = useState<Step>(() => (sessionStorage.getItem("shield.onboard.step") as Step) || "entry");
   const [addr, setAddr] = useState(() => sessionStorage.getItem("shield.onboard.addr") ?? "");
+  const [extra, setExtra] = useState<string[]>(() => { const raw = sessionStorage.getItem("shield.onboard.extra"); return raw ? (JSON.parse(raw) as string[]) : []; });
+  const [extraDraft, setExtraDraft] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
+  const [baseSession, setBaseSession] = useState("");
+  const [baseBad, setBaseBad] = useState("");
   const [net, setNet] = useState<"mainnet" | "testnet">("mainnet");
   const [profile, setProfile] = useState<HlProfileJson | null>(() => { const raw = sessionStorage.getItem("shield.onboard.profile"); return raw ? (JSON.parse(raw) as HlProfileJson) : null; });
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +57,7 @@ export function Onboard() {
 
   useEffect(() => { sessionStorage.setItem("shield.onboard.step", step); }, [step]);
   useEffect(() => { sessionStorage.setItem("shield.onboard.addr", addr); }, [addr]);
+  useEffect(() => { sessionStorage.setItem("shield.onboard.extra", JSON.stringify(extra)); }, [extra]);
   useEffect(() => { if (profile) sessionStorage.setItem("shield.onboard.profile", JSON.stringify(profile)); }, [profile]);
   useEffect(() => { if (plan) sessionStorage.setItem("shield.onboard.plan", JSON.stringify(plan)); }, [plan]);
   // A returning user with a vault does not need this.
@@ -67,7 +73,8 @@ export function Onboard() {
     setStep("analysing");
     const started = Date.now();
     try {
-      const p = await getJson<HlProfileJson>(`${API_URL}/api/hyperliquid/${a.trim()}?network=${net}`);
+      const all = [a.trim(), ...extra.filter((e) => isAddr(e) && e.toLowerCase() !== a.trim().toLowerCase())];
+      const p = await getJson<HlProfileJson>(`${API_URL}/api/hyperliquid/${all.join(",")}?network=${net}`);
       const wait = Math.max(0, 3200 - (Date.now() - started));
       await new Promise((r) => setTimeout(r, wait));
       setProfile(p);
@@ -75,10 +82,12 @@ export function Onboard() {
       else setPlan({ normal: 150, reduced: 25, reducedAt: 50, lockAt: 100 });
       setStep("reveal");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const m = e instanceof Error ? e.message : String(e);
+      setError(/fetch|network|refused|load/i.test(m) ? "Couldn't reach Shield's history service. Check your connection and try again." : /502|hyperliquid/i.test(m) ? "Hyperliquid didn't answer for that address. Check it and try again." : m);
       setStep("entry");
     }
   };
+  const walletCount = 1 + extra.filter(isAddr).length;
 
   const activate = async () => {
     if (!actions || !usdc || !plan || !signer) return;
@@ -88,7 +97,7 @@ export function Onboard() {
       // The daily allowance never exceeds 60% of what is protected, so a floor always remains.
       const normal = Math.max(5, Math.min(plan.normal, Math.round(amount * 0.6)));
       const floor = Math.max(0, amount - normal);
-      const regs: RegistrationInput[] = [{ owner: addr.trim(), kind: OwnerKind.Execution, route: chain === "evm" ? Route.HyperCore : Route.Evm, label: "Hyperliquid" }];
+      const regs: RegistrationInput[] = [addr.trim(), ...extra.filter(isAddr)].map((owner, i) => ({ owner, kind: OwnerKind.Execution, route: chain === "evm" ? Route.HyperCore : Route.Evm, label: i === 0 ? "Hyperliquid" : `Hyperliquid ${i + 1}` }));
       const verifier = health?.monitor.verifier ?? null;
       await run("Shield created", actions.activate({
         riskVerifier: verifier,
@@ -149,6 +158,12 @@ export function Onboard() {
               <input className="ob-input" value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="Your Hyperliquid address (0x…)" spellCheck={false} autoComplete="off" inputMode="text" />
               <button className="btn btn-lg ob-cta" disabled={!isAddr(addr)} onClick={() => void analyse(addr)}>Analyse my trading</button>
             </div>
+            <div className="ob-wallets">
+              {extra.filter(isAddr).map((w) => (
+                <div key={w} className="ob-wallet"><span className="mono">{w.slice(0, 6)}…{w.slice(-4)}</span><button className="linkish" onClick={() => setExtra((xs) => xs.filter((x) => x !== w))}>remove</button></div>
+              ))}
+              <button className="linkish" onClick={() => setAddOpen(true)}>+ Add trading wallet</button>
+            </div>
             <div className="ob-entry-alt">
               <button className="linkish" onClick={() => { setAddr(EXAMPLE); void analyse(EXAMPLE); }}>Try with an example account</button>
               <span className="ob-sep">·</span>
@@ -187,8 +202,17 @@ export function Onboard() {
               <>
                 <p className="ob-eyebrow">What Shield found</p>
                 <h1 className="ob-display-s">Your history doesn't show a strong reload-after-loss pattern yet.</h1>
-                <p className="ob-lead">{profile.insight ?? `${profile.totals.sessions} session${profile.totals.sessions === 1 ? "" : "s"} read.`} We can still create a simple baseline Shield.</p>
-                <button className="btn btn-lg ob-cta" onClick={() => setStep("recommend")}>Set a baseline</button>
+                <p className="ob-lead">{profile.insight ?? `${profile.totals.sessions} session${profile.totals.sessions === 1 ? "" : "s"} read.`} We can still create a simple baseline Shield from two numbers.</p>
+                <div className="ob-two">
+                  <Field label="How much do you usually put into a session?"><MoneyInput value={baseSession} onChange={setBaseSession} placeholder={String(profile.typicalSessionSize ? Math.round(profile.typicalSessionSize) : 500)} /></Field>
+                  <Field label="In a bad session, how much should still be addable per day?"><MoneyInput value={baseBad} onChange={setBaseBad} placeholder={String(Math.max(5, Math.round((Number(baseSession) || profile.typicalSessionSize || 500) * 0.15)))} /></Field>
+                </div>
+                <button className="btn btn-lg ob-cta" onClick={() => {
+                  const session = Number(baseSession) || profile.typicalSessionSize || 500;
+                  const bad = Number(baseBad) || Math.max(5, Math.round(session * 0.15));
+                  setPlan({ normal: Math.round(session), reduced: Math.round(bad), reducedAt: Math.max(10, Math.round(session * 0.2)), lockAt: Math.max(20, Math.round(session * 0.6)) });
+                  setStep("recommend");
+                }}>Build my baseline</button>
               </>
             )}
             <p className="ob-foot"><button className="linkish" onClick={() => setStep("entry")}>Use a different address</button></p>
@@ -279,7 +303,7 @@ export function Onboard() {
 
         {(step === "activating" || step === "active") && plan && (
           <motion.section key="active" className="ob-stage ob-active" {...fade}>
-            <Activation stage={step === "active" ? 3 : activeStage} normal={Math.min(plan.normal, protect)} done={step === "active"} onGo={finish} />
+            <Activation stage={step === "active" ? 3 : activeStage} normal={Math.max(5, Math.min(plan.normal, Math.round(protect * 0.6)))} done={step === "active"} onGo={finish} wallets={walletCount} />
           </motion.section>
         )}
       </AnimatePresence>
@@ -306,6 +330,13 @@ export function Onboard() {
             <p className="dim">{rec.basis}</p>
           </div>
         )}
+      </Sheet>
+      <Sheet open={addOpen} onClose={() => setAddOpen(false)} title="Trading from another wallet?">
+        <p className="small dim">Add it so Shield can build a more complete picture of your sessions.</p>
+        <ul className="ob-benefits"><li>More complete session P&amp;L</li><li>Better reload detection</li><li>Better protection recommendations</li></ul>
+        <input className="ob-input" value={extraDraft} onChange={(e) => setExtraDraft(e.target.value)} placeholder="0x…" spellCheck={false} />
+        <button className="btn btn-block btn-lg" style={{ marginTop: 10 }} disabled={!isAddr(extraDraft)} onClick={() => { setExtra((xs) => [...xs, extraDraft.trim()]); setExtraDraft(""); setAddOpen(false); }}>+ Add trading wallet</button>
+        <p className="tiny dim" style={{ marginTop: 10 }}>One wallet is enough for Shield to work. More wallets help it understand you better.</p>
       </Sheet>
       <Sheet open={demoOpen} onClose={() => setDemoOpen(false)} title="Use a local key">
         <p className="small dim">A 0x-prefixed private key for this network. Testnet only.</p>
@@ -350,7 +381,7 @@ function Analysing({ profile }: { profile: HlProfileJson | null }) {
   );
 }
 
-function Activation({ stage, normal, done, onGo }: { stage: number; normal: number; done: boolean; onGo: () => void }) {
+function Activation({ stage, normal, done, onGo, wallets }: { stage: number; normal: number; done: boolean; onGo: () => void; wallets: number }) {
   const reduce = useReducedMotion();
   const [showState, setShowState] = useState(false);
   const timer = useRef<number | null>(null);
@@ -373,7 +404,7 @@ function Activation({ stage, normal, done, onGo }: { stage: number; normal: numb
           <p className="ob-active-sub">available today</p>
           <p className="ob-lead">Trade normally. Shield will reduce additional capital access only if your pre-set conditions are reached.</p>
           <div className="ob-actions"><button className="btn btn-lg ob-cta" onClick={onGo}>Go to Shield</button></div>
-          <p className="ob-reassure">1 trading wallet monitored · <a href="/protection">+ Add wallet</a></p>
+          <p className="ob-reassure">{wallets} trading wallet{wallets === 1 ? "" : "s"} monitored · <a href="/protection">+ Add wallet</a></p>
         </motion.div>
       )}
     </div>

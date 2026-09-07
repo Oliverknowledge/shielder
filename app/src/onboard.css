@@ -102,3 +102,10 @@
 .replay-svg-compact .replay-mark text { font-size: 12.5px; }
 .replay-svg-compact .replay-dot { r: 6; }
 @media (prefers-reduced-motion: reduce) { .replay-dot { animation: none; } }
+
+.ob-wallets { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; font-size: 13px; }
+.ob-wallet { display: flex; gap: 10px; align-items: center; color: var(--ink-2); }
+.ob-wallet .mono { font-family: var(--mono); }
+.ob-benefits { margin: 10px 0 14px; padding-left: 0; list-style: none; font-size: 14px; color: var(--ink-2); }
+.ob-benefits li::before { content: "✓ "; color: var(--protect); font-weight: 600; }
+.ob-two { display: grid; gap: 12px; margin: 14px 0 6px; }

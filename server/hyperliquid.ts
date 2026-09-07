@@ -354,7 +354,32 @@ export function summarise(address: string, network: HlNetwork, sessions: HlSessi
   };
 }
 
-export async function analyseHyperliquid(address: string, network: HlNetwork): Promise<HlProfile> {
+const CACHE_MS = 10 * 60 * 1000;
+const sessionCache = new Map<string, { at: number; sessions: HlSession[] }>();
+
+/** Sessions for one account, cached briefly so a second wallet or a re-run does not re-page the venue's API. */
+export async function sessionsFor(address: string, network: HlNetwork): Promise<HlSession[]> {
+  const key = `${network}:${address.toLowerCase()}`;
+  const hit = sessionCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.sessions;
   const [ledger, fills] = await Promise.all([fetchLedger(network, address), fetchFills(network, address)]);
-  return summarise(address, network, deriveSessions(ledger, fills, address));
+  const sessions = deriveSessions(ledger, fills, address);
+  sessionCache.set(key, { at: Date.now(), sessions });
+  return sessions;
+}
+
+export async function analyseHyperliquid(address: string, network: HlNetwork): Promise<HlProfile> {
+  return summarise(address, network, await sessionsFor(address, network));
+}
+
+/**
+ * Several trading wallets, one trader. Sessions are rebuilt per wallet (they
+ * do not interleave across accounts) and summarised together, so the typical
+ * session, the worst reload and the recommendation see the whole picture.
+ */
+export async function analyseHyperliquidMany(addresses: string[], network: HlNetwork): Promise<HlProfile & { wallets: string[] }> {
+  const unique = [...new Set(addresses.map((a) => a.toLowerCase()))];
+  const per = await Promise.all(unique.map((a) => sessionsFor(a, network)));
+  const sessions = per.flat().sort((a, b) => a.openedAt - b.openedAt);
+  return { ...summarise(unique.join(","), network, sessions), wallets: unique };
 }

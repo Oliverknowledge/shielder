@@ -50,7 +50,10 @@ sign-in (Privy, or a local key on testnet) and one amount later, protection is
 active. Everything on those screens is historical; nothing predicts an outcome.
 
 "Try with an example account" uses a public Hyperliquid address with a clear
-pattern (273 sessions, 19 reloads while down). Routes: `/` when signed out,
+pattern (273 sessions, 19 reloads while down). "+ Add trading wallet" folds a
+second account into the same analysis; one wallet is enough for Shield to work.
+An account with no reload-while-down history gets a two-number baseline instead
+of a fabricated session. Routes: `/` when signed out,
 `/start` when signed in without a vault; the long-form landing page is `/landing`.
 
 
