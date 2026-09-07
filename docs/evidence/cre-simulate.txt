@@ -1,7 +1,7 @@
 Chainlink CRE Confidential Workflow — cre CLI evidence
 ======================================================
 
-Captured: 2026-09-07T00:57:33Z (UTC)
+Captured: 2026-09-07T01:57:37Z (taken from the run's own log lines, below)
 CLI: CRE CLI version v1.32.0
 
 Two runs. The first shows the confidential handler executing. The second

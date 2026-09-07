@@ -112,13 +112,17 @@ cooldownUntil = 1788776770, extended = true, evidenceHash = 0x4c7946…918b)`.
 Vault state after: `cooldownReason = 2 (RISK_VERDICT)`, `lastVerdictNonce = 1`.
 
 **Read the transcript with that in mind.** The committed transcript is a *later*
-reproduction of the same command against the same vault. It shows the TEE
-banner, the enclave evaluation
-(`realisedLoss24h=3500000 trigger=3000000 triggered=true`) and a clean exit, but
-`"actionable": false` and an empty `signature`: verdict nonce 1 had already been
-consumed by the run above, and the workflow will not re-issue a verdict for a
-loss the vault has already been told about. The signing path is what the
-transaction proves; the transcript proves the confidential execution.
+reproduction against the same vault, and it holds two runs. The first shows the
+TEE banner, the in-enclave evaluation and a clean exit, reporting
+`realisedLoss24h=0 … triggered=false` — the correct answer, because the enclave
+now reads the venue's own settled PnL alongside the vault's flows and
+Hyperliquid settled this account flat over the window, so there is nothing to
+attest and nothing to sign. The second run is the identical command with the
+verifier secret replaced by `0xdeadbeef`; it fails with
+`✗ workflow execution failed: EVM verifier secret must be a 0x-prefixed 32-byte
+private key`, before any HTTP call, which is what proves the secret is
+load-bearing. The signing path is what the transaction above proves; the
+transcript proves the confidential execution and the secret's necessity.
 
 **Why the pause cannot be abused — verified in Solidity**
 (`contracts/src/ShieldVault.sol:536-558`, tested at

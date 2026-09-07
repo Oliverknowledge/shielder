@@ -105,7 +105,11 @@ export function describeEvent(e: EventJson, labelOf: (owner: string) => string, 
     case "RiskVerdictApplied":
       return {
         title: "Loss rule paused new capital",
-        body: `${usd(s("realizedLossUsdc"))} realised, above your trigger · ${d.extended ? "paused until" : "already paused until"} ${clockTime(n("cooldownUntil"), now)} · verdict #${s("nonce")}`,
+        // "attested", not "realised". A verdict is a permanent record of what the
+        // monitor swore to at the time; the current realised loss is recomputed
+        // and can differ. Saying "realised" here put a number on Home and
+        // Activity that the assessment on the same screen contradicts.
+        body: `${usd(s("realizedLossUsdc"))} attested, above your trigger · ${d.extended ? "paused until" : "already paused until"} ${clockTime(n("cooldownUntil"), now)} · verdict #${s("nonce")}`,
         tone: "blocked",
         category: "Cooldown",
       };

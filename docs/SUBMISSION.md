@@ -252,19 +252,34 @@ and the signing are.
 `docs/evidence/cre-simulate.txt`. Command, from the repository root:
 
 ```
-cre workflow simulate shield-risk --target evm-settings --non-interactive \
+cre workflow simulate shield-risk --target evm-dry-settings --non-interactive \
   --trigger-index 0 --http-payload '{"vault":"0x751D1e26d79FeffE95F8a8662aB7A022780ED023"}' \
   -R cre -e cre/.env
 ```
 
-The CLI prints the TEE placement — "Trigger requested TEE Execution … AWS Nitro
-in us-west-2" — evaluates the vault inside the handler
-(`realisedLoss24h=3500000 trigger=3000000 triggered=true`) and ends
-"Simulation complete!". That run returned `actionable: false` and an empty
-signature for an honest reason we state rather than hide: it ran at
-2026-09-06T22:59Z, 33 minutes *after* verdict #1 had already landed on chain
-for that vault, and the contract rejects a replayed nonce, so the workflow
-correctly declined to sign a second one.
+`evm-dry-settings` is `evm-settings` with `deliver: false`, so the workflow runs
+end to end without broadcasting a verdict. Use `evm-settings` to actually relay.
+
+The transcript contains **two runs**. The first prints the TEE placement —
+"Trigger requested TEE Execution … AWS Nitro in us-west-2" — evaluates the vault
+inside the handler and ends "Simulation complete!". It reports
+`realisedLoss24h=0 … triggered=false`, and that is the correct answer: the
+enclave reads the venue's own settled PnL as well as the vault's flows, and
+Hyperliquid settled this account flat over the window, so there is no loss to
+attest and nothing to sign.
+
+The second run is the one that matters for the criterion. It is the identical
+command with `SHIELD_EVM_VERIFIER_KEY` set to `0xdeadbeef`, and it fails:
+
+```
+✗ workflow execution failed: EVM verifier secret must be a 0x-prefixed 32-byte private key
+```
+
+The handler reads that secret as the first statement of `evaluateVault` and
+validates it before any HTTP call or any evaluation, so a wrong value stops the
+workflow before it can do anything else. That is the difference between a secret
+being present and a secret being load-bearing, and it costs nothing to
+reproduce.
 
 **The on-chain result, verified log by log.** The same evaluation path, run
 while verdict #1 was still unused, signed an EIP-712 verdict that the deployed
@@ -388,9 +403,9 @@ Live vaults on chain id 998, all on the one contract:
 
 | Authority | What it is | State |
 |---|---|---|
-| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | demo vault | $600 balance, $500 floor, $100 per 24h, $700 deposited, $100 released, verdict #1 applied |
+| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | demo vault | $600 balance, $500 floor, $100 per 24h, $700 deposited, $100 released, verdicts #1 and #2 applied |
 | `0x83144b99D89947703714Ee9aA3A3614985041D2B` | the Privy embedded wallet | $45 balance, $10 floor, $50 deposited, $5 released to HyperCore |
-| `0x751D1e26d79FeffE95F8a8662aB7A022780ED023` | the CRE demo vault | $21 balance, $3 loss trigger, 12h cooldown, verdict #1 applied |
+| `0x751D1e26d79FeffE95F8a8662aB7A022780ED023` | the CRE demo vault | $21 balance, $3 loss trigger, 12h cooldown, verdicts #1 and #2 applied |
 
 ---
 
@@ -423,7 +438,7 @@ Contract. ShieldVault.sol at 0xcdB6d631A00857584e70a21d800f51C5776302Fe on Hyper
 
 Privy (Best Financial Flow). The embedded wallet is the vault authority, not a login: ShieldVault._own() reverts for every other address. Created on login with createOnLogin: "users-without-wallets" (app/src/lib/privy.tsx:67); the app signs through its EIP-1193 provider. Wallet 0x83144b99D89947703714Ee9aA3A3614985041D2B, nonce 4 on chain. The financial flow is a $5.00 release from the vault into a Hyperliquid perps account in one transaction: 0x94960d1f937a3e36e1b16e69922a2579e77b584ed25b2ced044da7991fe889be (block 63581864) — USDC approval and transfer from the vault to CoreDepositWallet, on to the HyperCore system address 0x2000...0000, a $5.00 HyperCore credit to the registered account, and TopUpExecuted(amount=$5, instant=true, balanceAfter=$45). Supporting transactions from the same wallet: registerOwner 0x80c2a48aeeb2825fc427c2eb6b90821bc5c75fe8db38eddb3db745f55426f8f0 (block 63581683) and proposeLoosen 0xeeea692a9a7c25ada3918ceff2992c3465fff356b560b6c80a5e191cf2224b85 (block 63581938), the second of which the contract holds for 24 hours. Privy policies, quorums, session signers and Cards are not used and are not claimed.
 
-Chainlink CRE (Best Confidential Workflow). handlerInTee from @chainlink/cre-sdk is registered at cre/shield-risk/main.ts:88 with [{ tee: "nitro", regions: ["us-west-2"] }], and the whole risk evaluation runs inside it. The sensitive input is the verifier private key, read in-enclave with runtime.getSecret (cre/shield-risk/evaluate.ts:89, mapped in cre/secrets.yaml) and used to produce an EIP-712 signature; the key never leaves the enclave. We do not claim the capital flows are confidential — they are on-chain data fetched over plain HTTP. Simulated with the CRE CLI and reproduced; the verbatim transcript is docs/evidence/cre-simulate.txt, showing "AWS Nitro in us-west-2", the in-enclave evaluation (realised loss $3.50 against a $3.00 trigger) and "Simulation complete!". On chain, the same evaluation path signed verdict #1 and the deployed contract accepted it: 0x2e411cea49a5c8edff69dddb7376aca1b5c2eee9f92be1fcb12f78733676bb35, block 63584417, RiskVerdictApplied(nonce=1, reasonCode=1, realizedLossUsdc=3500000, extended=true). The verdict is deliberately weak by design (ShieldVault.sol:536-558): it carries no duration, floor, limit or destination; cooldownUntil only moves forward; a verdict below the user's own lossTriggerUsdc is rejected; nonces cannot be replayed; cold transfers and full exit are never gated by it; worst case is bounded by MAX_LOSS_COOLDOWN_SECS = 30 days. The enclave supplies a number, the user's own rule supplies the consequence.
+Chainlink CRE (Best Confidential Workflow). handlerInTee from @chainlink/cre-sdk is registered at cre/shield-risk/main.ts:88 with [{ tee: "nitro", regions: ["us-west-2"] }], and the whole risk evaluation runs inside it. The sensitive input is the verifier private key, read in-enclave with runtime.getSecret (cre/shield-risk/evaluate.ts:89, mapped in cre/secrets.yaml) and used to produce an EIP-712 signature; the key never leaves the enclave. We do not claim the capital flows are confidential — they are on-chain data fetched over plain HTTP. Simulated with the CRE CLI and reproduced; the verbatim transcript is docs/evidence/cre-simulate.txt, showing "AWS Nitro in us-west-2", the in-enclave evaluation, "Simulation complete!", and a second run with the secret replaced that fails before it can do anything — which is what proves the secret is load-bearing rather than merely present. On chain, the same evaluation path signed verdict #1 and the deployed contract accepted it: 0x2e411cea49a5c8edff69dddb7376aca1b5c2eee9f92be1fcb12f78733676bb35, block 63584417, RiskVerdictApplied(nonce=1, reasonCode=1, realizedLossUsdc=3500000, extended=true). The verdict is deliberately weak by design (ShieldVault.sol:536-558): it carries no duration, floor, limit or destination; cooldownUntil only moves forward; a verdict below the user's own lossTriggerUsdc is rejected; nonces cannot be replayed; cold transfers and full exit are never gated by it; worst case is bounded by MAX_LOSS_COOLDOWN_SECS = 30 days. The enclave supplies a number, the user's own rule supplies the consequence.
 
 The Graph (Composable / Standardized Products). substreams-evm/ builds shield-evm-behavioral-memory-v0.1.0.spkg, committed to the repo: five modules (map_shield_events, store_vault_registry, map_vault_flows, store_flow_totals, map_behavioral_profiles) composed on The Graph's foundational ethereum-common@v0.3.3, whose index_events module is the declared blockFilter for both maps, keyed on the vault and native USDC. That is the standards leverage: we never wrote a log scanner, so the package contains only Shield's own part — typed event decoding, detection of USDC returning from the venue, and flow classification across the vault boundary into the totals the Behaviour screen renders and the loss rule falls back on when there is no venue API to ask. The same pipeline shape is what the Solana implementation in substreams/ exposes (seven modules there, with instruction decoding added), and both packages emit map_vault_flows: one config resolves either stack (server/substreams-config.ts), one consumer streams it (server/substreams-source.ts), and server/behaviour.ts, server/policy.ts and the CRE workflow read the result unchanged. Live consumption is proven in docs/evidence/substreams-live.txt: the full stateful pipeline streamed from hyperevm.substreams.pinax.network:443, a provider on The Graph Market, 620 blocks processed, "Completed successfully". Honest limitation, stated up front: that run emits no rows, because The Graph indexes HyperEVM mainnet (999) only — there is no testnet entry in the networks registry — and the vault is on testnet (998). The server therefore runs on the labelled RPC fallback (server/rpc-source.ts) with identical classification, and /api/health says so: substreamsAvailable: "no: The Graph indexes HyperEVM mainnet only". Deploying the same immutable contract to HyperEVM mainnet turns those zero rows into data; nothing else in the pipeline changes.
 

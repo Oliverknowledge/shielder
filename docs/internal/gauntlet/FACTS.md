@@ -15,7 +15,7 @@ If a claim is not in this file, do not put it in a judge-facing document.
 ## Vaults (all live on 998)
 | Authority | Role | State |
 |---|---|---|
-| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | the demo vault | $600 balance, floor $500, $100/24h, $700 deposited, $100 released, verdict #1 applied |
+| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | the demo vault | $600 balance, floor $500, $100/24h, $700 deposited, $100 released, verdicts #1 and #2 applied |
 | `0x83144b99D89947703714Ee9aA3A3614985041D2B` | **the Privy embedded wallet** | $45 balance, floor $10, $50 deposited, $5 released to HyperCore |
 | `0x751D1e26d79FeffE95F8a8662aB7A022780ED023` | the CRE demo vault | $21 balance, $3 loss trigger, 12h cooldown, verdict #1 applied |
 | `0x05a7a130869a793719BB6B341009ea3B70588DCb` | deployer's own | $0, floor $6,000 — unusable, do not point anyone at it |
