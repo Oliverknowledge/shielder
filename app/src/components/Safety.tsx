@@ -106,7 +106,10 @@ export function ResetScreen({ open, onClose, attempted, onStopForTonight }: { op
   const execLabel = venue.label;
   const bankroll = venue.bankroll ?? 0n;
   const h24 = server?.profile.windows.h24;
-  const loss = h24 ? BigInt(h24.realisedLoss) : 0n;
+  // The number the rule acts on, not the raw flow shortfall — the same fix as
+  // Home, Behaviour and the blocked screen. This tile was the fourth place the
+  // app contradicted itself about the same night.
+  const loss = server ? BigInt(server.assessment.realizedLossUsdc) : 0n;
   const reloads = h24?.topUpCount ?? 0;
   const pct = left / 10;
   const r = 76, c = 2 * Math.PI * r;
@@ -115,7 +118,7 @@ export function ResetScreen({ open, onClose, attempted, onStopForTonight }: { op
   // page's own animated container would otherwise trap it in a stacking context.
   return createPortal(
     <motion.div className="reset-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} role="dialog" aria-modal="true">
-      <p className="eyebrow">Ninety seconds</p>
+      <p className="eyebrow">A moment</p>
       <h2 className="title-l" style={{ marginTop: 10, maxWidth: "20ch" }}>Your money will still be here in {left > 0 ? `${left} second${left === 1 ? "" : "s"}` : "a moment"}.</h2>
       <div className="reset-ring" aria-hidden>
         <svg width="168" height="168" viewBox="0 0 168 168">
@@ -128,7 +131,7 @@ export function ResetScreen({ open, onClose, attempted, onStopForTonight }: { op
         <div><div className="k">In {execLabel} right now</div><div className="v">{usd(bankroll)}</div></div>
         <div><div className="k">Lost in the last 24h</div><div className="v" style={{ color: loss > 0n ? "var(--blocked)" : undefined }}>{usd(loss)}</div></div>
         <div><div className="k">Releases today</div><div className="v">{reloads}</div></div>
-        <div><div className="k">You just tried to add</div><div className="v">{usd(attempted)}</div></div>
+        {attempted > 0n && <div><div className="k">You just tried to add</div><div className="v">{usd(attempted)}</div></div>}
         <div style={{ gridColumn: "1 / -1" }}><div className="k">Still protected</div><div className="v c-protect">{usd(balance)}</div></div>
       </div>
       <motion.div className="reset-actions" initial={{ opacity: 0.35 }} animate={{ opacity: left === 0 ? 1 : 0.35 }} transition={{ duration: 0.6 }}>
