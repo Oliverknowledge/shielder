@@ -103,6 +103,41 @@ cast call $SHIELD_VAULT_ADDRESS \
 - d. `cre workflow simulate …` (the command in the table) prints the TEE banner.
 - e. `scripts/substreams-live.sh hyperevm <START> +20` prints "Completed successfully".
 
+### 3a. What the loss rule now needs, and why this changed
+
+**Read this before planning the loss beat.** Shield used to book any capital
+that left the vault and had not come back as a realised loss. That fired on the
+live testnet vault and paused an account Hyperliquid reported as *up* $5 — the
+worst thing this product can do, and the reason both the server and the
+confidential workflow now defer to the venue's own settled PnL wherever the
+venue answers.
+
+The consequence for filming is direct: **on HyperEVM testnet, sending USDC back
+from the trading wallet no longer creates a loss.** The venue decides, and if the
+Hyperliquid account is flat or up over the last 24 hours the rule will not fire,
+whatever the flows say. Verify with the enclave itself before you plan the shot:
+
+```bash
+cre workflow simulate shield-risk --target evm-settings --non-interactive \
+  --trigger-index 0 --http-payload '{"vault":"<authority>"}' -R cre -e cre/.env \
+  2>&1 | grep 'USER LOG'
+# realisedLoss24h must be greater than the trigger, or nothing will fire.
+```
+
+Two honest ways to get the beat:
+
+1. **Take a real losing trade on Hyperliquid testnet** with the registered
+   trading account, closed inside the 24-hour window, larger than the loss
+   trigger. This is the strongest version — the number on screen is the venue's
+   own settlement — and it is what the product actually claims.
+2. **Film the beat on the Anvil stack**, where there is no venue API and the flow
+   view is the only evidence, so `bun run demo:evm loss` works exactly as
+   scripted. Say on camera that it is the local stack. Everything else in the
+   video can still be the live testnet.
+
+Do not try to manufacture a testnet loss by returning less than you sent. It
+will not fire, and it should not: that is the bug this product fixed.
+
 ### 3. Set the loss rule low enough to fire — **before filming, not during**
 
 The vault's stock trigger is $10, but its daily limit is $5, so a $10 realised
