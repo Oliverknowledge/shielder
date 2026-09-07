@@ -47,6 +47,12 @@ if (evm) {
   if (!evmState?.vault) throw new Error("no EVM state in .shield: run `bun run bootstrap:evm` (Anvil) or `bun run bootstrap:hyperevm` first");
   config.programId = evmState.vault;
   config.chainId = evmState.chainId!;
+  // config.evm.json points at the chain-998 server. The Anvil stack runs on a
+  // different port so the two can coexist, and without this the documented
+  // local dry run fails with a bare 404 from the vault-view fetch.
+  const apiFromEnv = process.env.SHIELD_API_URL;
+  if (apiFromEnv) config.shieldApiUrl = apiFromEnv;
+  else if (Number(config.chainId) === 31337) config.shieldApiUrl = "http://localhost:8799";
 }
 
 // cre/.env → secrets (mirrors what the CLI simulator does)

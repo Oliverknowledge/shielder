@@ -12,6 +12,29 @@ The product is Hyperliquid-first (see `ARCHITECTURE_DECISION.md`). We select
 sponsor of this event (0 matches on the prizes page), which is fine: it is the
 venue, not a prize.
 
+## The two things to lead with
+
+Neither is a sponsor claim; both are what makes the sponsor claims worth
+reading.
+
+1. **The rules are proposed from the user's own history, not from a template.**
+   Setup step 0 reads the Hyperliquid account they trade from — public ledger
+   updates and fills, no credentials (`server/hyperliquid.ts`) — and shows them
+   their own sessions, typical session size, largest losing session and count
+   of sessions with a reload made while already down, plus one generated
+   sentence of the form "3 of your 4 largest losing sessions involved another
+   reload." The proposed limits follow from those numbers
+   (`app/src/pages/Setup.tsx`). This is the answer to the hardest question
+   about the product — why would anyone constrain themselves — and it is a
+   screen, not an argument.
+2. **Nobody can build this credibly except something with no owner.** Any venue
+   or wallet could ship a cooling-off timer in a week. A venue that holds a
+   customer's money against that customer's stated wish owns a liability and
+   therefore has to build an appeals path, and an appeals path is exactly what
+   defeats a commitment device. Shield's advantage is that there is nobody to
+   ask. Do not argue this on Hyperliquid's agent-wallet permissions:
+   sub-accounts exist and a judge who trades will say so.
+
 ## Rules that bind us
 
 | Item | Value | Source |
@@ -49,12 +72,23 @@ is in `docs/SPONSOR_INTEGRATIONS.md`.
 
 ## 1. The Graph — "Best Use of Composable or Standardized Graph Products" ($5,000: 2,500 / 1,500 / 1,000)
 
-Why it is structural: the loss rule is *"if $X did not come back from your
-trading account within 24h, pause top-ups"*. The only way to know what came back
-is to index money crossing the vault boundary and classify it against the
-vault's own on-chain registry of destinations. That is the Substreams package.
-Remove it and Shield degrades to static limits: the loss rule, the Behaviour
-screen and the monitor stop working.
+Why it is structural: the loss rule needs to know what the user's capital
+actually did, and Shield reads that from two independent views. One is the
+venue's own settled PnL. The other is the money crossing the vault boundary —
+released to a registered trading destination, returned from it — and the only
+way to produce that is to index the vault's logs and classify every flow
+against the vault's own on-chain registry of destinations. That is the
+Substreams package.
+
+Which one decides is explicit in `server/policy.ts`
+(`const venueDecides = !!venue; const realizedLossUsdc = venueDecides ?
+venueLoss : flowLoss`): where the venue's API answers, the venue's settled PnL
+is the number the rule reads, and the flow view is the fallback. Remove the
+package and Shield loses the on-chain half of its evidence — every flow, the
+Behaviour screen, and the fallback the loss rule uses wherever a destination
+has no venue API or the API does not answer — leaving a commitment device that
+trusts a single exchange endpoint, which is the opposite of what it claims to
+be.
 
 Checklist, quoted from the prize page:
 

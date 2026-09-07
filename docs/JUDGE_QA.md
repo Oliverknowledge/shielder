@@ -30,8 +30,11 @@ adding a new destination to a funded vault is a delayed change; raising a
 limit is a delayed change that any tightening in between invalidates; leaving
 is a proposal at the user's own exit delay. 41 Foundry tests run those
 attacks against the deployed logic. Outside the vault, of course they can:
-money that never entered Shield is not protected, and the app says so on the
-screen where it matters.
+money that never entered Shield is not protected. The app says so itself, in
+the connected-venue panel on Home, under the button that opens Hyperliquid:
+"Money you send here yourself never passes through Shield, and none of your
+rules apply to it." (`app/src/pages/Overview.tsx`.) The obvious bypass deserves
+to be answered by the product rather than by a document.
 
 One caveat we found while writing the threat model and did not paper over: a
 top-up proposal left pending for more than 24 hours, then cancelled, refunds
@@ -57,11 +60,28 @@ appeal to. The app never offers those values. We would rather tell you than
 have you find it.
 
 **How do you know they lost money?**
-We do not guess P&L. We measure the closed cycle: USDC released from the vault
-to the trading account, and USDC that comes back. A session that returns less
-than it received is a realised loss of the difference. Money still in the
-venue is shown as exposure, not loss. Narrow and true beats universal and
-guessed.
+There are two views of the same 24 hours, and only one of them can tell a loss
+from an open position.
+
+The flow view is the one Shield builds itself: USDC released from the vault to
+the trading account, USDC that comes back, and the shortfall booked as a loss.
+It cannot see the difference between capital that was lost and capital that is
+still deployed. A session that sent $100, got $30 back and still held $246 at
+the venue reads as a $70 loss while the account is up $5. That is not a
+hypothetical — it fired on the live testnet vault and blocked a winning
+account, which is the worst thing this product can do. Block someone once
+while they are winning and they will never trust the rule again.
+
+So where the venue answers, the venue decides. Hyperliquid settles its own
+trades and knows what is closed, so its realised PnL is the number the rule
+reads, taken from its public info API and never inferred from HyperEVM. The
+flow view is the fallback: for when the venue does not answer, and for a
+destination with no API at all, where over-counting exposure as loss is at
+least the safe direction to be wrong in. The switch is one line in
+`server/policy.ts` — `const venueDecides = !!venue` — and it changes the
+wording on the screen too: with the venue answering, a session line reads
+"$70 still at the venue", not "$70 lost", because saying "lost" would
+contradict the number printed above it.
 
 **What if the data source is wrong?**
 Then the worst that happens is a top-up pause of the user's own chosen length,
@@ -70,8 +90,92 @@ cannot move money, loosen a rule, block a cold transfer, block an exit, or
 invalidate the user's own pending proposals. The evidence hash is on-chain, so
 a wrong verdict is provably wrong after the fact.
 
+**Why would anyone voluntarily constrain themselves?**
+This is the hardest question about the product, and the answer is a screen
+rather than an argument. Step 0 of setup asks for the Hyperliquid account the
+user trades from and reads its public history before proposing a single rule —
+ledger updates and fills from Hyperliquid's info API, no credentials
+(`server/hyperliquid.ts`). It groups that history into sessions (activity
+separated by six hours of quiet), takes realised PnL from the venue's own
+`closedPnl` minus fees, and shows the user four numbers about themselves:
+how many sessions they have had, their typical session size (the median of
+what they deployed), their largest losing session, and how many sessions
+included a reload made while already down.
+
+Above those numbers is one sentence generated from the same data, of the form
+"3 of your 4 largest losing sessions involved another reload." Nobody has to
+be persuaded that the reload after a loss is their problem; they are shown
+their own count of it, before they are asked to commit to anything.
+
+Then the rules are proposed from those numbers rather than from a template
+(`app/src/pages/Setup.tsx`): the median session size becomes the suggested
+bankroll, and the loss trigger, the daily limit, the pause length and the
+large-move threshold are all derived from it and from which patterns the
+history actually shows. The user changes any of them. An account with no
+history is fine — it says so, and the rules start from defaults.
+
+**Why these delays, and does any of this work?**
+The shape is not invented. Asymmetric commitment — instant to tighten, delayed
+to loosen — is the near-universal design in gambling regulation, which is the
+one field that has run this experiment at national scale. Marionneau, Luoma,
+Turowski & Hayer (2025), *Harm Reduction Journal* 22(1):15,
+doi:10.1186/s12954-024-01150-3, reviewing 30 European countries: "In all
+countries, lowering personal pre-commitment limits took place immediately or
+as soon as possible, but raising limits involved waiting times of different
+durations, ranging from 24 h to seven days."
+
+The UK specifies Shield's exact mechanism, reconfirmation included. Gambling
+Commission RTS 12D requires that a limit increase take effect "only after a
+cooling-off period of at least 24 hours has elapsed and only once the customer
+has taken positive action at the end of the cooling off period to confirm
+their request", while "customer-led reductions to limits must be implemented
+immediately". Shield's 24-hour hold plus its "still want to?" reconfirmation
+is that, written in Solidity instead of in an operator's terms. Other
+jurisdictions chose other lengths: Sweden 72 hours, and not before the current
+week or month has expired (Spelförordning 2018:1475, 11 kap.); Australia seven
+days (COAG Decision RIS 2018); Ontario 24 hours (AGCO Registrar's Standards
+2.24). Shield's defaults — 24 hours to loosen, seven days to leave — sit
+inside that range.
+
+The exit cost is time and never money, deliberately. John (2020), *Management
+Science* 66(2):503–529, doi:10.1287/mnsc.2018.3236, ran a field experiment in
+which people designed their own commitment contracts backed by financial
+penalties: "55% of clients default and incur monetary losses". A delay costs an
+over-committed user nothing but patience; a forfeit transfers money away from
+the person who is already in trouble. Shield has no penalty, no forfeit and no
+fee for changing your mind — only a wait. And when the harder option is
+offered, people take it: Beshears, Choi, Harris, Laibson, Madrian & Sakong,
+NBER w21474 / *Journal of Public Economics* 183:104144, found that when
+accounts paid the same interest, "the most illiquid commitment account attracts
+more money than any of the other commitment accounts."
+
+The caveat belongs in the same breath, so here it is. Limit-setting has weak
+evidence of changing outcomes. Ivanova, Magnusson & Carlbring (2019),
+*Frontiers in Psychology* 10:639, doi:10.3389/fpsyg.2019.00639, an RCT with
+N=4,328, found that prompting people to set a deposit limit raised take-up
+from 6.5% to 45% but "did not affect subsequent net loss". In the same trial,
+30–40% of limit-setters later raised or removed their limits, and those who
+did lost more. So the honest claim is narrow: Shield's *shape* matches what
+regulators converged on and what the commitment-device literature supports.
+Nobody has shown that Shield changes anyone's outcome, and the largest trial
+of the weaker version of this idea showed no effect on losses. What that trial
+does support is where Shield puts its weight — loosening is the behaviour that
+preceded the bigger losses, so loosening is the path that should be slow, and
+in Shield it is the only path that is.
+
+One more finding shaped the tone rather than the mechanism. Riley, Oakes &
+Lawn (2024), *IJERPH* 21(8):998, report that uptake of these tools is low
+partly because "users view them as tools for individuals already experiencing
+gambling harm as opposed to protective tools for all users." Shield is a
+financial control layer for a trader, not a health product and not a
+diagnosis; the regulatory parallel above is about mechanism, not category. The
+app says the same thing on the screen where it would be easiest to get wrong:
+"Nothing here is a diagnosis; it's what you already know about yourself when
+you're calm."
+
 **Isn't this gambling-enabling software?**
-It is harm reduction for people who are already trading. There is no order
+It is a control layer for people who are already trading, and it adds no
+capability to trade with. There is no order
 entry, no market list and no leverage control in the app — the primary action
 on Home is "Open Hyperliquid". Shield never encourages a trade; it removes the
 reload after a loss, which is the specific behaviour that turns a bad day into
@@ -130,22 +234,41 @@ loosening path — which is not cooldown-gated — in as little as an hour.
 
 ## The stack
 
-**Why Hyperliquid, and why can't Hyperliquid do this itself?**
-Because that is where the user trades, and because the venue structurally
-cannot offer it. Hyperliquid's agent (API) wallets can only sign orders; every
-value-moving action needs the master key, and a user cannot bind their own
-master key. So the boundary has to sit outside the venue, in a vault the
-master key controls but cannot override. HyperEVM is where that vault can live
-and still deliver into the venue in the same transaction: the vault calls
-Circle's `CoreDepositWallet.depositFor`, so "add capital to my trading
+**Why Hyperliquid, and why does the vault sit outside the venue?**
+Because that is where the user already trades, and HyperEVM is where a vault
+can live and still deliver into the venue in the same transaction: the vault
+calls Circle's `CoreDepositWallet.depositFor`, so "add capital to my trading
 account" is precisely the action the rules govern, with no bridge and no
-withdrawal step in between.
+withdrawal step in between. The boundary has to sit outside the venue for a
+different reason, below.
 
 Verified on chain: the Privy embedded wallet released $5.00 from its vault
 straight into a HyperCore perps account in one transaction
 (`0x94960d1f…`, block 63581864) — USDC approval and transfer, vault →
 CoreDepositWallet → the HyperCore system address, a HyperCore credit, and
 `TopUpExecuted(amount=$5, instant=true, route=1)`.
+
+**What stops Hyperliquid, or your wallet, from just building this?**
+Nothing. Any venue or wallet could ship it in a week — a sub-account and an
+`unlockAfter` timestamp is a sprint of work, and we would not argue otherwise.
+The reason none of them can build it *credibly* is not technical.
+
+A venue that holds a customer's money against that customer's stated wish owns
+a liability. It therefore has to build an appeals path: a support queue, an
+override, an exception for the good customer who is very sure this time. Every
+self-exclusion scheme ever shipped by an operator also shipped a way to lift
+it. An appeals path is exactly what defeats a commitment device — the device
+works only because the answer is no, and an operator that can say yes will
+eventually be asked to.
+
+Shield's advantage is that there is nobody to ask. No owner, no admin, no
+support queue, no account manager, no relationship to trade on. The contract
+is immutable and every path derives its subject from `msg.sender`, so there is
+no address anywhere that can grant an exception — including ours. A venue
+cannot offer that, and neither can a wallet vendor, because both of them
+answer to you. That is also why the rules are in Solidity rather than in a
+vendor's policy engine: calm-you sets policy for tilted-you, and a policy a
+vendor can change on request is not a policy tilted-you has to live with.
 
 **What does Privy do, and what does it not enforce?**
 Privy is sign-in and the key. The embedded wallet is created by Privy on
@@ -223,11 +346,11 @@ is a real reduction in their chargeback and regulatory exposure. Neither is
 tested — this is a hackathon build with no users.
 
 **Who is the first user?**
-An active Hyperliquid trader who already knows their loss pattern is the
-reload after a losing session, and who has a number in mind for how much of
-their capital should never be in the venue. They keep trading exactly as fast
-as they like inside that number. The thing they give up is the ability to
-refill on tilt.
+An active Hyperliquid trader whose own fill history shows the pattern: a
+losing session, then another deposit within the hour. Setup shows them their
+own count of it before it proposes anything. They keep trading exactly as fast
+as they like inside the number they choose. The thing they give up is the
+ability to refill on tilt.
 
 ## What is not built
 

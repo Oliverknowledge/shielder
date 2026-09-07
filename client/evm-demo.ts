@@ -81,7 +81,7 @@ async function topUp(usd: number) {
 
 /** The mock CoreDepositWallet only exists on Anvil: on a real network the loss is real. */
 function requireMockCore(cmd: string): Address {
-  if (!state.coreDeposit) throw new Error(`\`${cmd}\` simulates a HyperCore settlement through the mock deposit wallet, which only exists on Anvil.\nOn ${network} the loss is real: trade the venue account down, then send USDC back to the vault from it.`);
+  if (!state.coreDeposit) throw new Error(`\`${cmd}\` simulates a HyperCore settlement through the mock deposit wallet, which only exists on Anvil.\nOn ${network} the loss is real: trade the venue account down, then send what is left back with deposit(authority, amount) from the venue wallet.\nA raw ERC-20 transfer into the vault contract is never credited to any vault and cannot be recovered.`);
   return state.coreDeposit;
 }
 

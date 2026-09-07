@@ -310,14 +310,14 @@ function Final() {
           </h2>
           <Link to="/welcome" className="btn btn-lg">Open Shield</Link>
           <p className="l-lead" style={{ margin: "26px auto 0", maxWidth: "44ch", fontSize: 15 }}>
-            Self-custodial. Enforced by an immutable on-chain contract. Its memory is a Substreams package on The Graph. Its loss verdicts are signed inside a Chainlink confidential enclave that can only ever make you safer.
+            Self-custodial. Enforced by an immutable on-chain contract. Its behavioural memory is a Substreams package composed on The Graph: it streams live from a Graph Market provider, and returns nothing until the vault is on HyperEVM mainnet, so on testnet Shield indexes the same flows itself and says so on screen. Its loss verdicts come from a Chainlink CRE workflow that signs inside a TEE handler, and a verdict can only ever make you safer.
           </p>
         </div>
       </section>
       <footer className="l-wrap l-foot">
         <span>Shield · built for ETHGlobal ETHOnline 2026</span>
         <span>
-          <a href="https://github.com/Oliverknowledge/shiedler" target="_blank" rel="noreferrer">Source</a>
+          <a href="https://github.com/Oliverknowledge/shielder" target="_blank" rel="noreferrer">Source</a>
         </span>
       </footer>
     </>

@@ -118,4 +118,58 @@ contract KnownDefectsTest is Test {
         assertEq(v.fullExitCooldownSecs, forever, "BUG: accepted an unreachable exit delay");
         assertEq(v.loosenCooldownSecs, forever, "BUG: and the path back is just as far away");
     }
+
+    /**
+     * DEFECT 3 — an idle day refunds the whole 24h limit, in a single block.
+     *
+     * `_rollBuckets` clamps `elapsed` to NUM_VELOCITY_BUCKETS before using it to
+     * advance `bucketStart`, and never advances `currentBucketIndex` in that
+     * branch. So after an idle gap of N days, `bucketStart` catches up only 24
+     * hours per call, every call re-enters the long-idle branch, and every call
+     * zeroes all six buckets again — with no time passing in between.
+     *
+     * This one costs nothing to reach and needs no setup: it is the user coming
+     * back after a quiet week, which is exactly who the product is for. It also
+     * makes the disclosed bound on defect 1 ("about twice the daily limit")
+     * wrong, because the two compose.
+     */
+    function test_defect_anIdleGapRefundsTheDailyLimitOncePerDay() public {
+        // A vault with room to move, so the protected floor does not mask the
+        // limit defect. The floor is the real backstop here and it holds — this
+        // defect defeats the 24h limit, not the floor.
+        address bob = address(0xB0B);
+        usdc.mint(bob, 100_000 * USD);
+        vm.startPrank(bob);
+        vault.initializeVault(
+            ShieldVault.InitParams({
+                riskVerifier: address(0),
+                protectedFloor: 1_000 * USD,
+                topUpThresholdBps: 10_000,
+                emergencyCap: 200 * USD,
+                velocityThreshold: 1_000 * USD,
+                lossTriggerUsdc: 1_000 * USD,
+                lossCooldownSecs: 18 hours
+            })
+        );
+        vault.registerOwner(venue, 0, 1, bytes24("Venue"));
+        usdc.approve(address(vault), type(uint256).max);
+        vault.deposit(bob, 20_000 * USD);
+
+        vault.instantTopUp(venue, 1_000 * USD); // the day's limit, spent
+        assertEq(vault.velocityNow(bob), 1_000 * USD, "spent");
+
+        // Come back after a quiet week. Time does not advance again from here.
+        vm.warp(GENESIS + 7 days);
+        uint64 released = 0;
+        for (uint256 i = 0; i < 6; i++) {
+            vault.instantTopUp(venue, 1_000 * USD);
+            released += 1_000 * USD;
+        }
+        vm.stopPrank();
+
+        emit log_named_uint("stated 24h limit, USD", 1_000);
+        emit log_named_uint("released in ONE block after the gap, USD", released / USD);
+        emit log_named_uint("velocityNow reports, USD", vault.velocityNow(bob) / USD);
+        assertGt(released, 2_000 * USD, "BUG: far more than the daily limit, with no waiting");
+    }
 }

@@ -2,7 +2,7 @@ specVersion: v0.1.0
 package:
   name: shield_behavioral_memory
   version: v0.2.0
-  url: https://github.com/Oliverknowledge/shiedler
+  url: https://github.com/Oliverknowledge/shielder
   description: Shield vault program (Solana) — typed instruction/event decoding, capital-flow classification across the vault boundary, and per-vault behavioural totals.
 
 network: solana-devnet

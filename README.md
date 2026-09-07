@@ -10,8 +10,18 @@ is strict about.
 **Live on HyperEVM testnet, chain id 998.** `ShieldVault.sol` is deployed at
 `0xcdB6d631A00857584e70a21d800f51C5776302Fe` in tx
 `0x67ffb6531f406758758adb98fb81008f1888e6793b9a39fb79bde9ee6df66ebc`
-(block 63561837). It is immutable — no owner, no proxy, no upgrade path — and
-holds 696.5 test USDC across four vaults today.
+(block 63561837). It is immutable — no owner, no proxy, no upgrade path. Its
+USDC balance today is 696.5 test USDC:
+
+```bash
+cast call 0x2B3370eE501B4a559b57D449569354196457D8Ab "balanceOf(address)(uint256)" \
+  0xcdB6d631A00857584e70a21d800f51C5776302Fe --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
+```
+
+Four vaults exist on it, holding $600, $45, $21 and $0. That is $666, not
+$696.50: `deposit` is the only path that credits a vault
+(`ShieldVault.sol:333`), so USDC sent to the contract address directly belongs
+to no vault and can never be released.
 
 No public block explorer indexes HyperEVM testnet, so every hash in this file
 is checked with `cast tx <hash> --rpc-url https://rpc.hyperliquid-testnet.xyz/evm`.
@@ -25,6 +35,34 @@ the control layer around the capital they decided to keep out of that account:
 it holds the protected balance, releases bankroll under rules set while calm,
 and shows the venue's own account data next to it (read from Hyperliquid's
 info API, never inferred from HyperEVM).
+
+**The rules come from the user's own numbers.** Setup step 0 asks for the
+Hyperliquid account they trade from and reads its public history before
+proposing anything — ledger updates and fills from the info API, no
+credentials (`server/hyperliquid.ts`). It groups that into sessions, takes
+realised PnL from the venue's own `closedPnl` minus fees, and shows four
+figures about the person looking at the screen: sessions, typical session size
+(the median of what they deployed), largest losing session, and how many
+sessions included a reload made while already down. Above them sits one
+sentence generated from the same data, of the form "3 of your 4 largest losing
+sessions involved another reload." The median session size becomes the
+suggested bankroll, and the daily limit, loss trigger, pause length and
+large-move threshold follow from it rather than from a template
+(`app/src/pages/Setup.tsx`); the user changes any of them, and an account with
+no history says so and starts from defaults.
+
+**Why this is not a venue feature.** Any venue or wallet could build it in a
+week. None of them can build it credibly: a venue that holds a customer's
+money against that customer's stated wish owns a liability, so it has to build
+an appeals path, and an appeals path is exactly what defeats a commitment
+device. Shield's advantage is not technical — there is nobody to ask. No
+owner, no admin, no support queue. The rules are enforced in Solidity for the
+same reason they are not enforced in any vendor's policy engine: calm-you sets
+policy for tilted-you, and a policy the vendor can change on request is not a
+policy tilted-you has to live with. The asymmetric shape — instant to tighten,
+delayed to loosen, confirm again at the end of the wait — is the design
+gambling regulators converged on; the citations and the honest caveat are in
+`docs/JUDGE_QA.md`.
 
 Built for ETHGlobal ETHOnline 2026, Start Fresh pool. Sponsors: **Chainlink
 CRE** (a confidential workflow that signs loss verdicts inside a TEE),
@@ -175,6 +213,8 @@ plainly that it is not done.
 | The EVM server indexes logs, derives behaviour, signs and relays EIP-712 verdicts | **Verified on Anvil** (verdict relayed, cooldown armed, next top-up refused by the contract) and **on chain 998** (the CRE verdict above was relayed by this server) |
 | A monitor verdict can only ever hurt a little | **Verified in Solidity** (`ShieldVault.sol:536-558`, tested at `ShieldVault.t.sol:259-261`): a verdict carries no duration, floor, limit or destination; `cooldownUntil` only moves forward; the user's own `lossTriggerUsdc` is the floor below which a verdict is rejected; cold transfers and full exit are never gated by it; the worst case is bounded by `MAX_LOSS_COOLDOWN_SECS = 30 days` |
 | Live Hyperliquid account data | Equity, positions, fills and session PnL are read from Hyperliquid's own info API for the registered account. Shield has no order entry |
+| The loss rule reads the venue's settled PnL where the venue answers | **Verified in `server/policy.ts`.** `venueDecides` selects Hyperliquid's realised PnL over the indexed flow view, because the flow view cannot tell capital that was lost from capital still deployed — it once booked a $70 loss on an account that was up $5. The flow view is the fallback for an unreachable API or a destination with no API |
+| Setup proposes rules from the user's own Hyperliquid history | **Verified in `server/hyperliquid.ts` and `app/src/pages/Setup.tsx`.** Sessions, median session size, largest losing session and reload-after-loss counts are read from the public info API with no credentials, shown to the user, and used to derive the proposed bankroll, daily limit, loss trigger, pause length and large-move threshold |
 | AI is part of the shipped product | **No.** There is none. `docs/AI_USAGE.md` is about AI writing this repository, which is a different thing |
 | Privy policies, quorums, session signers, Cards, `useFundWallet` | **Not used.** The B2B track is not claimed |
 | Chainlink Continuity track | **Not claimed.** Shield is net-new, so there is no existing project to improve |
@@ -283,6 +323,10 @@ bun run cre/shield-risk/dryrun.ts --evm --no-deliver   # drop the flag to relay 
   still works.
 - The monitor — server or enclave — can only extend a cooldown, for the length
   the user set, when the loss it attests meets the user's own trigger.
+- The loss it attests has two possible sources, and `server/policy.ts` decides
+  between them: where Hyperliquid's API answers, its settled PnL is the number,
+  because the indexed flow view cannot separate money lost from money still
+  deployed. The flow view is the fallback where there is no venue to ask.
 
 ---
 

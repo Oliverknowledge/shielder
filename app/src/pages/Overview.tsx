@@ -153,7 +153,7 @@ export function Overview() {
           <div className="split-side">
             <div className="k">{balance > vault.protectedFloor ? "In the vault" : "Protected"}</div>
             <div className="v">{usd(balance)}</div>
-            <div className="s">{balance === 0n ? <>Nothing deposited yet · floor {usd(vault.protectedFloor)}</> : balance <= vault.protectedFloor ? <>All of it is at or below your {usd(vault.protectedFloor)} floor.</> : <>{usd(vault.protectedFloor)} of it can never be released.</>}</div>
+            <div className="s">{balance === 0n ? <>Nothing deposited yet · floor {usd(vault.protectedFloor)}</> : balance <= vault.protectedFloor ? <>All of it is at or below your {usd(vault.protectedFloor)} floor.</> : <>{usd(vault.protectedFloor)} of it can never be released to trading.</>}</div>
           </div>
           <div className="split-mid" aria-hidden>
             <span className="bar" />

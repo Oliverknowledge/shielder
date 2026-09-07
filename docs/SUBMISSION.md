@@ -36,17 +36,64 @@ and positively confirm it afterwards. Any tightening in the meantime bumps
 
 ## Who it is for
 
-A 19-year-old who trades perps on their phone. They are not going to lose their
-money to a hack; they are going to lose it in the ten minutes after a red
-session, sending one more deposit to win it back. Every wallet ever built will
-sign that deposit. Nothing in the stack asks whether the person who set out the
+A trader whose own fill history shows the pattern: a losing session, then
+another deposit within the hour. They are not going to lose their money to a
+hack; they are going to lose it in the ten minutes after a red session,
+sending one more deposit to win it back. Every wallet ever built will sign
+that deposit. Nothing in the stack asks whether the person who set out the
 week's plan would have. Shield is the thing that asks — not with a modal that a
 tilted person clicks through, but with a contract that will not execute the
 transfer until tomorrow.
 
+We do not have to argue that this is the pattern, because setup shows the user
+their own copy of it. Step 0 asks for the Hyperliquid account they trade from
+and reads its public history before proposing a single rule — ledger updates
+and fills from Hyperliquid's info API, no credentials (`server/hyperliquid.ts`).
+It groups the history into sessions, takes realised PnL from the venue's own
+`closedPnl` minus fees, and puts four of the user's own numbers on the screen:
+sessions, typical session size (the median of what they deployed), largest
+losing session, and how many sessions included a reload made while already
+down. Above them is one sentence generated from the same data, of the form
+"3 of your 4 largest losing sessions involved another reload." The rules are
+then proposed from those numbers rather than from a template
+(`app/src/pages/Setup.tsx`): the median session size becomes the suggested
+bankroll, and the loss trigger, the daily limit, the pause length and the
+large-move threshold follow from it and from what the history actually shows.
+The user can change any of them, and an account with no history says so and
+starts from defaults.
+
 When a top-up is refused, it is the chain refusing, not the app: the
 transaction reverts with `CooldownActive`, `ProtectedFloorBreached` or
 `VelocityThresholdExceeded`, and anyone can read that.
+
+## Why this cannot be a venue feature
+
+Any venue or wallet could build this in a week. A sub-account and an
+`unlockAfter` timestamp is a sprint of work, and we would not claim otherwise.
+None of them can build it credibly, and the reason is not technical.
+
+A venue that holds a customer's money against that customer's stated wish owns
+a liability, and therefore has to build an appeals path: a support queue, an
+override, an exception for the good customer. Every self-exclusion scheme ever
+shipped by an operator also shipped a way to lift it — and an appeals path is
+exactly what defeats a commitment device, because the device works only while
+the answer is no. Shield's advantage is that there is nobody to ask: no owner,
+no admin, no support queue, and no address anywhere that can grant an
+exception, including ours. Neither a venue nor a wallet vendor can offer that,
+because both of them answer to you.
+
+That is why the rules are enforced in Solidity rather than in any vendor's
+policy engine, Privy's included: **calm-you sets policy for tilted-you, and a
+policy the vendor can change on request is not a policy tilted-you has to live
+with.**
+
+The shape of those rules is not invented either. Instant to tighten, delayed
+to loosen, with a positive reconfirmation at the end of the delay, is what
+gambling regulators across 30 European countries converged on, and it is
+specified almost word for word by UK Gambling Commission RTS 12D. The
+literature behind that choice — and the honest caveat that limit-setting has
+weak evidence of changing outcomes — is set out with citations in
+`docs/JUDGE_QA.md` ("Why these delays, and does any of this work?").
 
 ## What the contract actually enforces
 
@@ -92,9 +139,9 @@ Shield does **not** enter:
   nothing for the integration to have improved. Not claimable, not claimed.
 - **Privy — Best B2B Financial Product ($2,500):** that track needs Privy's
   control primitives (policies, quorums, session signers) and a B2B use case.
-  Shield uses none of them and is consumer-facing. The "calm-you sets policy
-  for tilted-you" framing is enforced in Solidity, not in Privy policy, so
-  claiming this track would be false.
+  Shield uses none of them and is consumer-facing. As set out above, the
+  "calm-you sets policy for tilted-you" framing is enforced in Solidity by
+  design, not in Privy policy, so claiming this track would be false.
 - **The Graph — AI tracks ($5,000 each):** there is no AI in the shipped
   product. `docs/AI_USAGE.md` describes AI writing the repository, which is a
   different thing and not a basis for the track.
@@ -258,7 +305,8 @@ scanner. `ethereum-common`'s block index does the address filtering, so our
 package only contains the part that is actually Shield's: decoding
 `TopUpExecuted` / `RiskVerdictApplied` / policy events into typed protobuf,
 detecting USDC coming *back* from the venue, and classifying every flow across
-the vault boundary into the totals the loss rule reads. The same pipeline shape —
+the vault boundary into the totals the Behaviour screen renders and the loss
+rule falls back on. The same pipeline shape —
 typed decoding, registry store, flows, totals, profiles — is also what the
 Solana implementation in `substreams/` exposes (it adds instruction decoding,
 seven modules in total), and both packages emit `map_vault_flows`. One config
@@ -339,11 +387,15 @@ Shield is a self-custodial commitment vault on HyperEVM: calm-you sets the rules
 # PASTE — short description
 
 ```
-Young traders do not lose their money to hacks. They lose it in the ten minutes after a red session, sending one more deposit to win it back. Every wallet will sign that deposit; nothing asks whether the person who made the week's plan would have.
+Traders do not lose their money to hacks. They lose it in the ten minutes after a red session, sending one more deposit to win it back. Every wallet will sign that deposit; nothing asks whether the person who made the week's plan would have.
 
-Shield is a self-custodial commitment vault deployed at 0xcdB6d631A00857584e70a21d800f51C5776302Fe on HyperEVM testnet (chain id 998), with no owner, no proxy and no upgrade path. It is not a trading venue and does not replace Hyperliquid: you trade on Hyperliquid exactly as you do now, and Shield holds the capital behind the account, releasing it under rules you wrote while calm — a protected floor, a rolling 24-hour limit that splitting cannot defeat, a pause on large moves, and a loss rule fed by what actually came back from the venue.
+Shield does not have to argue that this is the pattern. Setup reads your real Hyperliquid history before it proposes a single rule and shows you your own numbers — how many sessions you have had, your typical session size, your largest losing session, and how many sessions included a reload made while you were already down — with one sentence generated from the same data: "3 of your 4 largest losing sessions involved another reload." Your rules are then proposed from those numbers, not from a template.
 
-The asymmetry is the whole product. Moving toward safety is instant: lower a limit, raise the floor, pause yourself, and it takes effect in that block. Expanding risk waits 24 hours and has to be confirmed again afterwards, and any tightening in between cancels it. Leaving Shield entirely waits 7 days. Emergency transfers to your own cold wallet, up to a cap you set yourself, are never blocked by a cooldown or by the risk monitor.
+Shield is a self-custodial commitment vault deployed at 0xcdB6d631A00857584e70a21d800f51C5776302Fe on HyperEVM testnet (chain id 998), with no owner, no proxy and no upgrade path. It is not a trading venue and does not replace Hyperliquid: you trade on Hyperliquid exactly as you do now, and Shield holds the capital behind the account, releasing it under rules you wrote while calm — a protected floor, a rolling 24-hour limit that splitting cannot defeat, a pause on large moves, and a loss rule that reads the venue's own settled PnL where the venue answers, and what came back from it where it does not.
+
+The asymmetry is the whole product. Moving toward safety is instant: lower a limit, raise the floor, pause yourself, and it takes effect in that block. Expanding risk waits 24 hours and has to be confirmed again afterwards, and any tightening in between cancels it. Leaving Shield entirely waits 7 days. Emergency transfers to your own cold wallet, up to a cap you set yourself, are never blocked by a cooldown or by the risk monitor. That shape is not invented: instant to tighten, delayed to loosen, with a confirmation at the end of the wait, is what gambling regulators across 30 European countries converged on, and is specified almost word for word by UK Gambling Commission RTS 12D.
+
+Any venue or wallet could build this in a week. None of them can build it credibly, because a venue that holds your money against your own stated wish owns a liability, and so has to build an appeals path — and an appeals path is exactly what defeats a commitment device. Shield's advantage is not technical: there is nobody to ask. No owner, no admin, no support queue. Neither a venue nor a wallet vendor can offer that, because both of them answer to you.
 
 You sign in with an email through Privy, and the embedded wallet it creates is the vault's only authority — the contract reverts for every other address. When a top-up is refused it is the chain refusing, not the app: the transaction reverts with CooldownActive or ProtectedFloorBreached, and anyone can read it.
 ```
@@ -357,9 +409,9 @@ Privy (Best Financial Flow). The embedded wallet is the vault authority, not a l
 
 Chainlink CRE (Best Confidential Workflow). handlerInTee from @chainlink/cre-sdk is registered at cre/shield-risk/main.ts:88 with [{ tee: "nitro", regions: ["us-west-2"] }], and the whole risk evaluation runs inside it. The sensitive input is the verifier private key, read in-enclave with runtime.getSecret (cre/shield-risk/evaluate.ts:89, mapped in cre/secrets.yaml) and used to produce an EIP-712 signature; the key never leaves the enclave. We do not claim the capital flows are confidential — they are on-chain data fetched over plain HTTP. Simulated with the CRE CLI and reproduced; the verbatim transcript is docs/evidence/cre-simulate.txt, showing "AWS Nitro in us-west-2", the in-enclave evaluation (realised loss $3.50 against a $3.00 trigger) and "Simulation complete!". On chain, the same evaluation path signed verdict #1 and the deployed contract accepted it: 0x2e411cea49a5c8edff69dddb7376aca1b5c2eee9f92be1fcb12f78733676bb35, block 63584417, RiskVerdictApplied(nonce=1, reasonCode=1, realizedLossUsdc=3500000, extended=true). The verdict is deliberately weak by design (ShieldVault.sol:536-558): it carries no duration, floor, limit or destination; cooldownUntil only moves forward; a verdict below the user's own lossTriggerUsdc is rejected; nonces cannot be replayed; cold transfers and full exit are never gated by it; worst case is bounded by MAX_LOSS_COOLDOWN_SECS = 30 days. The enclave supplies a number, the user's own rule supplies the consequence.
 
-The Graph (Composable / Standardized Products). substreams-evm/ builds shield-evm-behavioral-memory-v0.1.0.spkg, committed to the repo: five modules (map_shield_events, store_vault_registry, map_vault_flows, store_flow_totals, map_behavioral_profiles) composed on The Graph's foundational ethereum-common@v0.3.3, whose index_events module is the declared blockFilter for both maps, keyed on the vault and native USDC. That is the standards leverage: we never wrote a log scanner, so the package contains only Shield's own part — typed event decoding, detection of USDC returning from the venue, and flow classification across the vault boundary into the totals the loss rule reads. The same pipeline shape is what the Solana implementation in substreams/ exposes (seven modules there, with instruction decoding added), and both packages emit map_vault_flows: one config resolves either stack (server/substreams-config.ts), one consumer streams it (server/substreams-source.ts), and server/behaviour.ts, server/policy.ts and the CRE workflow read the result unchanged. Live consumption is proven in docs/evidence/substreams-live.txt: the full stateful pipeline streamed from hyperevm.substreams.pinax.network:443, a provider on The Graph Market, 620 blocks processed, "Completed successfully". Honest limitation, stated up front: that run emits no rows, because The Graph indexes HyperEVM mainnet (999) only — there is no testnet entry in the networks registry — and the vault is on testnet (998). The server therefore runs on the labelled RPC fallback (server/rpc-source.ts) with identical classification, and /api/health says so: substreamsAvailable: "no: The Graph indexes HyperEVM mainnet only". Deploying the same immutable contract to HyperEVM mainnet turns those zero rows into data; nothing else in the pipeline changes.
+The Graph (Composable / Standardized Products). substreams-evm/ builds shield-evm-behavioral-memory-v0.1.0.spkg, committed to the repo: five modules (map_shield_events, store_vault_registry, map_vault_flows, store_flow_totals, map_behavioral_profiles) composed on The Graph's foundational ethereum-common@v0.3.3, whose index_events module is the declared blockFilter for both maps, keyed on the vault and native USDC. That is the standards leverage: we never wrote a log scanner, so the package contains only Shield's own part — typed event decoding, detection of USDC returning from the venue, and flow classification across the vault boundary into the totals the Behaviour screen renders and the loss rule falls back on when there is no venue API to ask. The same pipeline shape is what the Solana implementation in substreams/ exposes (seven modules there, with instruction decoding added), and both packages emit map_vault_flows: one config resolves either stack (server/substreams-config.ts), one consumer streams it (server/substreams-source.ts), and server/behaviour.ts, server/policy.ts and the CRE workflow read the result unchanged. Live consumption is proven in docs/evidence/substreams-live.txt: the full stateful pipeline streamed from hyperevm.substreams.pinax.network:443, a provider on The Graph Market, 620 blocks processed, "Completed successfully". Honest limitation, stated up front: that run emits no rows, because The Graph indexes HyperEVM mainnet (999) only — there is no testnet entry in the networks registry — and the vault is on testnet (998). The server therefore runs on the labelled RPC fallback (server/rpc-source.ts) with identical classification, and /api/health says so: substreamsAvailable: "no: The Graph indexes HyperEVM mainnet only". Deploying the same immutable contract to HyperEVM mainnet turns those zero rows into data; nothing else in the pipeline changes.
 
-Rest of the stack. Server: Bun — indexer (Substreams or the labelled RPC fallback), behaviour engine (sessions, realised loss, loss streaks, reload-after-loss), policy, EIP-712 verdict relayer, JSON API. App: React + Vite — Welcome, Setup, Overview, Top-up (instant / scheduled / blocked, showing the on-chain rejection and a live countdown), Behaviour, Protection, Activity. Hyperliquid: read-only info API client (app/src/lib/hyperliquid.ts, server/hyperliquid.ts) for equity, positions, fills and session PnL; Shield has no order entry by design. There is no public explorer for HyperEVM testnet, so every claim above is verified with cast against https://rpc.hyperliquid-testnet.xyz/evm.
+Rest of the stack. Server: Bun — indexer (Substreams or the labelled RPC fallback), behaviour engine (sessions, realised loss, loss streaks, reload-after-loss), policy, EIP-712 verdict relayer, JSON API. Two views feed the loss rule and server/policy.ts says which one decides: where the venue's API answers, Hyperliquid's own settled PnL is the number (venueDecides), because the flow view cannot tell capital that was lost from capital still deployed; the flow view is the fallback for an unreachable API or a destination with no API at all. App: React + Vite — Welcome, Setup, Overview, Top-up (instant / scheduled / blocked, showing the on-chain rejection and a live countdown), Behaviour, Protection, Activity. Setup step 0 reads the user's real Hyperliquid history (server/hyperliquid.ts: ledger updates and fills, no credentials) and proposes every rule from their own numbers — median session size, largest losing session, sessions with a reload while already down. Hyperliquid: read-only info API client (app/src/lib/hyperliquid.ts, server/hyperliquid.ts) for equity, positions, fills and session PnL; Shield has no order entry by design. There is no public explorer for HyperEVM testnet, so every claim above is verified with cast against https://rpc.hyperliquid-testnet.xyz/evm.
 ```
 
 ---

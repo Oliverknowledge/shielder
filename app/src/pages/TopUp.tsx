@@ -177,7 +177,7 @@ export function AddFunds() {
             <BlockedReason reason={shown.reason} amount={shown.amount} />
             <YourRule reason={shown.reason} />
             <p className="title-l" style={{ marginTop: 18 }}>
-              {usd(vault.protectedFloor)} can never be released{balance > vault.protectedFloor ? <>, and the other {usd(balance - vault.protectedFloor)} is locked until then</> : null}.
+              {usd(vault.protectedFloor)} can never be released to trading{balance > vault.protectedFloor ? <>, and the other {usd(balance - vault.protectedFloor)} is locked until then</> : null}.
             </p>
             {shown.reason === "CooldownActive" && (
               <div style={{ marginTop: 18 }}>
@@ -332,7 +332,7 @@ function BlockedReason({ reason, amount }: { reason: ShieldErrorName | null; amo
   if (reason === "VelocityThresholdExceeded") {
     const velocity = rollingVelocity(vault, BigInt(now));
     if (velocity === 0n) return lead(<>Your daily reload is <b className="num">{usd(vault.velocityThreshold)}</b>. You asked for {usd(amount)}, which is more than that in one go.</>);
-    return lead(<>You've already released <b className="num">{usd(velocity)}</b> to trading in the last 24 hours. Your limit is {usd(vault.velocityThreshold)}, however it's split.</>);
+    return lead(<>You've already released <b className="num">{usd(velocity)}</b> to trading in the last 24 hours. Your limit is {usd(vault.velocityThreshold)} in a rolling 24 hours.</>);
   }
   if (reason === "ProtectedFloorBreached") {
     return lead(<>{usd(amount)} would take your treasury below the <b className="num">{usd(vault.protectedFloor)}</b> you chose to protect. Lowering the floor waits {hoursLabel(vault.loosenCooldownSecs)}.</>);
@@ -379,7 +379,7 @@ function YourRule({ reason }: { reason: ShieldErrorName | null }) {
       : reason === "CooldownActive"
         ? "When I pause funding, it ends by time and nothing else."
         : reason === "VelocityThresholdExceeded"
-          ? `Release at most ${usd(vault.velocityThreshold)} in any 24 hours, however I split it.`
+          ? `Release at most ${usd(vault.velocityThreshold)} in any 24 hours.`
           : reason === "ProtectedFloorBreached"
             ? `Never let the treasury go below ${usd(vault.protectedFloor)}.`
             : null;

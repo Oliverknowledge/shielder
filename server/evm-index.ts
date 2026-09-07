@@ -275,7 +275,16 @@ async function syncFlows(key: string, authority: Address, registry: RegistryView
     events.push({ name: l.eventName, data, signature: l.transactionHash, slot: Number(l.blockNumber), blockTime: t });
     const base = { slot: Number(l.blockNumber), signature: l.transactionHash, blockTime: t, vault: key };
     if (l.eventName === "Deposited") {
-      flows.push({ ...base, kind: "DEPOSIT", outbound: false, counterparty: String(args.depositor), amount: args.amount as bigint, counterpartyIsExecution: false });
+      // A raw ERC-20 transfer into the vault contract is never credited to any
+      // vault — `deposit()` is the only path that moves `v.balance`, and the
+      // contract is immutable with no sweep — so capital "returned" that way is
+      // stranded forever. The safe way for a trading wallet to send money back
+      // is therefore `deposit()`, and when it does, that is a return, not new
+      // capital. Recognising it here is what makes the safe path the one the
+      // loss rule can see.
+      const depositor = String(args.depositor).toLowerCase();
+      const isReturn = execution.has(depositor);
+      flows.push({ ...base, kind: isReturn ? "RETURN" : "DEPOSIT", outbound: false, counterparty: String(args.depositor), amount: args.amount as bigint, counterpartyIsExecution: isReturn });
     } else if (l.eventName === "TopUpExecuted") {
       flows.push({ ...base, kind: args.instant ? "TOP_UP_INSTANT" : "TOP_UP_GATED", outbound: true, counterparty: String(args.destinationOwner), amount: args.amount as bigint, counterpartyIsExecution: true });
     } else if (l.eventName === "ColdTransferExecuted") {
@@ -284,7 +293,30 @@ async function syncFlows(key: string, authority: Address, registry: RegistryView
       flows.push({ ...base, kind: "FULL_EXIT", outbound: true, counterparty: String(args.destinationOwner), amount: args.amount as bigint, counterpartyIsExecution: false });
     }
   }
-  // Returns: plain USDC transfers into the vault contract that are not deposits.
+  /**
+   * Returns: plain USDC transfers into the vault contract that are not deposits.
+   *
+   * A raw ERC-20 transfer carries no vault identity, and every vault shares one
+   * contract, so the only signal is who sent it. Crediting it to every vault
+   * that registered that sender books one $30 return three times — and worse,
+   * `registerOwner` needs no consent from the address being registered, so
+   * anyone could name a heavy trader's deposit address as their execution
+   * destination and have that trader's returns cancel their own realised losses,
+   * for free, forever.
+   *
+   * A return is therefore only credited against capital this vault actually has
+   * outstanding to that wallet, and never for more than that. A stranger who
+   * registers someone else's address has released nothing to it, so there is
+   * nothing for their return to cancel.
+   */
+  const outstanding = new Map<string, bigint>();
+  for (const f of [...store.vault(key).flows, ...flows]) {
+    if (!f.counterpartyIsExecution) continue;
+    const who = f.counterparty.toLowerCase();
+    const prior = outstanding.get(who) ?? 0n;
+    if (f.outbound) outstanding.set(who, prior + BigInt(f.amount));
+    else if (f.kind === "RETURN") outstanding.set(who, prior - BigInt(f.amount) > 0n ? prior - BigInt(f.amount) : 0n);
+  }
   const transfers = await cachedLogs("usdc", from, head, (a, b) => logClient.getLogs({ address: USDC, event: TRANSFER, args: { to: VAULT }, fromBlock: a, toBlock: b }));
   for (const tr of transfers) {
     if (depositTxs.has(tr.transactionHash)) continue;
@@ -293,8 +325,12 @@ async function syncFlows(key: string, authority: Address, registry: RegistryView
     // A transfer out of the contract in the same transaction means this was a
     // release being routed, not capital returning.
     if (mine.some((l) => l.transactionHash === tr.transactionHash && (l.eventName === "TopUpExecuted" || l.eventName === "ColdTransferExecuted" || l.eventName === "FullExitExecuted"))) continue;
+    const owed = outstanding.get(fromAddr) ?? 0n;
+    if (owed <= 0n) continue; // nothing outstanding to this wallet: not our money coming back
+    const amount = (tr.args.value as bigint) < owed ? (tr.args.value as bigint) : owed;
+    outstanding.set(fromAddr, owed - amount);
     const t = await blockTime(tr.blockNumber);
-    flows.push({ slot: Number(tr.blockNumber), signature: tr.transactionHash, blockTime: t, vault: key, kind: "RETURN", outbound: false, counterparty: getAddress(fromAddr), amount: tr.args.value as bigint, counterpartyIsExecution: true });
+    flows.push({ slot: Number(tr.blockNumber), signature: tr.transactionHash, blockTime: t, vault: key, kind: "RETURN", outbound: false, counterparty: getAddress(fromAddr), amount, counterpartyIsExecution: true });
   }
   if (flows.length) store.addFlows(key, flows);
   if (events.length) store.addEvents(key, events as never);
@@ -615,7 +651,17 @@ Bun.serve({
       const body = (await readJson(req)) as unknown as { verdict?: EvmVerdictJson; evidence?: unknown; headline?: string; lines?: string[] } & EvmVerdictJson;
       const v = body.verdict ?? body;
       if (!v?.vault || !v?.signature) return json({ error: "expected a signed verdict" }, 400);
-      if (body.evidence && v.evidenceHash) store.putEvidence(v.evidenceHash.replace(/^0x/, "").toLowerCase(), body.evidence as never);
+      // The vault stores this hash alongside the verdict, and the UI tells the
+      // user the chain vouches for the bundle behind it. That is only true if
+      // the bundle actually hashes to the committed value — this endpoint is
+      // unauthenticated, so without the check anyone could replace the evidence
+      // behind a real verdict with a fabricated one.
+      if (body.evidence && v.evidenceHash) {
+        const want = v.evidenceHash.replace(/^0x/, "").toLowerCase();
+        const got = Buffer.from(evidenceHashOf(body.evidence as never)).toString("hex");
+        if (got !== want) return json({ error: "evidence does not hash to evidenceHash" }, 400);
+        store.putEvidence(want, body.evidence as never);
+      }
       // 20s: well inside the enclave's HTTP deadline. Confirmation continues
       // in the background, and the caller gets the transaction hash either way.
       const record = await relayVerdict(v, "cre", body.headline ?? "Verdict relayed from the confidential workflow", body.lines ?? [], 20_000);
