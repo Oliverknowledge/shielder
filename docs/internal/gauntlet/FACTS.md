@@ -74,10 +74,10 @@ If a claim is not in this file, do not put it in a judge-facing document.
   `docs/AI_USAGE.md`, which is about AI writing the repo — a different thing entirely.
 
 ## Tests and toolchain
-- `cd contracts && forge test` → **41 passed**. Needs `forge install foundry-rs/forge-std --no-git` first.
-- `bun test tests/ server/` → **65 passed** — but only after `bun run build:program`, which needs the
-  Solana/Anchor toolchain (`cargo build-sbf`). On a cold clone without it, **45 of 65 fail** because
-  `target/deploy/shield_vault.so` is absent. The README must say so.
+- `cd contracts && forge test` → **44 passed** (41 invariants in ShieldVault.t.sol, 3 pinned defects in KnownDefects.t.sol). Needs `forge install foundry-rs/forge-std --no-git` first.
+- `bun test tests/ server/` → **66 passed** after `bun run build:program`. Without the Solana program
+  built the suite **skips rather than fails**: 20 pass, 46 skip, with a printed reason. That program is
+  v0; the shipped product is contracts/ShieldVault.sol.
 - `bun run typecheck` → clean. `bun run build:app` → clean.
 - `substreams build` needs the `substreams` CLI, `protoc` and the Rust `wasm32-unknown-unknown` target.
   None are listed in the README prerequisites today.
@@ -92,6 +92,21 @@ an EOA with 0 transactions; `app.hyperliquid-testnet.xyz/explorer/tx/<hash>` ren
 Do not link any of them. The verifiable form is:
 `cast tx <hash> --rpc-url https://rpc.hyperliquid-testnet.xyz/evm`
 On HyperEVM **mainnet**, `hyperevmscan.io` works — one more reason the mainnet deploy matters.
+
+## Contract defects, found by this gauntlet and pinned in contracts/test/KnownDefects.t.sol
+1. Cancelling a top-up proposal parked past 24h refunds into a bucket that is current again after a
+   full lap, erasing unrelated spend. Verified: $3,000 released against a $1,600 limit in one window.
+2. `tighten` places no upper bound on `loosenCooldownSecs` or `fullExitCooldownSecs`, so a user can
+   lock themselves out of their own exit. The app now caps what it will submit; a direct call cannot be.
+3. `_rollBuckets` clamps `elapsed` before advancing `bucketStart` and never advances
+   `currentBucketIndex`, so an idle gap refunds the whole daily limit once per idle day, in a single
+   block. Verified: **$6,000 released in one block against a stated $1,000 per 24 hours**, with
+   `velocityNow` reporting zero. The protected floor still bounds the total drain.
+
+Separately, and not a contract bug so much as a hazard: `deposit()` is the only path that credits a
+vault, so USDC sent to the contract by a raw transfer belongs to no vault and cannot be recovered.
+Measured on chain 998: contract holds $696.50, the four vaults account for $666.00, $30.50 stranded.
+The demo and the indexer now both use `deposit()`.
 
 ## Still open — human decisions, not doc claims
 1. The repository is **private**. All three sponsors require a public repo. Nothing else matters until this is done.

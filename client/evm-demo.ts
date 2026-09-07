@@ -96,7 +96,14 @@ async function ret(usd: number) {
   const { encodeFunctionData } = await import("viem");
   const amount = usdcToRaw(usd);
   await send(`venue account withdraws ${fmt(amount)} HyperCore → EVM`, KEYS.venue, core, encodeFunctionData({ abi: MOCK_CORE_DEPOSIT_ABI, functionName: "withdrawToEvm", args: [amount] }));
-  await send(`${fmt(amount)} returned to the vault`, KEYS.venue, state.usdc, encodeFunctionData({ abi: MOCK_USDC_ABI, functionName: "transfer", args: [state.vault, amount] }));
+  // deposit(), not transfer(). A raw ERC-20 transfer into the vault contract is
+  // never credited to any vault — deposit() is the only path that moves
+  // v.balance, the contract is immutable and there is no sweep — so a demo that
+  // "returns" money by transferring it stranded that money on every run. The
+  // indexer books a deposit from a registered trading wallet as a return, so
+  // this is both the safe path and the one the loss rule can see.
+  await send(`approve the vault to pull ${fmt(amount)}`, KEYS.venue, state.usdc, encodeFunctionData({ abi: MOCK_USDC_ABI, functionName: "approve", args: [state.vault, amount] }));
+  await send(`${fmt(amount)} returned to the vault`, KEYS.venue, state.vault, evmCalls.deposit(cfg, state.authority as `0x${string}`, amount).data);
 }
 
 async function pause(hours: number) {
