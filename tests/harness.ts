@@ -1,3 +1,4 @@
+import { describe } from "bun:test";
 /**
  * LiteSVM test harness: runs the real compiled program (target/deploy/
  * shield_vault.so) in-process with a controllable clock, so every delay
@@ -40,7 +41,29 @@ import {
   usdcToRaw,
 } from "../client/shield-client";
 
+import { existsSync } from "node:fs";
+
 export const PROGRAM_SO = new URL("../target/deploy/shield_vault.so", import.meta.url).pathname;
+
+/**
+ * These 46 tests run the real compiled Solana program, which needs the Solana
+ * toolchain and `bun run build:program`. That program is v0: the shipped product
+ * is `contracts/ShieldVault.sol` on HyperEVM. Without the binary the suite used
+ * to fail 45 of 65 tests on a fresh clone, so anyone running `bun test` before
+ * reading the README met a wall of red for a component the README itself calls
+ * history. Skipped and explained is the honest result; the EVM suite still runs.
+ */
+export const PROGRAM_BUILT = existsSync(PROGRAM_SO);
+export const solanaSuite = PROGRAM_BUILT
+  ? describe
+  : describe.skip;
+if (!PROGRAM_BUILT) {
+  console.warn(
+    `\n  Skipping the Solana program suite: ${PROGRAM_SO} is not built.` +
+      `\n  It is v0; the shipped product is contracts/ShieldVault.sol (cd contracts && forge test).` +
+      `\n  To run it: bun run build:program  (needs the Solana toolchain)\n`
+  );
+}
 export const GENESIS_TS = 1_800_000_000n; // a realistic unix time so the 0 sentinels never collide
 
 export interface TxResult {

@@ -28,6 +28,13 @@ export function Protection() {
 
   const ruleChange = proposals.find((p) => p.category === ProposalKind.RuleChange);
   const exitPending = proposals.find((p) => p.category === ProposalKind.FullExit);
+  /**
+   * Any tightening bumps `configVersion`, and `_checkMaturityAndStaleness`
+   * rejects a proposal created under an older one. So "Get me safe", "Protect me
+   * more" and the 6h/24h/72h pause — the actions Shield most encourages — void a
+   * scheduled exit and restart its clock. The row used to promise the opposite.
+   */
+  const exitStale = !!exitPending && exitPending.configVersionAtCreation !== vault?.configVersion;
   const cooldownActive = Number(vault.cooldownUntil) > now;
   const coldWallets = registry.filter((r) => r.kind === OwnerKind.Cold && r.active);
   const monitorIsShield = !!health?.monitor.verifier && !!vault.riskVerifier && vault.riskVerifier.toLowerCase() === health.monitor.verifier.toLowerCase();
@@ -273,7 +280,8 @@ export function Protection() {
               <div style={{ fontWeight: 600 }}>Leave Shield</div>
               {exitPending ? (
                 <div className="small dim">
-                  {exitPending.action.kind === "uninstallVault" ? "Full exit" : `Withdrawal of ${exitPending.action.kind === "coldTransferAboveCap" ? usd(exitPending.action.amount) : ""}`} scheduled · {Number(exitPending.executeAfter) <= now ? "ready to execute" : <>executes in <b className="num"><Countdown until={exitPending.executeAfter} now={now} format="compact" /></b></>} · every rule stays in force until then
+                  {exitPending.action.kind === "uninstallVault" ? "Full exit" : `Withdrawal of ${exitPending.action.kind === "coldTransferAboveCap" ? usd(exitPending.action.amount) : ""}`} scheduled · {exitStale ? "superseded" : Number(exitPending.executeAfter) <= now ? "ready to execute" : <>executes in <b className="num"><Countdown until={exitPending.executeAfter} now={now} format="compact" /></b></>}
+                  {exitStale ? <> · you tightened a rule after scheduling this, so it can no longer execute. Cancel it and start again.</> : <> · your rules stay in force until then, but tightening any of them cancels it.</>}
                 </div>
               ) : (
                 <div className="small dim">Your whole balance moves to a safe wallet after {duration(Number(vault.fullExitCooldownSecs))}. Nothing else changes in the meantime. Cancel any time.</div>

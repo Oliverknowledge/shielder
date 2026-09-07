@@ -309,10 +309,14 @@ export function Overview() {
           )}
           <div className="row wrap" style={{ marginTop: 14, gap: 8 }}>
             <a className="btn btn-secondary btn-sm" href={venue.url} target="_blank" rel="noreferrer">Open {venue.label} <Icon name="external" size={14} /></a>
+            {/* The obvious bypass — fund the venue directly and never touch the
+                vault — deserves to be answered by the product rather than by a
+                document. Saying it plainly is also the honest version of what
+                Shield does and does not control. */}
             <span className="tiny muted">
               {venue.deliversToCore
-                ? "Released capital is deposited straight into this account on HyperCore."
-                : "Fills, positions and PnL always come from Hyperliquid's own API — the Shield chain never sees them."}
+                ? "Released capital is deposited straight into this account on HyperCore. Money you send here yourself never passes through Shield, and none of your rules apply to it."
+                : "Fills, positions and PnL always come from Hyperliquid's own API — the Shield chain never sees them. Money you send here yourself never passes through Shield, and none of your rules apply to it."}
             </span>
           </div>
         </div>
