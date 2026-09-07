@@ -137,7 +137,7 @@ export function AddFunds() {
         icon: "lock" as const,
         text: (
           <>
-            <b>Can't release {usd(amountRaw)}.</b> Your current Shield limit is <b>{usd(remainingToday)}</b>{reducedNow ? <> until {clockTime(Number(vault.tierUntil), now)}, because your session crossed the level you set</> : " for this 24-hour window"}.
+            <b>Can't release {usd(amountRaw)}.</b> Your current Shield limit is <b>{usd(remainingToday)}</b>{reducedNow ? <> until {clockTime(Number(vault.tierUntil), now)}, {(server?.verdicts ?? []).some((v) => v.relayed && Number(v.verdict.tier ?? 2) === 1) ? "because your session crossed the level you set" : "because you dropped to REDUCED"}</> : " for this 24-hour window"}.
             {remainingToday > 0n && <> <button className="linkish" onClick={() => setAmount(String(Number(remainingToday) / 1e6))}>Release {usd(remainingToday)} instead</button></>}
           </>
         ),
@@ -329,7 +329,7 @@ export function AddFunds() {
 
       {!shown && phase !== "done" && (
         <p className="tiny muted" style={{ marginTop: 14, textAlign: "center" }}>
-          {usd(remainingToday)} of today's {usd(vault.velocityThreshold)} left · {usd(headroom)} above your floor
+          {usd(remainingToday)} of today's {usd(budgetNow)} left · {usd(headroom)} above your floor
           {server && Number(server.profile.windows.h24.realisedLoss) > 0 ? ` · ${usd(server.profile.windows.h24.realisedLoss)} lost in the last 24h (trigger ${usd(vault.lossTriggerUsdc)})` : ""}
         </p>
       )}
