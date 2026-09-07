@@ -3,7 +3,7 @@
  *  - GetMeSafe: hold 2s → an instant tighten that locks new funding until
  *    tomorrow (and, when the user picks them, stricter limits). Real on-chain
  *    transactions; nothing here can weaken anything.
- *  - ResetScreen: 90 calm seconds with the facts, then only safe options.
+ *  - ResetScreen: a short pause with the facts, then only safe options.
  *    It never unlocks protected capital.
  */
 import { useEffect, useState } from "react";
@@ -92,13 +92,13 @@ export function GetMeSafe({ open, onClose, context }: { open: boolean; onClose: 
 export function ResetScreen({ open, onClose, attempted, onStopForTonight }: { open: boolean; onClose: () => void; attempted: bigint; onStopForTonight: () => void }) {
   const { vault, balance, server, now } = useShield();
   const venue = useVenue();
-  const [left, setLeft] = useState(90);
+  const [left, setLeft] = useState(10);
   // The two choices below are "carry on with what you already have" and "stop".
   // Neither can move protected capital — the vault has already refused — so
   // disabling them buys nothing and turns a pause into a lock.
   useEffect(() => {
     if (!open) return;
-    setLeft(90);
+    setLeft(10);
     const t = setInterval(() => setLeft((v) => Math.max(0, v - 1)), 1000);
     return () => clearInterval(t);
   }, [open]);
@@ -108,7 +108,7 @@ export function ResetScreen({ open, onClose, attempted, onStopForTonight }: { op
   const h24 = server?.profile.windows.h24;
   const loss = h24 ? BigInt(h24.realisedLoss) : 0n;
   const reloads = h24?.topUpCount ?? 0;
-  const pct = left / 90;
+  const pct = left / 10;
   const r = 76, c = 2 * Math.PI * r;
 
   // Portal to <body>: the reset has to cover the topbar and tab bar, and the

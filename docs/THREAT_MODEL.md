@@ -9,7 +9,10 @@ The spec below is `contracts/src/ShieldVault.sol`, deployed and immutable on
 HyperEVM testnet (chain 998) at `0xcdB6d631A00857584e70a21d800f51C5776302Fe`.
 Each invariant is stated as a property, then where the contract enforces it
 (`ShieldVault.sol:line`), then the test that pins it
-(`contracts/test/ShieldVault.t.sol`, `cd contracts && forge test`, 41 passing).
+(`contracts/test/ShieldVault.t.sol`). `cd contracts && forge test` runs 44
+tests: those 41 invariants plus 3 in `contracts/test/KnownDefects.t.sol`, which
+assert what the contract *does* and are therefore all bugs — each one is
+written up under "Known gaps" below.
 
 Every line here was re-derived from the Solidity for this revision. Where a
 property the earlier version of this document claimed turns out **not** to
@@ -121,9 +124,12 @@ draws on the same budget (`594-595`).
 Tests: `test_splittingDoesNotBeatTheDailyLimit`, `test_velocityRollsAfter24h`,
 `test_coldTransferSharesVelocity`, `test_gatedTopUpMaturesAfter30Minutes`.
 
-**This invariant has a hole.** See Known gaps 1: cancelling a proposal older
-than the window refunds velocity that has already expired, which can zero
-genuine recent spend.
+**This invariant has two holes, and they compose.** Known gap 1: cancelling a
+proposal older than the window refunds velocity that has already expired, which
+can zero genuine recent spend. Known gap 3: after any idle gap longer than the
+window, `_rollBuckets` zeroes the whole accumulator on *every* call, so the
+daily limit can be spent over and over in a single block. Read both before
+relying on this invariant.
 
 ### 7. The protected floor is checked on every release except a full exit
 
@@ -291,11 +297,17 @@ Reproduced on the deployed logic with a $1,600 daily limit:
 5. `instantTopUp($1,500)` — succeeds.
 
 $3,000 released inside one 24-hour window against a $1,600 limit, in the same
-block as step 3. The amplification is bounded — the refund cannot exceed the
-reserved amount, which was itself bounded by the limit at proposal time, and
-there is only one top-up proposal slot — so the practical ceiling is about
-twice the daily limit per window, with a day of setup. The floor, the
-registry, the cooldown and the exit delay are all unaffected.
+block as step 3. Pinned by
+`KnownDefects.t.sol:test_defect_cancellingAnAgedProposalErasesUnrelatedSpend`.
+
+**The bound this document previously gave — "about twice the daily limit per
+window, with a day of setup" — is wrong, and is corrected here.** It was
+derived from this defect in isolation: one proposal slot, one refund, capped at
+the amount reserved. That reasoning holds for this mechanism on its own, but
+Known gap 3 refunds the entire accumulator with no proposal and no waiting, and
+the two compose. The only limit on how much can leave in a 24-hour window is
+the protected floor. The registry, the cooldown and the exit delay are
+unaffected.
 
 This contradicts the previous version of this document, which claimed the
 accumulator was "checked and reserved atomically" with no qualification, and
@@ -322,16 +334,74 @@ The app never offers these values, and both are reached only by hand-crafting
 a `tighten` call. It is still a real property of the deployed contract and a
 judge is entitled to hear it.
 
-### 3. Invariants without tests
+### 3. An idle gap refunds the whole 24h limit, once per idle day, in one block
 
-The 41 tests do not cover: reentrancy through a hostile `CoreDepositWallet` or
+The worst of the three. It costs nothing, needs no setup and no waiting, and
+the person it is waiting for is a user coming back after a quiet week — which
+is exactly the user this product is for.
+
+`_rollBuckets` (`697-717`) computes `elapsed` in whole buckets, and when
+`elapsed >= NUM_VELOCITY_BUCKETS` it zeroes all six buckets, clamps `elapsed`
+to six, and advances `bucketStart` by `elapsed * BUCKET_LEN_SECS` — 24 hours.
+That branch never touches `currentBucketIndex`. So after an idle gap of N days,
+`bucketStart` catches up only one day per call: the next call re-enters the
+same branch and zeroes the accumulator again, with no time having passed
+between them.
+
+Reproduced on the deployed logic
+(`KnownDefects.t.sol:test_defect_anIdleGapRefundsTheDailyLimitOncePerDay`), with
+a $1,000 per 24h limit, $20,000 in the vault and a $1,000 floor:
+
+1. `instantTopUp($1,000)` — the day's limit, spent. `velocityNow` is $1,000.
+2. Nothing happens for seven days.
+3. `instantTopUp($1,000)` six times, in the same block. All six succeed.
+
+**$6,000 released in one block against a stated $1,000 per 24 hours**, and
+`velocityNow` reports zero throughout, so neither the app nor an observer sees
+the budget being consumed. Six is not a ceiling of the mechanism, it is how
+many idle days the test skipped; a longer gap refunds proportionally more.
+
+What still holds, and bounds it:
+
+- **The protected floor is the real backstop, and it holds.** An attempt to
+  reproduce this against a vault with a high floor fails on
+  `ProtectedFloorBreached` — the release is refused by `_checkFloor`, which is
+  a separate check on `balance - amount` and has nothing to do with the
+  buckets. Total drain is bounded at `balance - protectedFloor`.
+- The registry is unaffected: the money can still only go to a destination the
+  user registered, and a new destination still waits 24 hours.
+- The loss cooldown is unaffected: while `cooldownUntil` is in the future,
+  every top-up path reverts regardless of the accumulator.
+- Cold-transfer amounts above the emergency cap, and the exit path, are
+  unaffected.
+
+So the honest statement is: **the 24h limit is not a reliable bound, and the
+protected floor is.** A user who is relying on the daily limit to pace a
+reload, rather than on the floor, is relying on the wrong number. The floor is
+the one the setup flow should be treated as configuring.
+
+The correct repair is to advance `currentBucketIndex` in the long-idle branch
+(or, better, to store `bucketStart` as the true window origin and derive the
+index) and to set `bucketStart = nowTs` rather than adding a clamped delta.
+The contract is immutable, so this belongs to a v2.
+
+**The same clamp is in the Solana v0 program**, at
+`programs/shield-vault/src/state.rs` (`buckets_elapsed` is `.min()`-ed to
+`NUM_VELOCITY_BUCKETS`, and `current_bucket_index` is only updated in the
+`else` branch). v0 is not deployed and is not the product, but the appendix
+below should be read with this in mind.
+
+### 4. Invariants without tests
+
+The 44 tests do not cover: reentrancy through a hostile `CoreDepositWallet` or
 a hostile token (invariant 12); per-vault registry isolation as a direct
-assertion (invariant 3); the velocity refund path across a window roll
-(Known gaps 1 — the existing `test_cancelTopUpRefundsVelocity` cancels inside
-the same window, where the refund is correct). The first two were checked by
-reading; the third was checked by executing.
+assertion (invariant 3); the stranded-transfer hole in Known gaps 7, which is
+an absence of code rather than a behaviour a test can assert against the
+deployed contract. All three were checked by reading. All three known defects
+above *are* covered, by `contracts/test/KnownDefects.t.sol`; those tests assert
+the wrong behaviour on purpose, so that it cannot change unnoticed.
 
-### 4. The HyperCore credit cannot be confirmed on-chain
+### 5. The HyperCore credit cannot be confirmed on-chain
 
 `_deliver` (`636-638`) approves and calls `CoreDepositWallet.depositFor`.
 `depositFor` returns nothing, and Circle's testnet rule is that only addresses
@@ -341,22 +411,52 @@ with the USDC. The contract has no way to detect it, and no way to claw it
 back. If the callee does not spend the allowance, a residual approval is left
 outstanding to `coreDeposit`.
 
-### 5. The EIP-712 domain separator is cached at construction
+### 6. The EIP-712 domain separator is cached at construction
 
 `_DOMAIN_SEPARATOR` is computed once in the constructor (`243-251`) with the
 then-current `block.chainid`. On a chain fork, verdicts would be replayable
 across both forks. This is the standard trade-off; it is worth knowing rather
 than discovering.
 
-### 6. Token assumptions
+### 7. Token assumptions, and USDC sent back by a raw transfer is stranded
 
 `deposit` credits exactly the amount requested (`332-333`) and the contract
 pools every vault's USDC in one balance with internal accounting. That is
 correct for USDC and wrong for a fee-on-transfer or rebasing token. The token
 address is immutable and was set to Circle's test USDC at deployment, so this
-is a fact about the deployment, not an open risk.
+part is a fact about the deployment, not an open risk.
 
-### 7. There is no EVM recovery CLI
+The accounting has a sharper edge. **`v.balance` is credited in exactly one
+place, `deposit()`.** No function anywhere in the contract reads
+`usdc.balanceOf(address(this))`, there is no sweep, no rescue and no admin, and
+the contract is immutable. So USDC that arrives at the vault address by a plain
+ERC-20 `transfer` — which is the obvious way to send trading capital back from
+a venue — belongs to no vault, is invisible to every rule and every screen, and
+**can never be withdrawn by anyone**. It is not stolen; it is stranded.
+
+This is not hypothetical. Measured on chain 998 on 2026-09-07:
+
+```
+usdc.balanceOf(0xcdB6d631A00857584e70a21d800f51C5776302Fe)   $696.50
+sum of the four vaults' getVault(...).balance                $666.00
+                                                             -------
+stranded, unrecoverable                                       $30.50
+```
+
+($600.00 + $45.00 + $21.00 + $0.00 across the four authorities listed in
+`docs/internal/gauntlet/FACTS.md`.) The same thing is visible on the local Anvil
+stack, where `bun run demo:evm return 80` hands money back with a raw transfer:
+the contract holds $7,080 and the vault accounts for $7,000.
+
+Mitigation is documentation only, because the contract cannot be changed:
+`client/evm-demo.ts` refuses the demo `return` command on any real network and
+tells the user to send capital back with `deposit(authority, amount)` from the
+venue wallet, and the indexer treats a deposit from a registered trading wallet
+as a return rather than as new capital. Neither can stop a hand-written
+transfer. A v2 should either credit on receipt or make the balance derivable
+from the token balance.
+
+### 8. There is no EVM recovery CLI
 
 `client/recovery-cli.ts` is Solana-only. On EVM the equivalent is the public
 ABI (`client/abi/ShieldVault.ts`, encoders in `client/evm.ts`) plus any RPC
@@ -372,7 +472,7 @@ true; the specific artefact the old document cited does not cover EVM.
 |---|---|---|
 | Call the contract directly, skip the app | Same functions, same checks. The app has no privileged path; it builds the same calldata. | 1 · `test_rawTransferPathIsUnreachable` |
 | Move USDC out of the contract some other way | There is no function that transfers to an address that is not a validated registry entry. | 2 · `test_unregisteredDestinationRefused` |
-| Split $1,600 into four $400 top-ups | The accumulator sums them; the fifth dollar reverts `VelocityThresholdExceeded`. | 6 · `test_splittingDoesNotBeatTheDailyLimit` |
+| Split $1,600 into four $400 top-ups **within one active window** | The accumulator sums them; the fifth dollar reverts `VelocityThresholdExceeded`. | 6 · `test_splittingDoesNotBeatTheDailyLimit` |
 | Route the reload through a cold wallet | Cold transfers are capped by `emergencyCap`, share the same 24h budget, and respect the floor. | 6, 7 · `test_coldTransferAboveCapRefusedInstantly`, `test_coldTransferSharesVelocity` |
 | Register a fresh "cold" wallet and drain to it | Registration on a funded vault is a delayed weakening; even after it lands, only the cap moves instantly. | 3 · `test_registerWhileFundedIsRefused`, `test_addingDestinationWaitsAndThenWorks` |
 | Re-register the trading wallet as cold | `AlreadyRegisteredDifferentType`. | 3 · `test_typeIsPermanent` |
@@ -382,7 +482,9 @@ true; the specific artefact the old document cited does not cover EVM.
 | Schedule a large top-up, wait out the 30 minutes, but a loss cooldown lands first | `executeTopUp` re-reads the cooldown: `CooldownActive`. | 8 · `test_checkOrderIsCooldownFloorVelocityThreshold` |
 | Un-pause | There is no function that lowers `cooldownUntil`. Pauses expire by time only. | 8 · `test_selfPauseBlocksTopUpsAndIsMonotonic` |
 | Use a second vault to reach the first vault's registry | Registry entries are keyed by authority; the other vault has none. | 3 |
-| Park a top-up proposal for a day, then cancel it to clear the accumulator | **This works.** ~2× the daily limit in one window. | Known gaps 1 |
+| Park a top-up proposal for a day, then cancel it to clear the accumulator | **This works.** The refund lands on unrelated recent spend and erases it. | Known gaps 1 · `test_defect_cancellingAnAgedProposalErasesUnrelatedSpend` |
+| Come back after a quiet week and top up repeatedly in one block | **This works, with no setup at all.** Each call zeroes the whole accumulator again. $6,000 released against a $1,000 daily limit, measured. The protected floor is what stops it. | Known gaps 3 · `test_defect_anIdleGapRefundsTheDailyLimitOncePerDay` |
+| Send trading capital back to the vault address with a plain ERC-20 transfer | Not an attack, but it destroys the money: nothing credits it and nothing can withdraw it. Use `deposit()`. | Known gaps 7 |
 | Deposit somewhere else and trade there | Out of scope by design: Shield governs what leaves the vault, not money that never entered it. | accepted limitation |
 
 ### A scammer ("send it to this recovery address")
@@ -445,7 +547,9 @@ of drift would serve.
 ## Accepted limitations (deliberate)
 
 - Shield protects only what is inside the vault. Once money is in the trading
-  account, Shield observes but cannot enforce.
+  account, Shield observes but cannot enforce. Money sent back to the vault
+  address by a plain ERC-20 transfer is never credited and cannot be recovered
+  — return capital with `deposit()` (Known gaps 7).
 - A user who has not tightened their own delays can always weaken or leave, at
   their own delay. That is the product: friction against impulses, not
   custody. (A user who *has* tightened them can lock themselves out — Known
@@ -467,7 +571,8 @@ of drift would serve.
 `programs/shield-vault` is the Anchor implementation of the same rule engine,
 kept as the zero-credential reference. It is **not** the submitted system and
 nothing below is a claim about the deployed product. Its 46 LiteSVM tests run
-with `bun test` after `bun run build:program`.
+with `bun test tests/ server/` after `bun run build:program`; without the built
+program they skip rather than fail.
 
 The v0 invariants, condensed, with the EVM invariant that replaces each:
 
@@ -478,7 +583,7 @@ The v0 invariants, condensed, with the EVM invariant that replaces each:
 | 3 | Registered owners are `Execution` or `Cold` permanently. | 3 |
 | 4 | `tighten` instant and monotonic; `propose_loosen` delayed, ≥ 1h. | 4 |
 | 5 | Every tighten bumps `config_version`; older proposals cannot execute. | 5 |
-| 6 | One 24h accumulator across top-ups and capped cold transfers. | 6 (with the hole in Known gaps 1) |
+| 6 | One 24h accumulator across top-ups and capped cold transfers. | 6 (with the holes in Known gaps 1 and 3 — v0 carries the same `_rollBuckets` clamp, at `programs/shield-vault/src/state.rs`) |
 | 7 | `cooldown_until` blocks every top-up path and only extends. | 8 |
 | 8 | `apply_risk_verdict` (Ed25519 precompile introspection) can only set `cooldown_until = max(current, now + loss_cooldown_secs)`. | 9 |
 | 9 | Proposals are one-shot; destination and amount locked at creation; the account closes on execute or cancel. | 11 (with the uninstall-amount caveat) |

@@ -101,7 +101,10 @@ bun run dev:app:evm               # http://localhost:5175
 
 What each step should print:
 
-- `forge test` → `41 tests passed, 0 failed, 0 skipped (41 total tests)`.
+- `forge test` → `44 tests passed, 0 failed, 0 skipped (44 total tests)` —
+  41 invariants in `ShieldVault.t.sol` and 3 pinned defects in
+  `KnownDefects.t.sol`, which assert what the contract *does*, not what it
+  should do. See "Known gaps" in `docs/THREAT_MODEL.md`.
 - `bootstrap:evm` deploys MockUSDC, a mock CoreDepositWallet and
   `ShieldVault`, then initializes one vault — $6,000 floor, $2,000 per 24h,
   large top-ups over 20% of balance wait 30 minutes, $750 of realised loss
@@ -145,15 +148,24 @@ Top-up $500 to 0x7099…: expected path = blocked (CooldownActive)
 `scoreboard` then prints the state the app is showing:
 
 ```
-Shield vault 0x9fe4…6e0 (Anvil) · authority 0xf39Fd6…266
-  Protected balance      $6,500  (floor $6,000)
-  Daily top-up limit     $2,000 / 24h · used $2,000
+Shield vault 0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0 (Anvil) · authority 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+  Protected balance      $7,000  (floor $6,000)
+  Daily top-up limit     $2,000 / 24h · used $1,500
   Large top-up pause     >= 20% of balance waits 30 min
   Loss rule              >= $750 realised in 24h -> pause 12h
-  Cooldown               ACTIVE (loss rule) until …
+  Cooldown               ACTIVE (loss rule) until 9/7/2026, 1:47:40 PM
   Config version         1   verdicts applied 1
-  Pending rule change #1: executes … — {"kind":"loosen","params":{"newVelocityThreshold":"3000000000"}}
+  Venue account          $1,500 (mock CoreDepositWallet)
+    execution 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 "Hyperliquid" route=hypercore
+    cold      0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC "Safe wallet" route=evm
+  Pending rule change #1: executes 9/8/2026, 1:48:06 AM — {"kind":"loosen","params":{"newVelocityThreshold":"3000000000"}}
 ```
+
+Balance is $7,000, not $7,080: on Anvil the `return` command hands the money
+back with a plain ERC-20 transfer, which the contract never credits to a vault
+(see "Returned capital" in `docs/THREAT_MODEL.md`). $1,500 of the day's $2,000
+limit is used because the $500 top-up above was refused. Timestamps and the
+cooldown deadline depend on when you run it.
 
 The cooldown is 12 hours because that is the rule the vault was initialized
 with; a verdict carries no duration of its own.
@@ -202,7 +214,7 @@ plainly that it is not done.
 
 | Claim | Status |
 |---|---|
-| `ShieldVault.sol` enforces the rules in `docs/THREAT_MODEL.md`; no owner, admin or upgrade path | **Verified.** 41 Foundry tests; deployed and immutable on chain 998; `usdc()`, `coreDeposit()` and the EIP-712 domain separator read back correctly |
+| `ShieldVault.sol` enforces the rules in `docs/THREAT_MODEL.md`; no owner, admin or upgrade path | **Verified, with three disclosed defects.** 44 Foundry tests (41 invariants, 3 pinning known defects); deployed and immutable on chain 998; `usdc()`, `coreDeposit()` and the EIP-712 domain separator read back correctly |
 | The vault funds a Hyperliquid Core account directly | **Verified on chain 998.** tx `0x94960d1f…f889be`, block 63581864: one transaction carrying USDC approval, vault → CoreDepositWallet → HyperCore system address `0x2000…0000`, a HyperCore credit of $5.00, and `TopUpExecuted(amount=$5, instant=true, balanceAfter=$45, route=1)` |
 | **Privy**: an embedded wallet is a vault's authority and completed a financial flow | **Verified.** Privy created the wallet on login (`createOnLogin: "users-without-wallets"`, `app/src/lib/privy.tsx:67`). Wallet `0x83144b99…1D2B`, nonce 4 — it signed four transactions itself: `registerOwner` (`0x80c2a48a…f8f0`), the $5 release above, `proposeLoosen` (`0xeeea692a…4b85`). The contract gates every path on `msg.sender`, so Privy *is* the authority |
 | **Chainlink CRE**: the confidential handler is load-bearing, and its verdict changes chain state | **Verified.** `handlerInTee` from `@chainlink/cre-sdk` registered at `cre/shield-risk/main.ts:88` with `[{ tee: "nitro", regions: ["us-west-2"] }]`; the verifier key is read in-enclave via `runtime.getSecret` (`cre/shield-risk/evaluate.ts:89`) and used to produce the EIP-712 signature. On-chain result: tx `0x2e411cea…6bb35`, block 63584417, `RiskVerdictApplied(nonce=1, reasonCode=1, realizedLossUsdc=3500000, extended=true)` |
@@ -260,17 +272,19 @@ Three things are genuinely open. They are decisions, not code:
 ## Verify everything
 
 ```bash
-cd contracts && forge test && cd ..    # 41 Solidity invariants (after forge install, above)
+cd contracts && forge test && cd ..    # 44: 41 invariants + 3 pinned defects
+                                       #     (after forge install, above)
 bun run build:program && bun test tests/ server/
-                                       # 65: 46 program invariants (LiteSVM), 19 server
+                                       # 66: 46 program invariants (LiteSVM), 20 server
 bun run typecheck                      # app, server (both chains), clients, CRE workflow, tests
 bun run build:app                      # production bundle
 ```
 
-`bun run build:program` is not optional. It compiles the v0 Anchor program to
-`target/deploy/shield_vault.so`, which the LiteSVM harness loads. Without it,
-**45 of the 65 tests fail** (20 pass). It needs Rust and the Solana CLI,
-which ships `cargo-build-sbf`:
+`bun run build:program` compiles the v0 Anchor program to
+`target/deploy/shield_vault.so`, which the LiteSVM harness loads. Without it the
+program suite **skips rather than fails**: `20 pass, 46 skip, 0 fail`, with a
+line saying why. So the 20 server tests run on a bare checkout. Building it
+needs Rust and the Solana CLI, which ships `cargo-build-sbf`:
 
 ```bash
 sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"   # solana + cargo-build-sbf
@@ -309,7 +323,7 @@ bun run cre/shield-risk/dryrun.ts --evm --no-deliver   # drop the flag to relay 
                                                       │ instantTopUp → CoreDepositWallet.depositFor(user)
                                                       ▼
                                              the user's Hyperliquid account ◄── they trade here
-                                                      │ returns: Core → EVM, USDC back to the vault
+                                                      │ returns: Core → EVM, then deposit() back into the vault
                                                       ▼
    The Graph Substreams (HyperEVM mainnet) ─flows─► Shield server: sessions → realised loss
                                                     → verdict → relay
@@ -353,7 +367,8 @@ stale and cannot execute. Monitor verdicts never bump it.
 ## Repository
 
 ```
-contracts/               ShieldVault.sol, mocks, 41 Foundry tests
+contracts/               ShieldVault.sol, mocks, 44 Foundry tests
+                         (ShieldVault.t.sol invariants + KnownDefects.t.sol)
 server/                  evm-index.ts (chain 998/Anvil), index.ts (Solana v0),
                          behaviour.ts, policy.ts, hyperliquid.ts, substreams-source.ts
 client/                  views.ts (chain-agnostic), evm.ts, solana-adapter.ts, demo CLIs
@@ -367,7 +382,8 @@ scripts/                 anvil-demo.ts, hyperevm-bootstrap.ts, hyperevm-big-bloc
                          substreams-live.sh, deploy.sh, bootstrap-demo.ts
 tests/                   LiteSVM harness for the v0 program
 docs/                    threat model, sponsor integrations, judge Q&A, demo script,
-                         submission, mainnet runbook, evidence/
+                         submission, mainnet runbook, evidence/, internal/ (working
+                         notes: the build briefs and the review passes)
 HUMAN_ACTIONS.md         the steps only a human can do
 ```
 

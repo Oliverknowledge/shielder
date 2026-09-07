@@ -5,7 +5,7 @@ done: the contract is live on HyperEVM testnet, a Privy embedded wallet has
 moved real USDC to HyperCore, `cre workflow simulate` has run and its transcript
 is committed, and the Substreams package streams live from The Graph Market.
 The evidence for all of that is in `docs/SPONSOR_INTEGRATIONS.md`; the facts it
-is allowed to assert are pinned in `docs/gauntlet/FACTS.md`.
+is allowed to assert are pinned in `docs/internal/gauntlet/FACTS.md`.
 
 Ordered by leverage. #1 is worth more than #2 and #3 combined, because without
 it neither of them can be judged.

@@ -97,13 +97,29 @@ weak evidence of changing outcomes — is set out with citations in
 
 ## What the contract actually enforces
 
-Read `contracts/src/ShieldVault.sol`; verified by 41 Foundry tests
-(`cd contracts && forge test` → 41 passed; `forge install foundry-rs/forge-std --no-git` first).
+Read `contracts/src/ShieldVault.sol`; verified by 44 Foundry tests
+(`cd contracts && forge test` → 44 passed; `forge install foundry-rs/forge-std --no-git` first).
+41 of those are invariants. The other 3, in `contracts/test/KnownDefects.t.sol`,
+pin defects that were found in the deployed contract and are all written up in
+`docs/THREAT_MODEL.md` under "Known gaps"; the most important is summarised
+below.
 
 - **Protected floor.** A balance the vault will not release for trading at all.
 - **Rolling 24h release limit,** accumulated across six 4-hour buckets
   (`NUM_VELOCITY_BUCKETS = 6`, `BUCKET_LEN_SECS = 4 hours`), so four $500
-  releases are one $2,000 release. Splitting does not defeat it.
+  releases inside one active window are one $2,000 release. **This limit has
+  two disclosed defects and is not a reliable bound.** After an idle gap longer
+  than the window, `_rollBuckets` zeroes the whole accumulator on every call, so
+  the daily limit can be spent repeatedly in a single block — $6,000 released
+  against a stated $1,000 per 24h, measured
+  (`KnownDefects.t.sol:test_defect_anIdleGapRefundsTheDailyLimitOncePerDay`).
+  Cancelling a proposal older than the window erases unrelated recent spend, and
+  the two compose. **The protected floor is the bound that holds**: it is a
+  separate check on `balance - amount`, it is unaffected by either defect, and
+  a reproduction attempt against a vault with a high floor is refused with
+  `ProtectedFloorBreached`. The registry, the loss cooldown and the exit delay
+  are also unaffected. The contract is immutable; the fix belongs to a v2.
+  Full write-up: `docs/THREAT_MODEL.md`, Known gaps 1 and 3.
 - **Large-move pause.** A release at or above a share of the vault balance the
   user chose (`topUpThresholdBps`) cannot be instant: `instantTopUp` reverts
   with `AmountRequiresGatedTopUp` and it must go through `proposeTopUp` /
@@ -365,7 +381,7 @@ cast call 0xcdB6d631A00857584e70a21d800f51C5776302Fe \
   "getVault(address)" 0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006 --rpc-url $RPC
 ```
 
-Off-chain: `cd contracts && forge test` (41 passed),
+Off-chain: `cd contracts && forge test` (44 passed: 41 invariants, 3 pinned defects),
 `docs/evidence/cre-simulate.txt`, `docs/evidence/substreams-live.txt`.
 
 Live vaults on chain id 998, all on the one contract:
@@ -391,7 +407,7 @@ Traders do not lose their money to hacks. They lose it in the ten minutes after 
 
 Shield does not have to argue that this is the pattern. Setup reads your real Hyperliquid history before it proposes a single rule and shows you your own numbers — how many sessions you have had, your typical session size, your largest losing session, and how many sessions included a reload made while you were already down — with one sentence generated from the same data: "3 of your 4 largest losing sessions involved another reload." Your rules are then proposed from those numbers, not from a template.
 
-Shield is a self-custodial commitment vault deployed at 0xcdB6d631A00857584e70a21d800f51C5776302Fe on HyperEVM testnet (chain id 998), with no owner, no proxy and no upgrade path. It is not a trading venue and does not replace Hyperliquid: you trade on Hyperliquid exactly as you do now, and Shield holds the capital behind the account, releasing it under rules you wrote while calm — a protected floor, a rolling 24-hour limit that splitting cannot defeat, a pause on large moves, and a loss rule that reads the venue's own settled PnL where the venue answers, and what came back from it where it does not.
+Shield is a self-custodial commitment vault deployed at 0xcdB6d631A00857584e70a21d800f51C5776302Fe on HyperEVM testnet (chain id 998), with no owner, no proxy and no upgrade path. It is not a trading venue and does not replace Hyperliquid: you trade on Hyperliquid exactly as you do now, and Shield holds the capital behind the account, releasing it under rules you wrote while calm — a protected floor, a rolling 24-hour release limit, a pause on large moves, and a loss rule that reads the venue's own settled PnL where the venue answers, and what came back from it where it does not.
 
 The asymmetry is the whole product. Moving toward safety is instant: lower a limit, raise the floor, pause yourself, and it takes effect in that block. Expanding risk waits 24 hours and has to be confirmed again afterwards, and any tightening in between cancels it. Leaving Shield entirely waits 7 days. Emergency transfers to your own cold wallet, up to a cap you set yourself, are never blocked by a cooldown or by the risk monitor. That shape is not invented: instant to tighten, delayed to loosen, with a confirmation at the end of the wait, is what gambling regulators across 30 European countries converged on, and is specified almost word for word by UK Gambling Commission RTS 12D.
 
@@ -403,7 +419,7 @@ You sign in with an email through Privy, and the embedded wallet it creates is t
 # PASTE — how it's made (technical)
 
 ```
-Contract. ShieldVault.sol at 0xcdB6d631A00857584e70a21d800f51C5776302Fe on HyperEVM testnet, chain id 998 (deploy tx 0x67ffb6531f406758758adb98fb81008f1888e6793b9a39fb79bde9ee6df66ebc, block 63561837). Immutable: no owner, no proxy, no upgrade path. One contract, many vaults, keyed by authority address. Money leaves through five paths only — instant top-up, matured top-up, instant cold transfer under the user's emergency cap, matured cold transfer, matured full exit — each gated by a protected floor, a rolling 24h limit accumulated over six 4-hour buckets, a large-move threshold, and cooldowns. Destinations are registered once with a permanent kind (execution or cold). Tightening applies instantly and bumps configVersion, which marks every pending loosening stale, so tilt cannot pre-load an escape. A permitted release to a HyperCore destination is delivered by the contract into that address's Hyperliquid perps account through Circle's CoreDepositWallet.depositFor in the same transaction. 41 Foundry tests (cd contracts && forge test).
+Contract. ShieldVault.sol at 0xcdB6d631A00857584e70a21d800f51C5776302Fe on HyperEVM testnet, chain id 998 (deploy tx 0x67ffb6531f406758758adb98fb81008f1888e6793b9a39fb79bde9ee6df66ebc, block 63561837). Immutable: no owner, no proxy, no upgrade path. One contract, many vaults, keyed by authority address. Money leaves through five paths only — instant top-up, matured top-up, instant cold transfer under the user's emergency cap, matured cold transfer, matured full exit — each gated by a protected floor, a rolling 24h limit accumulated over six 4-hour buckets, a large-move threshold, and cooldowns. The 24h limit has two disclosed defects that let it be exceeded (docs/THREAT_MODEL.md, Known gaps 1 and 3, pinned by contracts/test/KnownDefects.t.sol); the protected floor is unaffected and is what bounds the total. Destinations are registered once with a permanent kind (execution or cold). Tightening applies instantly and bumps configVersion, which marks every pending loosening stale, so tilt cannot pre-load an escape. A permitted release to a HyperCore destination is delivered by the contract into that address's Hyperliquid perps account through Circle's CoreDepositWallet.depositFor in the same transaction. 44 Foundry tests (cd contracts && forge test): 41 invariants and 3 pinning the known defects.
 
 Privy (Best Financial Flow). The embedded wallet is the vault authority, not a login: ShieldVault._own() reverts for every other address. Created on login with createOnLogin: "users-without-wallets" (app/src/lib/privy.tsx:67); the app signs through its EIP-1193 provider. Wallet 0x83144b99D89947703714Ee9aA3A3614985041D2B, nonce 4 on chain. The financial flow is a $5.00 release from the vault into a Hyperliquid perps account in one transaction: 0x94960d1f937a3e36e1b16e69922a2579e77b584ed25b2ced044da7991fe889be (block 63581864) — USDC approval and transfer from the vault to CoreDepositWallet, on to the HyperCore system address 0x2000...0000, a $5.00 HyperCore credit to the registered account, and TopUpExecuted(amount=$5, instant=true, balanceAfter=$45). Supporting transactions from the same wallet: registerOwner 0x80c2a48aeeb2825fc427c2eb6b90821bc5c75fe8db38eddb3db745f55426f8f0 (block 63581683) and proposeLoosen 0xeeea692a9a7c25ada3918ceff2992c3465fff356b560b6c80a5e191cf2224b85 (block 63581938), the second of which the contract holds for 24 hours. Privy policies, quorums, session signers and Cards are not used and are not claimed.
 

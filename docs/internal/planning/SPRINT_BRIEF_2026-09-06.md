@@ -45,7 +45,8 @@ Actually modify the repository and build the product.
 PREVIOUS SHIELD CONTEXT
 --------------------------------------------------
 
-[PASTE THE FULL PREVIOUS SHIELDER / CONDUCTOR CHAT HERE]
+(The prior product discussion was pasted here when the brief was run. It is
+not reproduced in the repository.)
 
 --------------------------------------------------
 END PREVIOUS CONTEXT

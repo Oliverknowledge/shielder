@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { GetMeSafe, ResetScreen } from "../components/Safety";
 import { WhatHappened } from "../components/WhatHappened";
@@ -25,6 +25,7 @@ const card = {
 };
 
 export function AddFunds() {
+  const navigate = useNavigate();
   const { vault, balance, wallets, proposals, server, now, signer, vaultKey, actions, chain } = useShield();
   const venue = useVenue();
   const { run, busy } = useAction();
@@ -183,17 +184,24 @@ export function AddFunds() {
               <div style={{ marginTop: 18 }}>
                 <p className="eyebrow" style={{ marginBottom: 4 }}>Available again in</p>
                 <div className="not-tonight" style={{ fontSize: "clamp(34px, 10vw, 52px)" }}><Countdown until={vault.cooldownUntil} now={now} /></div>
+                {/* A clock that expires into a second refusal is the fastest way
+                    to stop being believed. If the daily limit is also spent, say
+                    so here rather than letting them find out by pressing the
+                    button again. */}
+                {rollingVelocity(vault, BigInt(now)) >= vault.velocityThreshold && (
+                  <p className="small dim" style={{ marginTop: 6 }}>Your {usd(vault.velocityThreshold)} daily limit is also spent, and refills on its own rolling 24 hours. Whichever is later decides.</p>
+                )}
               </div>
             )}
             {/* Actions before the evidence: on a phone the evidence pushed every
                 choice below the fold at exactly the moment a choice was needed. */}
             <div className="row wrap" style={{ marginTop: 18, gap: 8 }}>
-              <button className="btn" onClick={() => setSafeOpen(true)}>Move money to safety</button>
+              <button className="btn" onClick={() => setSafeOpen(true)}>Lock this down till tomorrow</button>
               <button className="btn btn-secondary" onClick={() => setWhatOpen(true)}>See what happened</button>
             </div>
             <div className="row wrap" style={{ marginTop: 10, gap: 8 }}>
               <button className="btn btn-ghost btn-sm" onClick={() => setResetOpen(true)}>I still really want to trade</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => { setBlocked(null); setPhase("idle"); }}>Back</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => navigate("/")}>Back to Home</button>
             </div>
             <SessionFacts amount={shown.amount} reason={shown.reason} attemptsToday={attempts.filter((a) => a.ts >= now - 86400).length} />
             {prefs.calmMessage && (

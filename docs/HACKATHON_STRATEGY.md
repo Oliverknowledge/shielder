@@ -3,8 +3,8 @@
 Researched from the official pages on 2026-09-05 and re-verified verbatim on
 2026-09-06 (Cloudflare blocks headless browsers on ethglobal.com; pages were
 fetched with a desktop user agent). The verbatim criteria are pinned in
-`docs/gauntlet/CRITERIA.md`; the claims we are allowed to make are pinned in
-`docs/gauntlet/FACTS.md`. This file says which tracks we enter, which we decline
+`docs/internal/gauntlet/CRITERIA.md`; the claims we are allowed to make are pinned in
+`docs/internal/gauntlet/FACTS.md`. This file says which tracks we enter, which we decline
 and why, and what is still missing.
 
 The product is Hyperliquid-first (see `ARCHITECTURE_DECISION.md`). We select
@@ -46,7 +46,7 @@ reading.
 | Track | **Start Fresh (Classic)**. "All work on your project must begin after the hackathon officially starts." First commit 2026-09-04 10:50 UTC, after the 05:00 UTC start; there is no pre-event code. | info/details, `git log` |
 | Partner prizes | "You can select up to 3 Partner Prizes." A partner with several tracks counts once. Each needs an explanation of the integration plus feedback. | info/details |
 | Video | 2 to 4 minutes, 720p+, no speed-up, no AI voice-over, no phone recording; uploads outside 2–4 min are rejected | info/details |
-| AI tooling | Permitted with attribution: document where AI was used; spec-driven workflows must include spec files, prompts and planning artifacts in the repo | info/details; see `docs/AI_USAGE.md` and `docs/planning/` |
+| AI tooling | Permitted with attribution: document where AI was used; spec-driven workflows must include spec files, prompts and planning artifacts in the repo | info/details; see `docs/AI_USAGE.md` and `docs/internal/planning/` |
 | Version control | "Submissions with large single commits or missing histories may be disqualified" | info/details |
 | Judging criteria | Technicality, Originality, Practicality, Usability (UI/UX/DX), WOW factor | info/details |
 

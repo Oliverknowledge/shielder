@@ -32,7 +32,7 @@ Scope discipline, because every sponsor track wants a short video:
 **Cannot be filmed and is not scripted:**
 
 1. **A block explorer.** There is no working HyperEVM testnet explorer (see
-   `docs/gauntlet/FACTS.md`, "Explorers"). `cast tx <hash> --rpc-url …` is the
+   `docs/internal/gauntlet/FACTS.md`, "Explorers"). `cast tx <hash> --rpc-url …` is the
    verification that works on camera. Do not open a browser tab for a hash.
 2. **A live *successful* release from the Privy vault**, unless its rolling
    24-hour window has cleared. As of 2026-09-07 the vault's whole $5 daily limit

@@ -18,7 +18,8 @@ I will paste the previous Shielder discussion below. Read all of it carefully fi
 PREVIOUS SHIELDER CONTEXT
 --------------------
 
-[PASTE THE FULL PREVIOUS CONDUCTOR / SHIELDER CHAT HERE]
+(The prior product discussion was pasted here when the brief was run. It is
+not reproduced in the repository.)
 
 --------------------
 END CONTEXT
@@ -927,7 +928,6 @@ Do NOT stop because:
 - the homepage looks good,
 - the contract compiles,
 - one integration works,
-- token usage is high,
 - there are minor bugs,
 - a dependency initially fails.
 

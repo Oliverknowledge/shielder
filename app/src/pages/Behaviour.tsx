@@ -113,12 +113,12 @@ export function Behaviour() {
               <div className="capital" style={{ height: 18 }} role="img" aria-label={`Came back ${usd(returned)}, still out ${usd(open)}, not back yet ${usd(lost)}`}>
                 {returned > 0n && <i style={{ flexBasis: w(returned), background: "var(--protect)" }} />}
                 {open > 0n && <i style={{ flexBasis: w(open), background: "var(--bankroll-2)" }} />}
-                {lost > 0n && <i style={{ flexBasis: w(lost), background: "var(--blocked)" }} />}
+                {lost > 0n && <i style={{ flexBasis: w(lost), background: "var(--bankroll-2)" }} />}
               </div>
               <div className="legend">
                 <span><i style={{ background: "var(--protect)" }} />Came back <b>{usd(returned)}</b></span>
                 {open > 0n && <span><i style={{ background: "var(--bankroll-2)" }} />Still out <b>{usd(open)}</b></span>}
-                {lost > 0n && <span><i style={{ background: "var(--blocked)" }} />Not back yet <b>{usd(lost)}</b></span>}
+                {lost > 0n && <span><i style={{ background: "var(--bankroll-2)" }} />Still at the venue <b>{usd(lost)}</b></span>}
                 {gained > 0n && <span><i style={{ background: "var(--protect)" }} />Came back extra <b>{usd(gained)}</b></span>}
               </div>
             </div>

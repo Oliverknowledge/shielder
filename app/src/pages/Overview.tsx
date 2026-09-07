@@ -103,6 +103,7 @@ export function Overview() {
         text: (
           <>
             <b>No new trading capital</b> until {clockTime(Number(vault.cooldownUntil), now)}{byRule ? ` · your loss rule fired${lossToday ? ` after ${usd(lossToday)} in losses` : ""}` : " · you paused it"}. What is already in {venue.label} is still yours to trade.
+            {byRule && !lossToday ? <> Your realised loss today is {usd(0)}: this pause was set under an earlier rule that counted money still sitting at {venue.label} as a loss. That is fixed, but a pause already on chain runs its full length.</> : null}
           </>
         ),
         right: <span className="num right" style={{ fontWeight: 600 }}><Countdown until={vault.cooldownUntil} now={now} format="compact" /></span>,

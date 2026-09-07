@@ -127,7 +127,7 @@ cast tx 0x2e411cea49a5c8edff69dddb7376aca1b5c2eee9f92be1fcb12f78733676bb35 \
 ```
 
 There is no public block explorer that indexes HyperEVM testnet, so `cast` is
-the verification. See `docs/gauntlet/FACTS.md`, "Explorers".
+the verification. See `docs/internal/gauntlet/FACTS.md`, "Explorers".
 
 ### Compile only (no account needed)
 

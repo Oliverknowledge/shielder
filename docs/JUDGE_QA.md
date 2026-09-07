@@ -2,7 +2,7 @@
 
 Answers describe what the code does, not what we would like it to do. Where
 the answer is a limitation it is written as one. Everything factual here is
-in `docs/gauntlet/FACTS.md`, checked against the chain or a command that was
+in `docs/internal/gauntlet/FACTS.md`, checked against the chain or a command that was
 actually run.
 
 The one-line version: `ShieldVault.sol` is deployed and immutable on HyperEVM
@@ -25,28 +25,55 @@ govern an on-chain transfer at all.
 **Why won't the user just bypass it?**
 Inside the vault, the paths are closed and tested: there are five ways money
 leaves, each to a destination registered in advance and typed permanently;
-splitting hits a rolling 24h budget shared by top-ups and cold transfers;
-adding a new destination to a funded vault is a delayed change; raising a
-limit is a delayed change that any tightening in between invalidates; leaving
-is a proposal at the user's own exit delay. 41 Foundry tests run those
-attacks against the deployed logic. Outside the vault, of course they can:
+splitting inside one active window hits a rolling 24h budget shared by top-ups
+and cold transfers; adding a new destination to a funded vault is a delayed
+change; raising a limit is a delayed change that any tightening in between
+invalidates; leaving is a proposal at the user's own exit delay. 44 Foundry
+tests run those attacks against the deployed logic — 41 that pass because the
+contract holds, and 3 that pin the places where it does not (below). Outside the vault, of course they can:
 money that never entered Shield is not protected. The app says so itself, in
 the connected-venue panel on Home, under the button that opens Hyperliquid:
 "Money you send here yourself never passes through Shield, and none of your
 rules apply to it." (`app/src/pages/Overview.tsx`.) The obvious bypass deserves
 to be answered by the product rather than by a document.
 
-One caveat we found while writing the threat model and did not paper over: a
-top-up proposal left pending for more than 24 hours, then cancelled, refunds
-velocity that has already expired and can clear the day's accumulator. The
-practical ceiling is about twice the daily limit in a window, with a day of
-setup. It is written up in full in `docs/THREAT_MODEL.md` (Known gaps 1). The
-contract is immutable, so it is a disclosed limitation rather than a fix.
+Two defects we found while writing the threat model and did not paper over,
+both in the same mechanism — the rolling 24h budget:
+
+1. A top-up proposal left pending for more than 24 hours, then cancelled,
+   refunds velocity that has already expired and erases unrelated recent spend.
+2. Worse, and cheaper: after any idle gap longer than the window,
+   `_rollBuckets` clamps how far it advances the window but never advances the
+   bucket index, so **every** call re-zeroes the whole accumulator. Coming back
+   after a quiet week, a user can spend the daily limit over and over in a
+   single block, while `velocityNow` reports zero. Measured: **$6,000 released
+   in one block against a stated $1,000 per 24 hours.** It needs no setup and
+   no waiting.
+
+An earlier version of this answer said the ceiling was "about twice the daily
+limit in a window, with a day of setup". That was derived from defect 1 alone
+and it is wrong: the two compose, and defect 2 has no ceiling of its own.
+
+What does hold: **the protected floor.** It is a separate check on
+`balance - amount`, neither defect touches it, and a reproduction attempt
+against a vault with a high floor is refused with `ProtectedFloorBreached`. So
+the total that can leave is bounded at `balance - protectedFloor`, the money
+can still only reach a pre-registered destination, and a live loss cooldown
+still blocks every top-up path. The honest summary is that the **floor**, not
+the daily limit, is the number a user should be relying on.
+
+Both are pinned by `contracts/test/KnownDefects.t.sol` so they cannot change
+unnoticed, and written up in full in `docs/THREAT_MODEL.md` (Known gaps 1 and
+3). The same clamp is in the Solana v0 program
+(`programs/shield-vault/src/state.rs`), which is not deployed. The contract is
+immutable, so these are disclosed limitations rather than fixes; the repair
+belongs to a v2.
 
 **What if they genuinely need the money?**
 Two exits, neither of which any cooldown can block. Up to the emergency cap
 moves to their own registered cold wallet instantly — subject to the protected
-floor and the shared 24h budget, so it is not unconditional. Anything larger,
+floor and the shared 24h budget, so it is not unconditional. (A vault sitting
+at its floor cannot make an instant cold transfer at all.) Anything larger,
 including everything, is a full exit at the delay they chose (7 days by
 default, 1 hour minimum), and a full exit ignores the floor entirely. Nothing
 is custodial at any point.
@@ -185,12 +212,14 @@ a bad year.
 
 **What is enforced on-chain, and what is convention?**
 Enforced by `ShieldVault.sol`, with no way around it: the protected floor; the
-rolling 24h release budget; the large-amount threshold that pushes a big
+large-amount threshold that pushes a big
 top-up onto the delayed path; the cooldown, which blocks every top-up path and
 which no function can shorten; the destination registry and its permanent
 types; instant tightening; delayed loosening with mandatory reconfirmation;
 staleness of any proposal that a tightening has overtaken; the exit delay; and
-the exact bound on what a risk verdict may do.
+the exact bound on what a risk verdict may do. The rolling 24h release budget
+is also enforced on-chain, but it has the two defects described above and does
+not hold across an idle gap; the floor does.
 
 Convention, i.e. the server and the app: which sessions are grouped together,
 what counts as a realised loss, when a verdict gets signed at all, every
@@ -374,7 +403,7 @@ of them. The verifiable form is direct:
 ```
 cast tx 0x94960d1f937a3e36e1b16e69922a2579e77b584ed25b2ced044da7991fe889be --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
 cast call 0xcdB6d631A00857584e70a21d800f51C5776302Fe "usdc()(address)" --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
-cd contracts && forge install foundry-rs/forge-std --no-git && forge test    # 41 passing
+cd contracts && forge install foundry-rs/forge-std --no-git && forge test    # 44 passing
 ```
 
 On HyperEVM mainnet `hyperevmscan.io` works — one more reason the mainnet
