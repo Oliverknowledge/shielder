@@ -42,8 +42,11 @@ export function Replay({ replay, mode, onReachedReload, onFinished, protectedAmo
   availableAmount?: number;
 }) {
   const reduce = useReducedMotion();
-  const { pts, reloadAt } = useMemo(() => compress(replay.timeline, replay.reloadIndex), [replay]);
-  const [pos, setPos] = useState(reduce ? pts.length - 1 : 0); // index of the last drawn point
+  const { pts, reloadAt } = useMemo(() => compress(replay.timeline ?? [], replay.reloadIndex), [replay]);
+  const last = Math.max(0, pts.length - 1);
+  const [pos, setPosRaw] = useState(reduce ? last : 0); // index of the last drawn point
+  const clampPos = (v: number) => (Number.isFinite(v) ? Math.min(last, Math.max(0, v)) : 0);
+  const setPos = (v: number | ((p: number) => number)) => setPosRaw((p) => clampPos(typeof v === "function" ? v(p) : v));
   const [playing, setPlaying] = useState(!reduce);
   const [held, setHeld] = useState(false); // paused on the reload
   const raf = useRef<number | null>(null);
@@ -93,16 +96,18 @@ export function Replay({ replay, mode, onReachedReload, onFinished, protectedAmo
   const span = Math.max(1, maxY - minY);
   const x = (i: number) => PAD.l + (i / Math.max(1, pts.length - 1)) * (W - PAD.l - PAD.r);
   const y = (v: number) => PAD.t + ((maxY - v) / span) * (H - PAD.t - PAD.b);
-  const shown = Math.floor(pos);
-  const frac = pos - shown;
-  const cur = pts[Math.min(pts.length - 1, shown)];
-  const nxt = pts[Math.min(pts.length - 1, shown + 1)];
+  const safePos = clampPos(pos);
+  const shown = Math.floor(safePos);
+  const frac = safePos - shown;
+  const cur = pts[Math.min(last, shown)] ?? pts[0];
+  const nxt = pts[Math.min(last, shown + 1)] ?? cur;
   const curY = cur.y + (nxt.y - cur.y) * frac;
   const path = (upTo: number) => pts.slice(0, upTo + 1).map((p, k) => `${k === 0 ? "M" : "L"}${x(p.i).toFixed(1)},${y(p.y).toFixed(1)}`).join(" ");
   const headX = x(shown) + (x(shown + 1) - x(shown)) * frac;
   const headY = y(curY);
-  const reloadPt = pts[reloadAt];
+  const reloadPt = pts[reloadAt] ?? cur;
   const inCf = mode === "counterfactual";
+  if (pts.length === 0 || !cur) return <div className="replay"><p className="small" style={{ color: "#cfcbc2" }}>This session has no closes to draw.</p></div>;
   const reloads = pts.filter((p) => p.ev.kind === "in" && p.i > 0);
   const label = inCf ? replay.pnlAtReload : curY;
 

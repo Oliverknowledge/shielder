@@ -350,7 +350,7 @@ export function Onboard() {
 /** The replay must never take the whole flow down with it. */
 class Boundary extends Component<{ children: ReactNode; fallback: (msg: string) => ReactNode }, { msg: string | null }> {
   state = { msg: null as string | null };
-  static getDerivedStateFromError(e: unknown) { return { msg: e instanceof Error ? e.message : String(e) }; }
+  static getDerivedStateFromError(e: unknown) { console.error("Replay failed", e); return { msg: e instanceof Error ? e.message : String(e) }; }
   render() { return this.state.msg ? this.props.fallback(this.state.msg) : this.props.children; }
 }
 
