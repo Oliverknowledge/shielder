@@ -58,3 +58,8 @@ substreams-evm/src/abi_shield_vault.rs
 
 # The CRE CLI rewrites this ~900 KB bundle on every `cre workflow simulate`.
 cre/shield-risk/.cre_build_tmp.js
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
