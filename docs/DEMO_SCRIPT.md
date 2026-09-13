@@ -228,6 +228,43 @@ dollars of testnet USDC in the venue wallet.
 
 ---
 
+## Pre-flight: ALREADY DONE — the loss beat is armed
+
+Executed 2026-09-13 11:55 UTC. Do not repeat it; just check it is
+still true before you roll.
+
+- Loss trigger tightened **$7 -> $1** on the demo vault, instantly, in tx
+  `0xf0dca94d0880bc50650d4342ea19415061fb2bad325ab5c4c0f00539b73974d6`
+  (block 64158718, `configVersion` 2 -> 3). Tightening needs no wait; that is
+  the point, and it is worth saying on camera.
+- A **real loss** was then taken on Hyperliquid testnet from the registered
+  trading account with `scripts/hyperevm-losing-trade.ts`: fourteen BTC round
+  trips at 40x, realised **-$1.89** against a $1.00 trigger.
+- `/api/vault/0x9872…` now reports `triggered: true`, `actionable: true`,
+  `realizedLossUsdc: 1888661`, headline *"You realised $1.89 in losses in the
+  last 24 hours. Your rule pauses new capital for 12h."*
+- The vault is deliberately **not in cooldown yet**: `cooldownUntil` is in the
+  past and `lastVerdictNonce` is 1. That is what lets the Chainlink beat arm it
+  live — the enclave signs nonce 2 on camera. **Do not run `cre workflow
+  simulate` before the take**, or the vault will already be LOCKED and the
+  enclave will correctly refuse to descend further, which kills the beat.
+
+Check it is still armed (the 24h window holds until roughly this time tomorrow):
+
+```bash
+curl -s localhost:8788/api/vault/0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006 \
+  | jq '.assessment | {triggered, realizedLossUsdc, headline}'
+```
+
+If `triggered` has gone false because the window rolled, re-arm with one command
+(the trigger is already $1, so this is all that is needed):
+
+```bash
+EVM_DEPLOYER_KEY=0x… bun run scripts/hyperevm-losing-trade.ts 1.0 0 8
+```
+
+<details><summary>Original pre-flight, kept for the record</summary>
+
 ## Pre-flight: arm the loss beat (do this FIRST, ~15 min)
 
 Checked against chain and the Hyperliquid testnet API on **2026-09-13**.
@@ -274,6 +311,8 @@ to meet it.
    ```
    Do not start the take until `triggered` is `true`. Then the 1:38 status pill
    and the 2:30 *Not tonight* screen are both live and true.
+
+</details>
 
 **Two servers, both up before you roll.** The HyperEVM one on `:8788` for the
 app, and the Sepolia one on `:8790` for the 2:18 Graph beat (command in prep
