@@ -109,7 +109,10 @@ export function Onboard() {
       const rest = others ?? extra;
       const all = [a.trim(), ...rest.filter((e) => isAddr(e) && e.toLowerCase() !== a.trim().toLowerCase())];
       const p = await getJson<HlProfileJson>(`${API_URL}/api/hyperliquid/${all.join(",")}?network=${network ?? net}`);
-      const wait = Math.max(0, 3200 - (Date.now() - started));
+      // The analysis itself takes about a second; this floor exists so the
+      // "reading your history" step is legible rather than a flash. 3.2s was
+      // long enough to feel like waiting for nothing.
+      const wait = Math.max(0, 1600 - (Date.now() - started));
       await new Promise((r) => setTimeout(r, wait));
       setProfile(p);
       if (p.recommendation) setPlan({ normal: p.recommendation.normalDailyUsd, reduced: p.recommendation.reducedDailyUsd, reducedAt: p.recommendation.reducedAtUsd, lockAt: p.recommendation.lockAtUsd });

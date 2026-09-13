@@ -12,8 +12,13 @@ export type ReplayMode = "play" | "counterfactual";
 
 interface Point { i: number; t: number; y: number; ev: TimelineEventJson }
 
+/** Total play time, independent of how many fills the session contains. */
+const RUN_MS = 9000;
+
 const fmt = (n: number) => `${n < 0 ? "−" : n > 0 ? "+" : ""}$${Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 const clock = (ms: number) => new Date(ms).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+/** The session is one afternoon, so the date is fixed; showing it makes clear this is a real day and not a simulation. */
+const dayStamp = (ms: number) => new Date(ms).toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short" });
 
 /** Keep every capital event and the reload; thin long runs of small closes so the line stays legible. */
 function compress(tl: TimelineEventJson[], keep: number, max = 140): { pts: Point[]; reloadAt: number } {
@@ -64,10 +69,16 @@ export function Replay({ replay, mode, onReachedReload, onFinished, protectedAmo
     const step = (now: number) => {
       const dt = now - last; last = now;
       setPos((p) => {
-        const next = Math.min(pts.length - 1, p + dt / (p < reloadAt ? 90 : 140)); // ~11 points/s before the reload, slower after
+        // Fixed total runtime rather than a fixed points-per-second: a busy
+        // session used to run for 20+ seconds purely because it had more fills.
+        // The stretch after the reload is deliberately slower — that is the part
+        // worth watching — but the whole thing lands in about nine seconds.
+        const beforeMs = (RUN_MS * 0.28) / Math.max(1, reloadAt);
+        const afterMs = (RUN_MS * 0.72) / Math.max(1, pts.length - 1 - reloadAt);
+        const next = Math.min(pts.length - 1, p + dt / (p < reloadAt ? beforeMs : afterMs));
         if (!firedReload.current && next >= reloadAt && p < reloadAt) {
           firedReload.current = true; setHeld(true); onReachedReload?.();
-          setTimeout(() => { setHeld(false); }, 1800);
+          setTimeout(() => { setHeld(false); }, 1100);
           return reloadAt;
         }
         return next;
@@ -116,7 +127,12 @@ export function Replay({ replay, mode, onReachedReload, onFinished, protectedAmo
       <div className="replay-head">
         <div>
           <div className="replay-eyebrow">{inCf ? "SHIELD WOULD STEP IN HERE" : shown >= pts.length - 1 ? "SESSION FINISHED" : shown < reloadAt ? "SESSION" : "AFTER THE RELOAD"}</div>
-          <div className="replay-time">{clock(cur.t)}</div>
+          <div className="replay-time">
+            <span className="replay-date">{dayStamp(cur.t)}</span> · {clock(cur.t)}
+            {!inCf && shown > reloadAt && curY < replay.pnlAtReload && (
+              <span className="replay-since"> · {fmt(curY - replay.pnlAtReload)} since the reload</span>
+            )}
+          </div>
         </div>
         <div className={`replay-pnl ${label < 0 ? "neg" : label > 0 ? "pos" : ""}`}>{fmt(label)}</div>
       </div>

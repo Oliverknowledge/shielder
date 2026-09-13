@@ -41,6 +41,9 @@
 .replay-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-bottom: 6px; }
 .replay-eyebrow { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #a6a29a; font-weight: 600; }
 .replay-time { font-family: var(--mono); font-size: 13px; color: #cfcbc2; margin-top: 4px; }
+.replay-date { color: #8d8880; }
+/* The number that answers "how much did the reload cost", updated as the line draws. */
+.replay-since { color: #e5484d; }
 .replay-pnl { font-size: clamp(32px, 6vw, 48px); font-weight: 600; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; line-height: 1; }
 .replay-pnl.neg { color: #ff6b62; } .replay-pnl.pos { color: #7fd1a3; }
 .replay-svg { width: 100%; height: auto; display: block; }
