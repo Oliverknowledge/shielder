@@ -223,6 +223,65 @@ dollars of testnet USDC in the venue wallet.
 
 ---
 
+## Pre-flight: arm the loss beat (do this FIRST, ~15 min)
+
+Checked against chain and the Hyperliquid testnet API on **2026-09-13**.
+
+**The problem.** The demo vault's cooldown has expired. `/api/health` and
+`/api/vault/0x9872…` now report `triggered: false`, `realizedLossUsdc: 0`,
+*"Realised losses in the last 24 hours: $0, below your $7 trigger."* The 1:38
+and 2:30 beats — the two the whole video exists for — cannot be filmed in this
+state. `FACTS.md` describes this vault as LOCKED; that was true on 2026-09-07
+and the 12h cooldown has long since run out.
+
+**You do not need the faucet.** `FACTS.md` says test USDC is exhausted, but the
+registered trading account `0xE7c2Adb4…967A1` holds **$4.74 in perps,
+withdrawable, with no open positions**, and the funder `0x05a7a130…88DCb` holds
+**1.53 HYPE** for gas. That is enough, because the loss trigger can be lowered
+to meet it.
+
+**Lowering `lossTriggerUsdc` is a TIGHTENING, so it is instant**
+(`ShieldVault.sol:424` — `tighten` reverts if the new trigger is *higher*). No
+24-hour wait. Better still, it is a beat worth filming: it is the product's
+"toward safety is instant" claim, done live.
+
+1. **Sign in as the demo vault.** Welcome → *Continue with a demo key
+   (hyperevm-testnet)* → paste `.shield/hyperevm-keys.json` → `authority`
+   (`0x9872f09D…dB006`). The screen names the expected authority, so you can
+   check you pasted the right one before you commit to a take.
+2. **Tighten the loss trigger, on camera, from $7 to $1.** Protection → *Loss
+   trigger* → `1` → confirm. One transaction, effective in that block. Say what
+   it is while you do it: "tightening is instant, and this is the contract
+   letting me do it in one block."
+3. **Stage a real loss with what the account already has.**
+   ```bash
+   EVM_DEPLOYER_KEY=0x… bun run scripts/hyperevm-losing-trade.ts 1.5 0
+   ```
+   The `0` is the important argument: trade with the balance already in the
+   account instead of trying to fund it. It round-trips a BTC position with IOC
+   orders until the venue's own `closedPnl - fees` reaches about `-1.5`, which
+   clears the $1 trigger you just set. This is a real fill on Hyperliquid
+   testnet, not a simulation.
+4. **Let the server see it, then check before you roll.**
+   ```bash
+   curl -s localhost:8788/api/vault/0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006 \
+     | jq '.assessment | {triggered, realizedLossUsdc, headline}'
+   ```
+   Do not start the take until `triggered` is `true`. Then the 1:38 status pill
+   and the 2:30 *Not tonight* screen are both live and true.
+
+**Two servers, both up before you roll.** The HyperEVM one on `:8788` for the
+app, and the Sepolia one on `:8790` for the 2:18 Graph beat (command in prep
+note 4). They are different chains and do not conflict.
+
+**One vault per segment.** The Privy beat signs in with email and lands on the
+Privy wallet; the vault beats need the demo key above. Cut between them — the
+script already alternates app and terminal, so it reads as editing, not as a
+problem. Privy's functional-flow evidence is the `cast tx` at 1:10, which needs
+no app state at all.
+
+---
+
 ## Shot list
 
 Timings are cumulative. Cut points are marked **[CUT]** — the take will have
