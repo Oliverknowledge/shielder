@@ -55,10 +55,49 @@ Scope discipline, because every sponsor track wants a short video:
    so the run reports `actionable: false` and writes nothing. That is the
    correct, repeatable, gas-free take — and the banner and `[USER LOG]` line
    that Chainlink's criterion names are both in it.
-4. **Substreams rows for the demo vault.** The Graph indexes HyperEVM
-   **mainnet (999)** only; the vault is on testnet (998). The run completes and
-   returns zero rows. Say this out loud — the server says it too.
-5. **`bun run demo:evm loss` / `return`.** Hardcoded to Anvil (chain 31337) and
+4. **Substreams rows for the HyperEVM vault.** The Graph indexes HyperEVM
+   **mainnet (999)** only; the product vault is on testnet (998), so that
+   package completes with zero rows. Do not film that package. Film the
+   **Sepolia twin** instead (§ the 2:18 beat): same bytecode, same pipeline,
+   real rows, and the Shield server consuming them with
+   `source.mode = "substreams"`. Start that server before the take:
+
+   ```bash
+   SHIELD_PORT=8790 EVM_CHAIN_ID=11155111 \
+     EVM_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com \
+     SHIELD_VAULT_ADDRESS=0xf1ef03Ea258EF652939bAC0250d1CDe9B5EF4f6A \
+     USDC_ADDRESS=0xb0Cbbeb2783E3965036Db1740911be45ad389837 \
+     EVM_START_BLOCK=11654048 SHIELD_MONITOR=0 bun run server/evm-index.ts
+   ```
+
+   Say the twin out loud once — it is in the repo, in the evidence and in the
+   submission text, so owning it costs nothing and hiding it would cost the
+   entry. What you must **not** say is "it returns no rows": that is the v2
+   position, it is no longer true, and The Graph's criteria disqualify mocked or
+   static datasets, so a judge hearing it may stop there.
+5. **DO NOT deposit from the Privy wallet on camera.** Read back from chain on
+   2026-09-13: `0x83144b99…` **does** have a v3 vault, and its protected floor is
+   **$8,050** against a **$0** balance. The wallet holds $20 of test USDC. Deposit
+   that $20 and the releasable slice is $0 — every release reverts with
+   `ProtectedFloorBreached`, not with the loss rule — and lowering a floor is a
+   *loosening*, so it waits 24 hours and cannot be fixed before the deadline. On
+   camera that reads as a broken product, and it would make the 1:38 narration
+   ("my own rule fired") simply false.
+
+   **Film Privy as the identity beat only:** sign in with email, open the address
+   pill, show that this wallet is the vault's authority and that the contract
+   takes orders from no other address. Privy's functional-flow clause is already
+   satisfied by the $5.00 release at 1:10, which is a real transaction from that
+   same wallet and is proved on screen with `cast tx` — a terminal proof, so it
+   does not need the app to cooperate.
+
+   If you want a live Privy deposit badly enough to spend twenty minutes on it,
+   the only safe version is a **fresh** Privy wallet (new email → no vault →
+   onboarding proposes rules from history → sane floor), funded by transferring
+   the $20 USDC across from `0x83144b99…`, which holds 0.3 HYPE for gas. Higher
+   reward, real on-camera risk. Decide before you start, not during a take.
+
+6. **`bun run demo:evm loss` / `return`.** Hardcoded to Anvil (chain 31337) and
    it throws on testnet by design. Do not put it in the video.
 
 ---
@@ -199,15 +238,17 @@ dead air there; remove it in the edit.
 | 1:10 | 0:12 | Activity | Point at the row **Sent $5.00 to Hyperliquid**. Then terminal: `cast tx 0x94960d1f937a3e36e1b16e69922a2579e77b584ed25b2ced044da7991fe889be from --rpc-url $EVM_RPC_URL` | "That release is one transaction, and `from` is the Privy wallet — it signed it itself. Inside that transaction the money walks vault → Circle's deposit contract → the HyperCore system address. That's it landing in my Hyperliquid account, which is the number you just saw." |
 | 1:22 | 0:16 | Protection, then terminal | Read the loss rule in the user's own words. Then run the venue's return (below). **[CUT 20–45 s while the indexer and monitor catch up]** | "This is the rule, in my words, written before I started. Now I trade, and it goes badly: my trading account sends back a fraction of what it took. Nothing here calls Shield. Shield is watching the chain." |
 | 1:38 | 0:14 | Home (refreshes itself) | Status pill flips to **New capital paused**; the releasable slice greys out; the strip reads "your loss rule fired after $X in losses" with a countdown. | "My own rule fired. The server saw the flows, an EIP-712 verdict was signed and relayed, and the vault armed the pause itself. Nobody clicked anything." |
-| 1:52 | 0:22 | Terminal | `cre workflow simulate …` (below). Banner + `[USER LOG]` on screen. Then `cast tx 0x2e411cea… --rpc-url $EVM_RPC_URL`. | "The thing that decides this is a Chainlink confidential workflow. It runs in an AWS Nitro enclave — that's the CLI telling me so — and the signing key is a secret released only inside it. That's the log line from inside the enclave. And that transaction is a verdict this enclave signed, on chain, in block 63584417." |
-| 2:14 | 0:16 | Terminal | `bun run substreams:hyperevm` (warm, ~4 s). Then `curl -s localhost:8788/api/health \| jq .substreamsAvailable`. | "Shield's memory is a Substreams package composed on The Graph's `ethereum-common` block index. This is it running live against a Graph Market provider. And the honest bit: The Graph indexes HyperEVM mainnet, not testnet, so for a testnet vault it returns zero rows — the server says exactly that, and Shield falls back to reading logs itself." |
+| 1:52 | 0:26 | Terminal | `cre workflow simulate …` (below). Banner + the two `[USER LOG]` lines on screen. Then `cast tx 0x089727605059be589a27d668386df4c488204e3feea20fda4a79bbb022b5e2ca --rpc-url $EVM_RPC_URL`. | "The thing that decides this is a Chainlink confidential workflow, in an AWS Nitro enclave — that's the CLI telling me so. And here is the part that matters. The number that decides how bad a session has to get before my reload budget shrinks is *mine*. It never goes on chain. The chain holds a salted hash of it; the plaintext is a secret released only inside the enclave. The enclave reads my fills, compares them to my private number, and emits one thing: a rung. Tier, hash, nonce, expiry. No threshold, no dollar figure. That transaction is that verdict, accepted by an immutable contract that will only ever let a verifier move me *down* a ladder I wrote myself." |
+| 2:18 | 0:22 | Terminal (Sepolia server already running on :8790 — start it before the take) | `curl -s localhost:8790/api/health \| jq '{source, vaults}'` → `mode: "substreams"`, connected, live head. Then `curl -s localhost:8790/api/vault/0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006/flows \| jq '.source, [.flows[] | {kind, amount, counterpartyIsExecution}]'` → three rows. | "Shield's memory is a Substreams package composed on The Graph's `ethereum-common` block index — I never wrote a log scanner. This is the Shield server reading it live from a Graph Market provider: source is substreams, and these are my flows coming back already classified. Ten thousand in. Fifteen hundred out to the trading wallet — the package knows that's a release, not a transfer. Eighty coming back from that same wallet. That classification is exactly what tells Shield I reloaded while I was down. And it found the vault on its own, from the stream. One honest note: this runs on a Sepolia twin of the same contract, because The Graph has no HyperEVM testnet entry — same bytecode, same pipeline, same package." |
 | 2:30 | 0:26 | App → **Add trading funds** | The screen leads with **Release blocked / Not tonight.** Move slowly down: *You decided this before you started trading* → **Your rule** in the user's words → **Still protected** → **Available again in**. Do not click anything. | "This is the moment the product exists for. I'm reaching for capital I already decided not to risk. It doesn't lecture me and it doesn't offer me a button. It shows me what I wrote, what's still protected, and when I get to decide again." |
 | 2:56 | 0:16 | Terminal | `cast call … instantTopUp … --from $PRIVY` → `execution reverted: CooldownActive` | "And that refusal isn't the app being polite. That's the contract on HyperEVM, refusing the identical call. Shield asks it first so I don't pay gas to be told no — but the no comes from the chain." |
 | 3:12 | 0:08 | App | Click **I still really want to trade**, show there is no unlock at the end of it, back out. Click **End my session**. | "There's no override at the end of this. Safer is instant. Less safe waits 24 hours and then has to ask me again." |
 | 3:20 | 0:10 | Home, hold | — | "Calm me sets the limits. Tilted me can't undo them tonight. Real contract, real Hyperliquid account, real refusal." |
 
-**Total 3:30.** Under the 4:00 ceiling with 30 seconds of slack for the Privy
-sign-in running long.
+**Total 3:42.** Under the 4:00 ceiling with 18 seconds of slack for the Privy
+sign-in running long. If you are over, cut the 0:58 venue-panel beat to 0:08 and
+the 3:12 override beat to 0:06 — never the Chainlink or Graph beats, which are
+the two the sponsor judges score.
 
 ---
 
