@@ -1,5 +1,12 @@
 # Shield
 
+**Try it without installing anything: https://palenque-sigma.vercel.app/start**
+Press "Try with an example account", or paste any Hyperliquid mainnet address
+including your own. No wallet, no signature, no deposit. It reads that account's
+public history and replays the session where they added capital while already
+down — and shows what Shield's rules would have released instead.
+
+
 Shield is a self-custodial commitment vault for people who trade. While calm
 you decide how much money is trading money and how much is not. The trading
 money goes to your Hyperliquid account; the rest stays in a vault only you
