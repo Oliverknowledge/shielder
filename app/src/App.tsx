@@ -5,6 +5,7 @@ import { ToastHost, Icon, Skeleton } from "./components/ui";
 import { Welcome } from "./pages/Welcome";
 import { Landing } from "./pages/Landing";
 import { Setup } from "./pages/Setup";
+import { Onboard } from "./pages/Onboard";
 import { Overview } from "./pages/Overview";
 import { AddFunds } from "./pages/TopUp";
 import { Behaviour } from "./pages/Behaviour";
@@ -133,22 +134,23 @@ function Shell() {
     // Only send someone to onboarding once a read has actually said "no vault".
     // A rate-limited or dropped RPC call must never look like a missing vault.
     if (loading || !vaultKnown) return <LoadingPage />;
-    if (!hasVault) return <Navigate to="/setup" replace />;
+    if (!hasVault) return <Navigate to="/start" replace />;
     return el;
   };
 
-  const landing = !signer && (location.pathname === "/" || location.pathname === "/landing");
-  if (landing) return <Landing />;
+  // Signed out: the story starts with the trader's own history, not a dashboard. The long-form landing page stays at /landing.
+  if (!signer && location.pathname === "/landing") return <Landing />;
+  if (!signer && (location.pathname === "/" || location.pathname === "/start")) return <div className="shell"><Onboard /></div>;
 
   return (
     <div className="shell">
       <header className="topbar">
-        <NavLink to={signer && hasVault ? "/" : "/welcome"} className="brand" aria-label="Shield home">
+        <NavLink to={signer && hasVault ? "/" : "/start"} className="brand" aria-label="Shield home">
           <Icon name="shield" size={22} />
           <span>Shield</span>
           {NETWORK !== "mainnet-beta" && <span className="net">{NETWORK}</span>}
         </NavLink>
-        {signer && hasVault && (
+        {signer && hasVault && location.pathname !== "/start" && (
           <nav className="nav" aria-label="Primary">
             {TABS.map((t) => (
               <NavLink key={t.to} to={t.to} end={t.to === "/"} className={({ isActive }) => (isActive ? "active" : "")}>
@@ -164,6 +166,7 @@ function Shell() {
 
       <Routes>
         <Route path="/welcome" element={<Welcome />} />
+        <Route path="/start" element={<Onboard />} />
         <Route path="/landing" element={<Landing />} />
         <Route path="/setup" element={!signer ? <Navigate to="/welcome" replace /> : !engine && chain === "evm" ? <ConfigMissing error={serverError} /> : <Setup />} />
         <Route path="/" element={gate(<Overview />)} />

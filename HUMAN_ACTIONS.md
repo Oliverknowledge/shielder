@@ -152,6 +152,14 @@ SHIELD_PORT=8788 bun run server:evm    # indexer + monitor + relayer + API on :8
 bun run dev:app:hyperevm               # http://localhost:5174
 ```
 
+**Open the video on the onboarding, not the dashboard.** Signed out at `/`, paste a
+Hyperliquid address (or "Try with an example account": `0xfcc9cf78…`, a public account with
+19 reloads while down), let the analysis run (~15 s of real API calls, shown as steps), read
+the reveal aloud, press Replay, then "Show where Shield steps in", then "Protect me from
+this" → "Use this protection" → sign in → "Protect $250". On 998 a fresh Privy wallet needs
+test USDC first (the wallet `0x83144b99…` already holds $20). That is the product story in
+about a minute; the REDUCED beat below is the proof.
+
 **The REDUCED beat (the strongest 36 seconds, `docs/internal/research/I-wow-judge.md`).**
 On the demo vault once NORMAL: release $5 (allowed; `cast call … instantTopUp` returns `0x`),
 run `EVM_EXECUTION_KEY=<execution> bun run scripts/hyperevm-losing-trade.ts 3.5 0 30` so the

@@ -3,6 +3,11 @@
 One take, HyperEVM testnet (chain 998), the deployed `ShieldVault.sol` v3 at
 `0xDaA8B6a85391d54397c3847F006a49A16d0F37b3`.
 
+**Open on the onboarding** (`/` signed out): example account → analysis steps →
+"You were down $43 when you added another $300" → replay → "Shield would step in
+here", $300 → $140 available / $160 protected → "Protect me from this" → plan →
+sign in → Protect $250 → Shield active. About 60 seconds, all real history.
+
 **New in v3, and the beat to build the take around:** the REDUCED rung. The
 shot list, the exact `cast call` that goes from `0x` to
 `VelocityThresholdExceeded` (`0x54debb02`) and back to `0x` for a smaller

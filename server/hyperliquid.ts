@@ -46,6 +46,46 @@ export interface HlSession {
   firstLossAt: number | null;
   firstReloadAfterLossAt: number | null;
   hashes: string[];
+  /** The session as it happened, in order: closes (pnl delta) and capital in/out. Real data only. */
+  timeline: TimelineEvent[];
+}
+
+export interface TimelineEvent {
+  time: number; // ms
+  kind: "close" | "in" | "out";
+  /** For closes: closedPnl − fee. For in/out: the USD amount (positive). */
+  amount: number;
+  /** Realised session PnL after this event. */
+  running: number;
+  /** True for a capital addition made while the session's realised PnL was negative. */
+  afterLoss?: boolean;
+}
+
+/** The one session Shield replays: the reload while down that was followed by the most further loss. */
+export interface ReplaySession {
+  openedAt: number;
+  closedAt: number | null;
+  timeline: TimelineEvent[];
+  /** Index into `timeline` of the reload Shield would have stepped in on. */
+  reloadIndex: number;
+  reloadAmount: number;
+  pnlAtReload: number; // negative
+  /** Realised PnL `minutesAfter` minutes after the reload (or at session end if sooner). */
+  pnlAfter: number;
+  minutesAfter: number;
+  finalPnl: number;
+  deployed: number;
+}
+
+/** A plan derived from the trader's own numbers. Every figure has a stated source. */
+export interface Recommendation {
+  normalDailyUsd: number; // release budget while NORMAL
+  reducedDailyUsd: number; // release budget while REDUCED
+  reducedAtUsd: number; // private: session drawdown that moves to REDUCED
+  lockAtUsd: number; // public: realised loss that pauses funding
+  basis: string;
+  /** What the plan would have done at the replayed reload: nothing about outcomes. */
+  counterfactual: { reloadAmount: number; available: number; protected: number } | null;
 }
 
 export interface HlProfile {
@@ -63,6 +103,9 @@ export interface HlProfile {
   /** One sentence the data supports, or null if there isn't enough history. */
   insight: string | null;
   suggestions: Array<{ key: "chasing" | "reloads" | "savings"; text: string }>;
+  /** The session Shield replays, or null when the history has no reload-while-down followed by further loss. */
+  replay: ReplaySession | null;
+  recommendation: Recommendation | null;
   source: "hyperliquid-info-api";
 }
 
@@ -166,21 +209,24 @@ export function deriveSessions(ledger: LedgerUpdate[], fills: Fill[], user: stri
       cur = null;
     }
     if (!cur) {
-      cur = { openedAt: e.time, closedAt: null, deployed: 0, returned: 0, realisedPnl: 0, fills: 0, reloads: 0, reloadsAfterLoss: 0, firstLossAt: null, firstReloadAfterLossAt: null, hashes: [] };
-      if (e.kind === "in") cur.deployed += e.amount;
+      cur = { openedAt: e.time, closedAt: null, deployed: 0, returned: 0, realisedPnl: 0, fills: 0, reloads: 0, reloadsAfterLoss: 0, firstLossAt: null, firstReloadAfterLossAt: null, hashes: [], timeline: [] };
+      if (e.kind === "in") { cur.deployed += e.amount; cur.timeline.push({ time: e.time, kind: "in", amount: e.amount, running: 0 }); }
     } else if (e.kind === "in") {
       cur.deployed += e.amount;
       cur.reloads += 1;
-      if (cur.realisedPnl < 0) {
+      const afterLoss = cur.realisedPnl < 0;
+      if (afterLoss) {
         cur.reloadsAfterLoss += 1;
         if (cur.firstReloadAfterLossAt === null) cur.firstReloadAfterLossAt = e.time;
       }
+      cur.timeline.push({ time: e.time, kind: "in", amount: e.amount, running: cur.realisedPnl, afterLoss });
     }
-    if (e.kind === "out") cur.returned += e.amount;
+    if (e.kind === "out") { cur.returned += e.amount; cur.timeline.push({ time: e.time, kind: "out", amount: e.amount, running: cur.realisedPnl }); }
     if (e.kind === "fill") {
       cur.realisedPnl += e.pnl;
       cur.fills += 1;
       if (cur.realisedPnl < 0 && cur.firstLossAt === null) cur.firstLossAt = e.time;
+      if (e.pnl !== 0) cur.timeline.push({ time: e.time, kind: "close", amount: e.pnl, running: cur.realisedPnl });
     }
     if (e.hash && cur.hashes.length < 12 && !cur.hashes.includes(e.hash)) cur.hashes.push(e.hash);
     last = e.time;
@@ -191,6 +237,62 @@ export function deriveSessions(ledger: LedgerUpdate[], fills: Fill[], user: stri
     sessions.push(cur);
   }
   return sessions.filter((s) => s.fills > 0 || s.deployed > 0);
+}
+
+const round5 = (n: number) => Math.max(5, Math.round(n / 5) * 5);
+
+/** The reload-while-down that was followed by the most further realised loss. */
+export function pickReplay(sessions: HlSession[]): ReplaySession | null {
+  let best: ReplaySession | null = null;
+  for (const s of sessions) {
+    s.timeline.forEach((ev, i) => {
+      if (ev.kind !== "in" || !ev.afterLoss || ev.running >= 0) return;
+      const after = s.timeline.slice(i + 1).filter((x) => x.kind === "close");
+      if (after.length === 0) return;
+      const horizonMs = 60 * 60 * 1000;
+      const within = after.filter((x) => x.time - ev.time <= horizonMs);
+      const at = within.length ? within[within.length - 1] : after[0];
+      const furtherLoss = ev.running - s.realisedPnl; // positive when the session ended lower than at the reload
+      if (furtherLoss <= 0) return;
+      const cand: ReplaySession = {
+        openedAt: s.openedAt,
+        closedAt: s.closedAt,
+        timeline: s.timeline,
+        reloadIndex: i,
+        reloadAmount: ev.amount,
+        pnlAtReload: ev.running,
+        pnlAfter: at.running,
+        minutesAfter: Math.max(1, Math.round((at.time - ev.time) / 60000)),
+        finalPnl: s.realisedPnl,
+        deployed: s.deployed,
+      };
+      if (!best || furtherLoss > best.pnlAtReload - best.finalPnl) best = cand;
+    });
+  }
+  return best;
+}
+
+/** Numbers from the trader's own history; each rounded to something a person would write. */
+export function recommend(sessions: HlSession[], typical: number | null, replay: ReplaySession | null): Recommendation | null {
+  const deposits = sessions.flatMap((s) => s.timeline.filter((e) => e.kind === "in").map((e) => e.amount)).filter((a) => a > 0);
+  if (deposits.length === 0 && !replay) return null;
+  const base = typical ?? median(deposits) ?? replay?.reloadAmount ?? 0;
+  if (!(base > 0)) return null;
+  const normalDailyUsd = round5(base);
+  const reducedDailyUsd = round5(Math.max(5, base * 0.15));
+  const lossSessions = sessions.filter((s) => s.realisedPnl < 0).map((s) => -s.realisedPnl).sort((a, b) => a - b);
+  const medLoss = median(lossSessions) ?? base * 0.25;
+  const reducedAtUsd = round5(Math.max(10, Math.min(medLoss, base * 0.35)));
+  const lockAtUsd = round5(Math.max(reducedAtUsd * 2, base * 0.75));
+  const counterfactual = replay ? { reloadAmount: replay.reloadAmount, available: Math.min(reducedDailyUsd, replay.reloadAmount), protected: Math.max(0, replay.reloadAmount - Math.min(reducedDailyUsd, replay.reloadAmount)) } : null;
+  return {
+    normalDailyUsd,
+    reducedDailyUsd,
+    reducedAtUsd,
+    lockAtUsd,
+    basis: `Your typical session deploys ${usd(base)}; your median losing session costs ${usd(medLoss)}.`,
+    counterfactual,
+  };
 }
 
 export function summarise(address: string, network: HlNetwork, sessions: HlSession[], now = Date.now()): HlProfile {
@@ -246,11 +348,38 @@ export function summarise(address: string, network: HlNetwork, sessions: HlSessi
     worstSessionsWithReload: { worst: worstN.length, withReload: worstWithReload },
     insight,
     suggestions,
+    replay: pickReplay(sessions),
+    recommendation: recommend(sessions, typical, pickReplay(sessions)),
     source: "hyperliquid-info-api",
   };
 }
 
-export async function analyseHyperliquid(address: string, network: HlNetwork): Promise<HlProfile> {
+const CACHE_MS = 10 * 60 * 1000;
+const sessionCache = new Map<string, { at: number; sessions: HlSession[] }>();
+
+/** Sessions for one account, cached briefly so a second wallet or a re-run does not re-page the venue's API. */
+export async function sessionsFor(address: string, network: HlNetwork): Promise<HlSession[]> {
+  const key = `${network}:${address.toLowerCase()}`;
+  const hit = sessionCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.sessions;
   const [ledger, fills] = await Promise.all([fetchLedger(network, address), fetchFills(network, address)]);
-  return summarise(address, network, deriveSessions(ledger, fills, address));
+  const sessions = deriveSessions(ledger, fills, address);
+  sessionCache.set(key, { at: Date.now(), sessions });
+  return sessions;
+}
+
+export async function analyseHyperliquid(address: string, network: HlNetwork): Promise<HlProfile> {
+  return summarise(address, network, await sessionsFor(address, network));
+}
+
+/**
+ * Several trading wallets, one trader. Sessions are rebuilt per wallet (they
+ * do not interleave across accounts) and summarised together, so the typical
+ * session, the worst reload and the recommendation see the whole picture.
+ */
+export async function analyseHyperliquidMany(addresses: string[], network: HlNetwork): Promise<HlProfile & { wallets: string[] }> {
+  const unique = [...new Set(addresses.map((a) => a.toLowerCase()))];
+  const per = await Promise.all(unique.map((a) => sessionsFor(a, network)));
+  const sessions = per.flat().sort((a, b) => a.openedAt - b.openedAt);
+  return { ...summarise(unique.join(","), network, sessions), wallets: unique };
 }
