@@ -27,6 +27,11 @@ const USD = 1_000_000n;
 const cfg: EvmConfig = { rpcUrl: RPC, chainId: CHAIN_ID, vault, usdc };
 const chain = viemChain(cfg);
 const pub = createPublicClient({ chain, transport: http(RPC) });
+// The block the indexer should start from. This script stages history onto an
+// already-deployed twin rather than deploying it, so there is no deploy receipt
+// to read: default to the head at the moment staging begins, which covers every
+// flow below, and let EVM_START_BLOCK pin the twin's real deploy block instead.
+const DEPLOY_BLOCK = Number(process.env.EVM_START_BLOCK || (await pub.getBlockNumber()));
 const acct = (k: Hex) => privateKeyToAccount(k);
 const funder = acct(process.env.EVM_DEPLOYER_KEY as Hex);
 const alex = acct(keys.authority), venue = acct(keys.execution), safe = acct(keys.cold), verifier = acct(keys.verifier);
@@ -62,4 +67,4 @@ await send("venue approves the return", venue, { address: usdc, abi: MOCK_USDC_A
 await send(`$${Number(RETURN) / 1e6} comes back via deposit()`, venue, { address: vault, abi: SHIELD_VAULT_ABI, functionName: "deposit", args: [alex.address, RETURN] });
 const after = (await pub.readContract({ address: vault, abi: SHIELD_VAULT_ABI, functionName: "getVault", args: [alex.address] })) as { balance: bigint };
 console.log(`vault balance now $${Number(after.balance) / 1e6}`);
-writeFileSync(".shield/demo-state.evm.sepolia.json", JSON.stringify({ chain: "evm", network: "sepolia", rpcUrl: RPC, chainId: CHAIN_ID, vault, usdc, authority: alex.address, executionWallet: venue.address, coldWallet: safe.address, riskVerifier: verifier.address, createdAt: new Date().toISOString() }, null, 2));
+writeFileSync(".shield/demo-state.evm.sepolia.json", JSON.stringify({ chain: "evm", network: "sepolia", rpcUrl: RPC, chainId: CHAIN_ID, vault, usdc, startBlock: DEPLOY_BLOCK, authority: alex.address, executionWallet: venue.address, coldWallet: safe.address, riskVerifier: verifier.address, createdAt: new Date().toISOString() }, null, 2));

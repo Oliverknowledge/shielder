@@ -28,7 +28,7 @@ export interface EvmDemoState {
 }
 
 export function evmNetworkName(chainId: number): string {
-  return chainId === 999 ? "hyperevm" : chainId === 998 ? "hyperevm-testnet" : chainId === 31337 ? "anvil" : `evm-${chainId}`;
+  return chainId === 999 ? "hyperevm" : chainId === 998 ? "hyperevm-testnet" : chainId === 11155111 ? "sepolia" : chainId === 31337 ? "anvil" : `evm-${chainId}`;
 }
 
 export function evmStatePath(stateDir: string, network: string): string {

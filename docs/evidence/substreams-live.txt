@@ -18,6 +18,12 @@ What this file proves:
 - §4    Solana devnet: the sister package's decoder streams with the same JWT (zero rows: the
         v0 program is not on devnet).
 - §5    Without the JWT the HyperEVM request is refused: authentication is load-bearing.
+- §6    THE SERVER CONSUMING IT. Not a CLI run: the Shield server itself, pointed at the
+        Sepolia twin, reports source.mode="substreams" on /api/health, discovers the vault
+        from Graph rows alone, and serves the three classified flows out of its own store at
+        /api/vault/<authority>/flows with source="substreams". This is what makes The Graph
+        load-bearing rather than demonstrated: the behavioural memory the loss rule reads is
+        arriving from a Graph Market provider.
 - §0    Composition as built: both maps are filtered by the foundational ethereum-common
         index_events block index.
 
@@ -179,3 +185,47 @@ Completed successfully
 ### 5. Negative control — no JWT
 📊 Usage Report: no data received
 Error: stream auth failure: rpc error: code = Unauthenticated desc = unauthenticated
+
+### 6. The server as a Graph consumer — sepolia.eth.streamingfast.io:443
+Run on 2026-09-13. The Shield server, unmodified, pointed at the Sepolia twin:
+
+  SHIELD_PORT=8790 EVM_CHAIN_ID=11155111 \
+  EVM_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com \
+  SHIELD_VAULT_ADDRESS=0xf1ef03Ea258EF652939bAC0250d1CDe9B5EF4f6A \
+  USDC_ADDRESS=0xb0Cbbeb2783E3965036Db1740911be45ad389837 \
+  EVM_START_BLOCK=11654048 SHIELD_MONITOR=0 bun run server/evm-index.ts
+
+[2026-09-13T09:45:32.446Z] sepolia substreams: endpoint=sepolia.eth.streamingfast.io:443 spkg=substreams-evm/shield-evm-behavioral-memory-sepolia-v0.1.0.spkg token=shared (exp 2027-10-28T12:39:13.000Z)
+[2026-09-13T09:45:32.455Z] connecting to sepolia.eth.streamingfast.io:443 module=map_vault_flows from slot 11654048
+[2026-09-13T09:45:32.470Z] Shield EVM server on http://localhost:8790 (sepolia via https://ethereum-sepolia-rpc.publicnode.com); vault=0xf1ef03Ea258EF652939bAC0250d1CDe9B5EF4f6A
+
+$ curl -s localhost:8790/api/health
+{
+  "network": "sepolia",
+  "source": {
+    "mode": "substreams",
+    "connected": true,
+    "headSlot": "11695115",
+    "error": null,
+    "endpoint": "sepolia.eth.streamingfast.io:443"
+  },
+  "substreamsAvailable": "yes",
+  "spkg": "substreams-evm/shield-evm-behavioral-memory-sepolia-v0.1.0.spkg",
+  "vaults": ["0x9872f09d96bca7f878cee9c4bdc8bcca269db006"]
+}
+
+The `vaults` array matters: nothing told the server that address. It was
+discovered from the Graph stream, by store_vault_registry, with no RPC log scan
+on this chain at all.
+
+$ curl -s localhost:8790/api/vault/0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006/flows
+source: substreams
+{"slot": 11654055, "signature": "0x59386782750306d458152b174e8b1a65cfe11fe10353d5f752e80fbd01996ee8", "blockTime": 1788782724, "vault": "0x9872f09d96bca7f878cee9c4bdc8bcca269db006", "kind": "DEPOSIT", "outbound": false, "counterparty": "0x9872f09d96bca7f878cee9c4bdc8bcca269db006", "amount": "10000000000", "counterpartyIsExecution": false}
+{"slot": 11654056, "signature": "0x13a483a32f3948fdb43b76ed5cd1044f49f831298669aef9f814641f1589e495", "blockTime": 1788782736, "vault": "0x9872f09d96bca7f878cee9c4bdc8bcca269db006", "kind": "TOP_UP_INSTANT", "outbound": true, "counterparty": "0xe7c2adb44064e705a2e955770440c527373967a1", "amount": "1500000000", "counterpartyIsExecution": true}
+{"slot": 11654058, "signature": "0x59e0566df0c43caa94ac59e03a3f1c3087ac4fe579a5b5b9bcf88e08a6db27d0", "blockTime": 1788782760, "vault": "0x9872f09d96bca7f878cee9c4bdc8bcca269db006", "kind": "DEPOSIT", "outbound": false, "counterparty": "0xe7c2adb44064e705a2e955770440c527373967a1", "amount": "80000000", "counterpartyIsExecution": false}
+
+Three flows, classified across the vault boundary by the package rather than by
+the server: the $1,500 is marked outbound with counterpartyIsExecution=true (a
+release to the registered trading wallet), and the $80 is the same wallet paying
+back in through deposit(). That classification is what server/behaviour.ts turns
+into reload-after-loss counts, and it arrived over The Graph.

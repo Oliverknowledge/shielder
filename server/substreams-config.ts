@@ -8,18 +8,26 @@
  *   SUBSTREAMS_HYPEREVM_API_TOKEN   optional per-stack override
  *   SUBSTREAMS_SOLANA_ENDPOINT      default devnet.sol.streamingfast.io:443
  *   SUBSTREAMS_HYPEREVM_ENDPOINT    default hyperevm.substreams.pinax.network:443
+ *   SUBSTREAMS_SEPOLIA_ENDPOINT     default sepolia.eth.streamingfast.io:443
  *   SUBSTREAMS_ENDPOINT             legacy alias for the Solana endpoint
+ *
+ * The `sepolia` stack exists because The Graph has no HyperEVM testnet entry in
+ * its networks registry, so the product chain yields no rows. Sepolia carries a
+ * twin of the same ShieldVault bytecode, which is what makes the pipeline a live
+ * Graph consumer rather than a demonstration.
  */
-export type SubstreamsStack = "solana" | "hyperevm";
+export type SubstreamsStack = "solana" | "hyperevm" | "sepolia";
 
 export const DEFAULT_ENDPOINTS: Record<SubstreamsStack, string> = {
   solana: "devnet.sol.streamingfast.io:443",
   hyperevm: "hyperevm.substreams.pinax.network:443",
+  sepolia: "sepolia.eth.streamingfast.io:443",
 };
 
 export const DEFAULT_SPKGS: Record<SubstreamsStack, string> = {
   solana: "substreams/shield-behavioral-memory-v0.2.0.spkg",
   hyperevm: "substreams-evm/shield-evm-behavioral-memory-v0.1.0.spkg",
+  sepolia: "substreams-evm/shield-evm-behavioral-memory-sepolia-v0.1.0.spkg",
 };
 
 export interface SubstreamsConfig {

@@ -17,7 +17,7 @@ import { Store, type VerdictRecord } from "./store";
 import { deriveProfile, serialize, type BehaviourProfile, type Flow } from "./behaviour";
 import { assess, REASON_LABEL, type Assessment, type PolicyView, type VenueLoss } from "./policy";
 import { analyseHyperliquid, fetchFills, type HlNetwork } from "./hyperliquid";
-import { describeSubstreams, resolveSubstreams } from "./substreams-config";
+import { describeSubstreams, resolveSubstreams, type SubstreamsStack } from "./substreams-config";
 import { runSubstreamsSource } from "./substreams-source";
 import { SHIELD_VAULT_ABI } from "../client/abi/ShieldVault";
 import { MOCK_USDC_ABI } from "../client/abi/MockUSDC";
@@ -75,11 +75,14 @@ const LOG_CHUNK = BigInt(process.env.EVM_LOG_CHUNK || (IS_HYPEREVM ? 50 : 50_000
 const POLL_MS = Number(process.env.SHIELD_POLL_MS || (IS_HYPEREVM ? 15000 : 4000));
 const RPC_GAP_MS = Number(process.env.EVM_RPC_GAP_MS || (IS_HYPEREVM ? 500 : 0));
 const MAX_BLOCKS_PER_POLL = BigInt(process.env.EVM_MAX_BLOCKS_PER_POLL || (IS_HYPEREVM ? 100 : 10_000_000));
-// The Graph indexes HyperEVM mainnet only (`hyper-evm` in the networks registry): the
-// Substreams source is used there when a Graph Market token is configured; Anvil and
-// the testnet fall back to RPC log indexing.
-const SUBSTREAMS = resolveSubstreams("hyperevm");
-const SUBSTREAMS_ACTIVE = CHAIN_ID === 999 && !!SUBSTREAMS.token;
+// Which Substreams stack — and therefore which Graph-indexed chain — this server
+// reads. The Graph's networks registry has `hyper-evm` (mainnet, 999) and `sepolia`,
+// but no HyperEVM testnet, so 998 has no package that can return rows and falls back
+// to RPC log indexing. Sepolia carries a twin of the same ShieldVault bytecode, which
+// is the deployment where the pipeline is a live Graph consumer rather than a proof.
+const SUBSTREAMS_STACK: SubstreamsStack = CHAIN_ID === 11155111 ? "sepolia" : "hyperevm";
+const SUBSTREAMS = resolveSubstreams(SUBSTREAMS_STACK);
+const SUBSTREAMS_ACTIVE = (CHAIN_ID === 999 || CHAIN_ID === 11155111) && !!SUBSTREAMS.token;
 
 // Anvil's public dev keys, never secrets. On real networks the keys must come from the environment.
 const VERIFIER_KEY = (process.env.SHIELD_EVM_VERIFIER_KEY || (IS_ANVIL ? "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6" : "")) as Hex;
@@ -97,7 +100,7 @@ const verifier = VERIFIER_KEY ? privateKeyToAccount(VERIFIER_KEY) : null;
 const relayer = RELAYER_KEY ? privateKeyToAccount(RELAYER_KEY) : null;
 const execution = EXECUTION_KEY ? privateKeyToAccount(EXECUTION_KEY) : null;
 const log = (msg: string) => console.log(`[${new Date().toISOString()}] ${msg}`);
-log(describeSubstreams(SUBSTREAMS) + (SUBSTREAMS.token && !SUBSTREAMS_ACTIVE ? ` (not used on ${NETWORK}: The Graph indexes HyperEVM mainnet only)` : ""));
+log(describeSubstreams(SUBSTREAMS) + (SUBSTREAMS.token && !SUBSTREAMS_ACTIVE ? ` (not used on ${NETWORK}: The Graph has no entry for this chain; run on 999 or 11155111 to consume it)` : ""));
 
 mkdirSync(STATE_DIR, { recursive: true });
 const store = new Store(`${STATE_DIR}/server-state.${NETWORK}.json`);
@@ -601,7 +604,11 @@ Bun.serve({
         programId: VAULT,
         source,
         substreamsEndpoint: SUBSTREAMS.endpoint,
-        substreamsAvailable: CHAIN_ID === 999 ? "yes" : "no: The Graph indexes HyperEVM mainnet only",
+        substreamsAvailable: SUBSTREAMS_ACTIVE
+          ? "yes"
+          : CHAIN_ID === 999 || CHAIN_ID === 11155111
+            ? "no: no Graph Market token configured (SUBSTREAMS_API_TOKEN)"
+            : "no: The Graph has no HyperEVM testnet entry; the Sepolia twin (11155111) is the Graph-indexed deployment",
         substreamsToken: SUBSTREAMS.token ? SUBSTREAMS.tokenSource : "none",
         spkg: SUBSTREAMS.spkg,
         monitor: { enabled: MONITOR_ENABLED && !!verifier, verifier: verifier?.address ?? null },

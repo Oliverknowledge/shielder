@@ -12,7 +12,13 @@ that get much cheaper if you make them *before* #1, not after.
 
 ---
 
-## 1. Make the repository public (5 minutes, no cost)
+## 1. ~~Make the repository public~~ — DONE 2026-09-13
+
+`github.com/Oliverknowledge/shielder` is public and `main` is at `b97c94f`, which
+carries v3 (the risk ladder, the Sepolia twin, the ladder secrets in
+`cre/secrets.yaml`). Before that push, `main` was pre-v3: no ladder in the
+contract, no private parameter in the enclave, and no real Graph rows. The
+section below is kept for the record.
 
 **All three sponsors require it.** The Graph: "Submit a public repository".
 Privy: "Provide a working demo and access to the project's source code".

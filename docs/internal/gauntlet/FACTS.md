@@ -91,6 +91,12 @@ it in a judge-facing document.
   rows). The no-token control returns Unauthenticated.
 - Both packages decode the v3 events (`RiskTierChanged`, `LadderCommitted`, `LadderChangeProposed`,
   `LadderChangeExecuted`, `RiskVerdictApplied` with `tier`). Both pass `substreams registry verify`.
+- **The server itself consumes it** (`docs/evidence/substreams-live.txt` §6, 2026-09-13): pointed at the
+  Sepolia twin (`EVM_CHAIN_ID=11155111`), `/api/health` reports `source.mode="substreams"`, connected, head
+  11695115; `/api/vault/<authority>/flows` serves the three flows with `source="substreams"`; and the vault is
+  discovered from the stream by `store_vault_registry` (it appears in `vaults` with no RPC log scan on that
+  chain). Wiring: `SUBSTREAMS_STACK` in `server/evm-index.ts`, `sepolia` stack in `server/substreams-config.ts`,
+  `evmNetworkName(11155111)="sepolia"`.
 - Not done: the general `custody-boundary` package split and a `map_signals` module the server consumes
   (research E's second lever). The server still derives behaviour in `server/behaviour.ts`.
 - Analyser fix: `server/hyperliquid.ts` now counts `accountClassTransfer` (spot→perps) and `send`
@@ -106,7 +112,7 @@ it in a judge-facing document.
   by your monitor, against the plan you wrote".
 
 ## Still open — human decisions
-1. Repository is **private**; branch `office-hours` is far ahead of `main`.
+1. ~~Repository is private~~ — **public**, and `main` carries v3 as of 2026-09-13 (commit `b97c94f`).
 2. HyperEVM **mainnet** deploy of v3 (rows on the product chain).
 3. Demo video, with the REDUCED beat on a trader-sized vault (needs the testnet drip).
 4. `substreams registry publish` both packages; CRE network deploy access.
