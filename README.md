@@ -1,8 +1,10 @@
 # Shield
 
-**Try it without installing anything: https://palenque-sigma.vercel.app/start**
-Press "Try with an example account", or paste any Hyperliquid mainnet address
-including your own. No wallet, no signature, no deposit. It reads that account's
+**Try it without installing anything:**
+[https://palenque-sigma.vercel.app/start?a=0x92a7bc9b107bdd35e3db97dc171d5a8c1ee33fea](https://palenque-sigma.vercel.app/start?a=0x92a7bc9b107bdd35e3db97dc171d5a8c1ee33fea)
+
+No clicks needed — the analysis runs on arrival. For any other account, use
+<https://palenque-sigma.vercel.app/start> or append `?a=0x…`. No wallet, no signature, no deposit. It reads that account's
 public history and replays the session where they added capital while already
 down — and shows what Shield's rules would have released instead.
 

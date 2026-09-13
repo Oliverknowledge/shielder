@@ -68,6 +68,25 @@ export function Onboard() {
   const [activeStage, setActiveStage] = useState(0);
   const [, setPrefs] = usePrefs(signer?.address ?? null);
 
+  // Deep link: /start?a=0x…[,0x…][&net=testnet] analyses on arrival, so a link can
+  // carry the evidence instead of asking the reader to go and find it. Only fires
+  // on a first visit — a returning session already has its own state to restore,
+  // and re-running the analysis would throw away where they had got to.
+  const deepLinked = useRef(false);
+  useEffect(() => {
+    if (deepLinked.current) return;
+    deepLinked.current = true;
+    const q = new URLSearchParams(window.location.search);
+    const a = (q.get("a") ?? q.get("address") ?? "").trim();
+    if (!a || sessionStorage.getItem("shield.onboard.profile")) return;
+    const wallets = a.split(",").map((w) => w.trim()).filter((w) => /^0x[0-9a-fA-F]{40}$/.test(w));
+    if (wallets.length === 0) return;
+    if (q.get("net") === "testnet") setNet("testnet");
+    setAddr(wallets[0]);
+    setExtra(wallets.slice(1));
+    void analyse(wallets[0], wallets.slice(1), q.get("net") === "testnet" ? "testnet" : "mainnet");
+  }, []);
+
   useEffect(() => { sessionStorage.setItem("shield.onboard.step", step); }, [step]);
   useEffect(() => { sessionStorage.setItem("shield.onboard.addr", addr); }, [addr]);
   useEffect(() => { sessionStorage.setItem("shield.onboard.extra", JSON.stringify(extra)); }, [extra]);
@@ -81,13 +100,15 @@ export function Onboard() {
   const replay = profile?.replay ?? null;
   const rec = profile?.recommendation ?? null;
 
-  const analyse = async (a: string) => {
+  /** `others`/`network` let the deep link analyse before its setState has landed. */
+  const analyse = async (a: string, others?: string[], network?: "mainnet" | "testnet") => {
     setError(null);
     setStep("analysing");
     const started = Date.now();
     try {
-      const all = [a.trim(), ...extra.filter((e) => isAddr(e) && e.toLowerCase() !== a.trim().toLowerCase())];
-      const p = await getJson<HlProfileJson>(`${API_URL}/api/hyperliquid/${all.join(",")}?network=${net}`);
+      const rest = others ?? extra;
+      const all = [a.trim(), ...rest.filter((e) => isAddr(e) && e.toLowerCase() !== a.trim().toLowerCase())];
+      const p = await getJson<HlProfileJson>(`${API_URL}/api/hyperliquid/${all.join(",")}?network=${network ?? net}`);
       const wait = Math.max(0, 3200 - (Date.now() - started));
       await new Promise((r) => setTimeout(r, wait));
       setProfile(p);

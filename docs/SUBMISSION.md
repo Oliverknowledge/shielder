@@ -423,14 +423,17 @@ Live vaults on chain id 998, all on the one contract:
 # PASTE — links
 
 ```
-Live demo   https://palenque-sigma.vercel.app/start
+Live demo   https://palenque-sigma.vercel.app/start?a=0x92a7bc9b107bdd35e3db97dc171d5a8c1ee33fea
+            (bare form, to analyse any address: https://palenque-sigma.vercel.app/start)
 Repository  https://github.com/Oliverknowledge/shielder
 Contract    0xDaA8B6a85391d54397c3847F006a49A16d0F37b3 (HyperEVM testnet, chain 998, VERSION() = 3)
 ```
 
-**Judges: the fastest way to see what this is.** Open
-https://palenque-sigma.vercel.app/start and press "Try with an example account"
-— or paste any Hyperliquid mainnet address, including your own. No wallet, no
+**Judges: the fastest way to see what this is.** Open the live demo link above.
+It needs no clicks — the address is in the URL, and the analysis runs on
+arrival. Then press "Replay what happened" and "Show where Shield steps in".
+To point it at any Hyperliquid mainnet account, including your own, use
+https://palenque-sigma.vercel.app/start or append `?a=0x…`. No wallet, no
 signature, no deposit, nothing to install. It reads that account's public
 history from Hyperliquid's info API and shows the pattern the product exists
 for, replayed from the trader's own fills.
@@ -448,7 +451,7 @@ Shield is a self-custodial commitment vault on HyperEVM: calm-you sets the rules
 ```
 Traders do not lose their money to hacks. They lose it in the ten minutes after a red session, sending one more deposit to win it back. Every wallet will sign that deposit; nothing asks whether the person who made the week's plan would have.
 
-You can check that claim against a stranger in twenty seconds, before you read another word. Open https://palenque-sigma.vercel.app/start and press "Try with an example account". It is a real Hyperliquid mainnet trader, read live from the venue's own public records: they were down $1,302 when they added another $13,894. Fifty-seven minutes later their realised session loss had grown to $53,485. The session finished at -$117,089. Shield then replays that session as a line, marks the exact moment of the reload, and shows what the rules it would have proposed — from that trader's own numbers, not a template — would have released instead: $3,750, not $13,894. Paste your own address and it does the same to you. No wallet, no signature, no deposit.
+You can check that claim against a stranger in twenty seconds, before you read another word. Open https://palenque-sigma.vercel.app/start?a=0x92a7bc9b107bdd35e3db97dc171d5a8c1ee33fea — no clicks, the analysis runs on arrival. It is a real Hyperliquid mainnet trader, read live from the venue's own public records: they were down $1,302 when they added another $13,894. Fifty-seven minutes later their realised session loss had grown to $53,485. The session finished at -$117,089. Shield then replays that session as a line, marks the exact moment of the reload, and shows what the rules it would have proposed — from that trader's own numbers, not a template — would have released instead: $3,750, not $13,894, leaving $10,144 protected. It also says, on that same screen, that it could not have undone the loss and cannot know what those trades would have done with less capital. Paste your own address and it does the same to you. No wallet, no signature, no deposit.
 
 Shield does not have to argue that this is the pattern. Setup reads your real Hyperliquid history before it proposes a single rule and shows you your own numbers — how many sessions you have had, your typical session size, your largest losing session, and how many sessions included a reload made while you were already down — with one sentence generated from the same data: "3 of your 4 largest losing sessions involved another reload." Your rules are then proposed from those numbers, not from a template.
 
