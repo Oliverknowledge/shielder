@@ -229,3 +229,35 @@ the server: the $1,500 is marked outbound with counterpartyIsExecution=true (a
 release to the registered trading wallet), and the $80 is the same wallet paying
 back in through deposit(). That classification is what server/behaviour.ts turns
 into reload-after-loss counts, and it arrived over The Graph.
+
+### 7. Standards leverage, measured rather than asserted
+The Graph's composable track asks submissions to "show what became easier because
+a shared schema or composed product was used". Three numbers, all checkable from
+a clone:
+
+  $ wc -l substreams-evm/src/lib.rs
+       268 substreams-evm/src/lib.rs
+
+  $ substreams info https://spkg.io/v1/packages/ethereum-common/v0.3.3 | grep -c '^Name:'
+  9
+
+  $ diff substreams-evm/substreams.yaml substreams-evm/substreams.sepolia.yaml
+
+268 lines of our Rust, in one file, composed on 9 modules from the foundational
+ethereum-common package. No log scanner and no block index anywhere in this
+repository: `ethereum_common:index_events` is the declared blockFilter for both
+of our maps (substreams.yaml lines 55-57 and 80-82), so the provider decides
+which blocks are worth delivering and our code only ever decodes.
+
+The diff between the HyperEVM manifest and the Sepolia manifest is six
+substantive lines: package name, description, `network:`, the two `evt_addr`
+filter strings, and `initialBlock`. Both drive the SAME 268 lines of Rust. Moving
+this pipeline to a different chain costs zero lines of code, because everything
+chain-specific belongs to the composed package rather than to us.
+
+The same shape holds across execution environments, not just EVM chains: the
+Solana implementation in substreams/ is 892 lines with instruction decoding
+added, and it emits the same `map_vault_flows` message. One config resolves any
+stack (server/substreams-config.ts), one consumer streams it
+(server/substreams-source.ts), and server/behaviour.ts, server/policy.ts and the
+CRE workflow read the result without knowing which chain produced it.
