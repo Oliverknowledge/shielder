@@ -139,4 +139,4 @@ it in a judge-facing document.
 1. ~~Repository is private~~ — **public**, and `main` carries v3 as of 2026-09-13 (commit `b97c94f`).
 2. HyperEVM **mainnet** deploy of v3 (rows on the product chain).
 3. Demo video, with the REDUCED beat on a trader-sized vault (needs the testnet drip).
-4. `substreams registry publish` both packages; CRE network deploy access.
+4. ~~`substreams registry publish`~~ — **done 2026-09-13**: all three packages are live on substreams.dev and resolve by name (`shield-evm-behavioral-memory@v0.1.0`, `…-sepolia@v0.1.0`, `shield-behavioral-memory@v0.2.0`). CRE network deploy access is still outstanding (invite-only beta).

@@ -261,3 +261,20 @@ added, and it emits the same `map_vault_flows` message. One config resolves any
 stack (server/substreams-config.ts), one consumer streams it
 (server/substreams-source.ts), and server/behaviour.ts, server/policy.ts and the
 CRE workflow read the result without knowing which chain produced it.
+
+### 8. Published to the Substreams registry
+All three packages are published on substreams.dev and resolve by name, so a
+judge (or anyone) can run the pipeline without cloning this repository:
+
+  $ substreams info shield-evm-behavioral-memory@v0.1.0            -> 7 modules
+  $ substreams info shield-evm-behavioral-memory-sepolia@v0.1.0    -> 7 modules
+  $ substreams info shield-behavioral-memory@v0.2.0                -> 7 modules
+
+  https://substreams.dev/packages/shield-evm-behavioral-memory/v0.1.0
+  https://substreams.dev/packages/shield-evm-behavioral-memory-sepolia/v0.1.0
+  https://substreams.dev/packages/shield-behavioral-memory/v0.2.0
+
+Stream the one with real rows, from a clean machine, with no clone:
+
+  $ substreams gui shield-evm-behavioral-memory-sepolia@v0.1.0 map_vault_flows \
+      -e sepolia.eth.streamingfast.io:443 -s 11654048 -t +12
