@@ -3,7 +3,10 @@
   "installCommand": "bun install",
   "buildCommand": "bun run build:app",
   "outputDirectory": "app/dist",
+  "functions": {
+    "api/hyperliquid/[address].ts": { "maxDuration": 60 }
+  },
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

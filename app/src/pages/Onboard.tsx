@@ -21,7 +21,20 @@ import type { RegistrationInput } from "../../../client/solana-adapter";
 import "../onboard.css";
 
 type Step = "entry" | "analysing" | "reveal" | "replay" | "counterfactual" | "recommend" | "save" | "protect" | "activating" | "active";
-const EXAMPLE = "0xfcc9cf78a1494f61d41cf895102a81785a2fe27d"; // a public Hyperliquid account with a clear reload-while-down history
+/**
+ * A public Hyperliquid mainnet account, picked because its worst session states
+ * the whole thesis in three numbers a stranger can read in four seconds: down
+ * $1,302, added $13,894, finished at -$117,089 fifty-seven minutes later. The
+ * ladder Shield proposes from this trader's own history would have released
+ * $3,750 of that addition, not $13,894.
+ *
+ * The previous example reloaded $300 and finished $848 down, which is true and
+ * forgettable. Chosen by scanning the $5k-$150k band of Hyperliquid's public
+ * leaderboard for sessions with a real drawdown at the moment of the reload —
+ * an account barely down when it reloads is not the behaviour Shield is about.
+ * All of it is public on-chain history; nothing here needs credentials.
+ */
+const EXAMPLE = "0x92a7bc9b107bdd35e3db97dc171d5a8c1ee33fea";
 const isAddr = (s: string) => /^0x[0-9a-fA-F]{40}$/.test(s.trim());
 const usd0 = (n: number) => `$${Math.round(Math.abs(n)).toLocaleString("en-US")}`;
 const dayTime = (ms: number) => new Date(ms).toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" });
