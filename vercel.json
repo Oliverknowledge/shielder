@@ -1,12 +1,17 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "bun install",
-  "buildCommand": "bun run build:app",
+  "installCommand": "node -e \"const f='package.json',p=require('./'+f);delete p.dependencies['@chainlink/cre-sdk'];require('fs').writeFileSync(f,JSON.stringify(p,null,2))\" && rm -f bun.lock && npm install --legacy-peer-deps --no-audit --no-fund @stripe/stripe-js",
+  "buildCommand": "npm run build:app",
   "outputDirectory": "app/dist",
   "functions": {
-    "api/hyperliquid/[address].ts": { "maxDuration": 60 }
+    "api/**/*.ts": {
+      "maxDuration": 60
+    }
   },
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
   ]
 }

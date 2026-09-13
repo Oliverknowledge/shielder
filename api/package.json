@@ -1,0 +1,4 @@
+{
+  "//": "Scopes the serverless functions to ESM. Node picks the NEAREST package.json to decide module format, and the repo root has no \"type\", so the compiled api/**/*.js was being loaded as CommonJS and died on its own import statement. Setting it here rather than at the root keeps the change off every other tool in the repo (bun scripts, vite, the node -e in vercel.json's install step).",
+  "type": "module"
+}

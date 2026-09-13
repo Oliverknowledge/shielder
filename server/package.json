@@ -1,0 +1,4 @@
+{
+  "//": "Marks the server sources as ESM for Node. Bun does not need this — it reads the TypeScript directly — but Vercel compiles api/hyperliquid/[address].ts and this module to .js, and Node decides CommonJS vs ESM from the nearest package.json. Without it, server/hyperliquid.js was built as CommonJS and the ESM function could not take named imports from it.",
+  "type": "module"
+}
