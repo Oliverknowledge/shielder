@@ -311,7 +311,15 @@ Shield could hold a user's funds hostage.
 **What does the Chainlink enclave do, and what can't it do?**
 The whole risk evaluation runs inside a CRE confidential workflow —
 `handlerInTee` from `@chainlink/cre-sdk`, registered for AWS Nitro in
-`us-west-2`. The sensitive input is the verifier private key, fetched
+`us-west-2`. Two sensitive inputs are processed inside it. The first is the
+verifier private key. The second is the one that makes this a confidential
+application rather than confidential plumbing: **the user's own risk ladder** —
+the trailing session drawdown at which their reload budget is allowed to shrink,
+plus its salt — read as the secret `LADDER_<vault>`. The chain holds only
+`keccak256(thresholds ‖ salt)`; the enclave recomputes that hash, measures the
+drawdown against the private number, and emits `{tier, ladderHash, nonce,
+expiry}` — a rung, with no threshold and no dollar figure. The verifier key is
+also fetched
 in-enclave with `runtime.getSecret` and used there to produce the EIP-712
 signature. That is the part that is genuinely confidential. The simulation was
 run and reproduced; the transcript is in `docs/evidence/cre-simulate.txt`, and
@@ -334,12 +342,30 @@ package only touches blocks that contain the vault's logs. The full stateful
 pipeline has been run live against a Graph Market provider and completed
 successfully; the transcript is `docs/evidence/substreams-live.txt`.
 
-The limitation, which belongs next to the claim every time it is made: that
-run returns no rows. The Graph indexes HyperEVM **mainnet** only — there is no
-testnet entry in its networks registry — and the vault is on testnet. So the
-running server reports `source.mode: "rpc"` and `/api/health` says so in plain
-words. The package is correct and streams; it has nothing to stream from until
-the contract is on mainnet.
+**Rows, and where they come from.** The Graph indexes HyperEVM **mainnet**
+only — there is no testnet entry in its networks registry — and the product
+vault is on testnet, so the package aimed at the product chain streams,
+completes, and matches nothing. Rather than leave it there, the same
+`ShieldVault` bytecode is deployed as a twin on **Ethereum Sepolia**
+(`0xf1ef03Ea258EF652939bAC0250d1CDe9B5EF4f6A`, block 11654048) and given a real
+capital history. The same modules, built as
+`shield-evm-behavioral-memory-sepolia-v0.1.0.spkg`, stream that history back
+classified — a $10,000 deposit, a $1,500 release to the registered trading
+wallet, and $80 returning from it — identically from **two** Graph Market
+providers, `sepolia.eth.streamingfast.io:443` and
+`sepolia.substreams.pinax.network:443` (`docs/evidence/substreams-live.txt`
+§1–2).
+
+And the server consumes it, which is the part that matters. Point Shield at that
+chain and `/api/health` reports `source.mode: "substreams"`, connected, at live
+head; `/api/vault/<authority>/flows` serves those flows with
+`source: "substreams"`; and the vault address is discovered from the stream by
+`store_vault_registry`, with no RPC log scan on that chain at all (§6). The
+behavioural memory the loss rule reads is arriving from The Graph.
+
+On the product chain itself, Shield reports `source.mode: "rpc"` and
+`/api/health` says why in plain words. We would rather name the twin than let a
+judge find it.
 
 **Where is the money, concretely?**
 Protected capital: in `ShieldVault.sol` on HyperEVM, accounted to the user's

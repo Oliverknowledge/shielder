@@ -138,7 +138,7 @@ export function Welcome() {
       </div>
 
       <p className="tiny muted" style={{ marginTop: 20 }}>
-        {CHAIN === "evm" ? "A vault contract on HyperEVM enforces the rules and funds your Hyperliquid account directly." : "A Solana program enforces the rules."} A Substreams package composed on The Graph is its behavioural memory, streaming live from a Graph Market provider — and returning nothing on testnet, which the app says where it matters. A Chainlink CRE workflow signs the loss verdicts inside a TEE handler. All of it is code you can read.
+        {CHAIN === "evm" ? "A vault contract on HyperEVM enforces the rules and funds your Hyperliquid account directly." : "A Solana program enforces the rules."} A Substreams package composed on The Graph is its behavioural memory, streaming live from a Graph Market provider — from a Sepolia twin of the same contract, because The Graph has no HyperEVM testnet entry, which the app says where it matters. A Chainlink CRE workflow signs the loss verdicts inside a TEE handler, against a threshold only you and the enclave ever see. All of it is code you can read.
       </p>
     </main>
   );

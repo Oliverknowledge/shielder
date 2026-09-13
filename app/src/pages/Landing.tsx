@@ -310,7 +310,7 @@ function Final() {
           </h2>
           <Link to="/welcome" className="btn btn-lg">Open Shield</Link>
           <p className="l-lead" style={{ margin: "26px auto 0", maxWidth: "44ch", fontSize: 15 }}>
-            Self-custodial. Enforced by an immutable on-chain contract. Its behavioural memory is a Substreams package composed on The Graph: it streams live from a Graph Market provider, and returns nothing until the vault is on HyperEVM mainnet, so on testnet Shield indexes the same flows itself and says so on screen. Its loss verdicts come from a Chainlink CRE workflow that signs inside a TEE handler, and a verdict can only ever make you safer.
+            Self-custodial. Enforced by an immutable on-chain contract. Its behavioural memory is a Substreams package composed on The Graph, streaming live from a Graph Market provider — The Graph has no HyperEVM testnet entry, so those rows come from a Sepolia twin of the same contract, and on the product chain Shield indexes the same flows itself and says so on screen. Its loss verdicts come from a Chainlink CRE workflow that signs inside a TEE handler, against a threshold only you and the enclave ever see — and a verdict can only ever make you safer.
           </p>
         </div>
       </section>

@@ -349,22 +349,28 @@ resolves either stack (`server/substreams-config.ts`), one consumer streams it
 (`server/substreams-source.ts`), and `server/behaviour.ts`, `server/policy.ts`
 and the CRE workflow read the result without a line of change.
 
-**Live consumption from a Graph provider, with the limitation stated in the
-same breath.** `docs/evidence/substreams-live.txt` is the transcript of the
-full stateful pipeline (`map_vault_flows`) streamed against
-`hyperevm.substreams.pinax.network:443`, a provider on The Graph Market, with a
-Graph Market JWT valid to 2027-10-28; it processes 620 blocks and ends
-"Completed successfully". **It returns no rows, and here is why: The Graph
+**Live consumption from a Graph provider, and the server reading it.**
+`docs/evidence/substreams-live.txt` §1–2: the full stateful pipeline
+(`map_vault_flows`) streamed against **two** Graph Market providers,
+`sepolia.eth.streamingfast.io:443` and `sepolia.substreams.pinax.network:443`,
+with a Graph Market JWT valid to 2027-10-28, returning the same three
+classified rows from each — a $10,000 deposit, a $1,500 release to the
+registered trading wallet, and $80 returning from that wallet. They come from a
+**Sepolia twin of the same `ShieldVault` bytecode**
+(`0xf1ef03Ea258EF652939bAC0250d1CDe9B5EF4f6A`, block 11654048) carrying a real
+staged history. §6 is the server consuming them: `source.mode: "substreams"`,
+connected at live head, `/api/vault/<authority>/flows` served with
+`source: "substreams"`, and the vault discovered from the stream by
+`store_vault_registry` with no RPC log scan on that chain.
+
+**The limitation, in the same breath.** The package aimed at the *product*
+chain streams, authenticates and completes, and returns zero rows: The Graph
 indexes HyperEVM mainnet (chain 999) only — there is no HyperEVM testnet entry
-in its networks registry — and the deployed vault is on testnet (chain 998).**
-The composition, the authentication and the whole module graph run live; the
-addresses have nothing to match. Because of that, the running server reports
-`source.mode: "rpc"` and serves the identical flow classification from
-`server/rpc-source.ts`, and `/api/health` says so in plain words:
-`substreamsAvailable: "no: The Graph indexes HyperEVM mainnet only"`
-(`server/evm-index.ts:549`). Deploying the same immutable contract to HyperEVM
-mainnet is what turns those zero rows into data; nothing else about the
-pipeline changes.
+in its networks registry — and the product vault is on testnet (chain 998)
+(§3). There, Shield reports `source.mode: "rpc"` and serves the identical flow
+classification from `server/rpc-source.ts`, and `/api/health` says why in plain
+words. Deploying the same immutable contract to HyperEVM mainnet is what turns
+those zero rows into data; nothing else about the pipeline changes.
 
 We would rather be marked down for a qualified claim than have a judge
 discover this themselves.
