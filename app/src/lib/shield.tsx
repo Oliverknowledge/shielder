@@ -13,7 +13,7 @@ import { Keypair } from "@solana/web3.js";
 import { ConnectionProvider, WalletProvider, useWallet } from "@solana/wallet-adapter-react";
 import type { Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import type { Chain, ProposalView, RegistryView, VaultView, WalletBalanceView } from "../../../client/views";
+import type { Chain, LadderProposalView, ProposalView, RegistryView, VaultView, WalletBalanceView } from "../../../client/views";
 import { getJson, type ServerHealth, type VaultPayload } from "./api";
 import type { Actions, Engine, PreparedTx, Signer } from "./engine";
 import { solanaEngine } from "./solana-engine";
@@ -59,6 +59,8 @@ export interface ShieldData {
   registry: RegistryView[];
   wallets: WalletBalanceView[];
   walletUsdc: bigint | null;
+  /** v3 (EVM): pending ladder change. */
+  ladderProposal: LadderProposalView | null;
   usdc: string | null;
   loading: boolean;
   /** True once a chain read has actually completed. Until then "no vault" is unknown, not false. */
@@ -157,6 +159,7 @@ function Inner({ children }: { children: ReactNode }) {
   const [registry, setRegistry] = useState<RegistryView[]>([]);
   const [wallets, setWallets] = useState<WalletBalanceView[]>([]);
   const [walletUsdc, setWalletUsdc] = useState<bigint | null>(null);
+  const [ladderProposal, setLadderProposal] = useState<LadderProposalView | null>(null);
   const [loading, setLoading] = useState(true);
   const [vaultKnown, setVaultKnown] = useState(false);
   const [server, setServer] = useState<VaultPayload | null>(null);
@@ -210,6 +213,7 @@ function Inner({ children }: { children: ReactNode }) {
       setRegistry(snap.registry);
       setWallets(snap.wallets);
       setWalletUsdc(snap.walletUsdc);
+      setLadderProposal(snap.ladderProposal ?? null);
     } catch (e) {
       // Transient RPC failures (rate limiting, a dropped connection) must not
       // wipe the vault the user is looking at: keep the last good snapshot.
@@ -307,6 +311,7 @@ function Inner({ children }: { children: ReactNode }) {
     registry,
     wallets,
     walletUsdc,
+    ladderProposal,
     usdc,
     loading,
     vaultKnown,

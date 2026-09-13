@@ -1,115 +1,112 @@
 # Verified facts — the only things docs may assert
-Every line below was checked against the running system, the chain, or a command
-that was actually executed during the Pass 1 gauntlet on 2026-09-07.
-If a claim is not in this file, do not put it in a judge-facing document.
+Every line below was checked against the running system, the chain, or a command that was actually
+executed. Last full pass: 2026-09-07 (v3 + risk ladder spike). If a claim is not in this file, do not put
+it in a judge-facing document.
 
-## Deployment
-- Contract: `ShieldVault.sol` at **0xcdB6d631A00857584e70a21d800f51C5776302Fe**
-- Chain: **HyperEVM testnet, chain id 998**, RPC `https://rpc.hyperliquid-testnet.xyz/evm`
-- Deploy tx `0x67ffb653…`, block **63561837**; deployer `0x05a7a130869a793719BB6B341009ea3B70588DCb`
-- USDC (Circle test): `0x2B3370eE501B4a559b57D449569354196457D8Ab`
-- CoreDepositWallet: `0x0B80659a…C206`; `usdc()` and `coreDeposit()` both verified on chain
-- The contract is immutable: no proxy, no owner, no upgrade path.
-- One contract, many vaults, keyed by authority address. Four exist today.
+## Deployment — v3 (current)
+- Contract: `ShieldVault.sol` **v3** at **0xDaA8B6a85391d54397c3847F006a49A16d0F37b3**, HyperEVM testnet
+  (chain 998), deploy tx `0x70a98bffe313a28fcdc9d0989ea691ca3c3e6dedf0bcc2b454d107292176234b`, block
+  **63634061**, deployer `0x05a7a130869a793719BB6B341009ea3B70588DCb`. `VERSION()` → 3.
+- Same constructor args as v1/v2: USDC `0x2B3370eE501B4a559b57D449569354196457D8Ab`, CoreDepositWallet
+  `0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206`. Immutable: no proxy, owner or upgrade path.
+- Built with `via_ir = true`, `optimizer_runs = 1`: runtime 21,404 bytes (3,172 under EIP-170).
+- v3 adds: the risk ladder (`commitLadder`, `setReducedTier`, `proposeLadderChange`,
+  `executeLadderChange`, `cancelLadderChange`, `currentTier`, `effectiveVelocityThreshold`), a
+  `RiskVerdict` with `tier` and `ladderHash` (typehash changed; `reasonCode` dropped), `lastVerdictNonce`
+  reset when the verifier changes (fixes the nonce-exhaustion finding), and a budget re-check in
+  `executeTopUp` (a gated top-up proposed at NORMAL cannot execute past a REDUCED budget).
+- **Sepolia twin (for The Graph):** same bytecode at **0xf1ef03Ea258EF652939bAC0250d1CDe9B5EF4f6A**,
+  Ethereum Sepolia (11155111), block 11654048, ROUTE_EVM only (CoreDepositWallet = 0), MockUSDC
+  `0xb0Cbbeb2783E3965036Db1740911be45ad389837`. Staged: $10,000 deposit, $1,500 release, $80 return.
+  An earlier v2 twin at `0xcdB6d631…` (same address as v1 on 998, same deployer nonce) is superseded.
+- Superseded on 998: v2 `0xba1Bb356e546AD2d036f4cAA8D25fbba4F5C1006` (block 63626253), v1 `0xcdB6d631…`
+  (block 63561837). Both still hold their vaults; nothing points at them.
 
-## Vaults (all live on 998)
+## Vaults on v3 (live on 998)
 | Authority | Role | State |
 |---|---|---|
-| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | the demo vault | $600 balance, floor $500, $100/24h, $700 deposited, $100 released, verdicts #1 and #2 applied |
-| `0x83144b99D89947703714Ee9aA3A3614985041D2B` | **the Privy embedded wallet** | $45 balance, floor $10, $50 deposited, $5 released to HyperCore |
-| `0x751D1e26d79FeffE95F8a8662aB7A022780ED023` | the CRE demo vault | $21 balance, $3 loss trigger, 12h cooldown, verdict #1 applied |
-| `0x05a7a130869a793719BB6B341009ea3B70588DCb` | deployer's own | $0, floor $6,000 — unusable, do not point anyone at it |
+| `0x9872f09D96bcA7f878CEe9c4bDc8bCcA269dB006` | demo vault | $60 balance, floor $40, $12/24h, threshold 25%, $7 loss trigger, 12h; ladder committed (`0x85b2d24a…`; REDUCED budget $5, resets 24h; private threshold $3 in `.shield/ladders/`); **LOCKED** by the public rule today (server-monitor verdict `0xd36d069a…`, the trading account's real $7.35 loss) |
+| `0x751D1e26d79FeffE95F8a8662aB7A022780ED023` | CRE demo vault | $10, floor $4, $5/24h, $3 trigger, 12h; ladder committed (`0x79de3837…`); **LOCKED** today (`0xd62796c5…`) |
+| `0xaA8cfBd03CD4e043228bCCe42b5adD98866F7D8b` | ladder demo vault | $5, floor $2, $4/24h, $20 trigger; ladder `0x5d21c2bc…` (REDUCED budget $3); released $2.50 at NORMAL (`0x7f4ed584…`); **REDUCED by the enclave**: verdict `0x089727605059be589a27d668386df4c488204e3feea20fda4a79bbb022b5e2ca`, `currentTier()`=1, `effectiveVelocityThreshold()`=3000000 (was 4000000), until 1788873478 |
+| `0x2946947fe968da1dbb758D03c44255A08990310C` | spare ladder vault | $8, its own trading account `0x662148b0…` which has no HyperCore account (a $2.50 CoreDeposit credit to it is unrecoverable: first deposits need $5). Do not point anyone at it |
+| `0x83144b99D89947703714Ee9aA3A3614985041D2B` | the Privy embedded wallet | no vault on v3; holds $20 test USDC + 0.3 HYPE for the on-camera onboarding. Its v1 vault ($45) and v1 txs remain the Privy evidence |
+- Trading account shared by the first three vaults: `0xE7c2Adb44064e705A2e955770440C527373967A1` (`.shield/hyperevm-keys.json` → `execution`). Monitor `0x4A41Fa3d…`, relayer `0x697c781A…`.
+- Test USDC is exhausted: deployer holds ~0.5 on EVM and ~2 on HyperCore spot; the trading account ~2 in perps. A trader-sized re-shoot needs the Hyperliquid testnet drip (HUMAN_ACTIONS).
 
-## Privy — Best Financial Flow
-- Embedded wallet **created by Privy**, `createOnLogin: "users-without-wallets"` (`app/src/lib/privy.tsx:67`).
-- Wallet `0x83144b99D89947703714Ee9aA3A3614985041D2B`, **nonce 4** — it signed four transactions itself.
-- `registerOwner` — `0x80c2a48aeeb2825fc427c2eb6b90821bc5c75fe8db38eddb3db745f55426f8f0`, block 63581683
-- **$5.00 release → HyperCore** — `0x94960d1f937a3e36e1b16e69922a2579e77b584ed25b2ced044da7991fe889be`, block 63581864.
-  Logs in that one transaction: USDC Approval + Transfer vault → CoreDepositWallet → HyperCore system
-  address `0x2000…0000`, a HyperCore credit to `0x05a7a130…` of $5.00, and
-  `TopUpExecuted(amount=$5, instant=true, balanceAfter=$45, route=1)`.
-- `proposeLoosen` — `0xeeea692a9a7c25ada3918ceff2992c3465fff356b560b6c80a5e191cf2224b85`, block 63581938
-- Privy is the vault's **authority**: the contract gates every path on `msg.sender`.
-- NOT used and must NOT be claimed: Privy policies, quorums, session signers, Cards, `useFundWallet`.
-- The B2B track is **not claimable** — it needs Privy control primitives Shield does not implement.
+## The risk ladder (v3) — what is enforced, what is private
+- Rungs: NORMAL (0) / REDUCED (1) / LOCKED (2). `currentTier(authority)` derives the rung in force from
+  two clocks: REDUCED lasts `tierResetSecs` (user-set, 1h–7d, default 24h); LOCKED is the cooldown.
+- `applyRiskVerdict` accepts only `tier` 1 or 2 (never NORMAL); REDUCED requires
+  `rv.ladderHash == v.ladderHash` (a committed ladder) and a current rung below REDUCED; LOCKED keeps
+  the public floor `realizedLossUsdc >= lossTriggerUsdc`. Verified by 15 tests in `contracts/test/Ladder.t.sol`.
+- REDUCED sets `_effectiveVelocity = min(velocityThreshold, reducedVelocityThreshold)` for every release
+  path; floor, registry, cold cap and exit are untouched.
+- Private: `reducedAtUsdc` (the trailing realised session drawdown that selects REDUCED) and the salt,
+  as `keccak256(abi.encode(uint64 reducedAtUsdc, uint64 reducedVelocityThreshold, uint64 tierResetSecs,
+  bytes32 salt))` = `ladderHash` (`client/ladder.ts`, 4 unit tests). Public: the hash, the REDUCED
+  budget, the duration, the rung, and when it changed.
+- The enclave (`cre/shield-risk/evaluate.ts`) reads the ladder as secret `LADDER_<vault>`, recomputes
+  the hash, measures trailing drawdown from the venue's own fills (`trailingDrawdownUsdc`), and signs
+  tier 1 with no dollar figure and no evidence bundle posted. Shield's server monitor signs only the
+  public LOCKED rule; it never holds a ladder.
+- Ascending: `proposeLadderChange(resetTier=true)` waits `loosenCooldownSecs` and needs
+  `executeLadderChange()`; any tightening in between strands it. Replacing the commitment is always the
+  delayed path (the chain cannot rank two hashes); shrinking the REDUCED budget is instant.
 
-## Chainlink — Best Confidential Workflow
-- `handlerInTee` imported from `@chainlink/cre-sdk` and registered at `cre/shield-risk/main.ts:88`,
-  with `[{ tee: "nitro", regions: ["us-west-2"] }]`. The whole evaluation runs inside it.
-- Sensitive input: the verifier private key, read in-enclave via `runtime.getSecret({ id })`
-  (`cre/shield-risk/evaluate.ts:89`), mapped in `cre/secrets.yaml`, and used to produce the EIP-712
-  signature. That is the clause that passes. Do **not** claim the capital flows are confidential —
-  they are read over plain HTTP from an unauthenticated local endpoint and are on-chain anyway.
-- Simulation **run and reproduced**. Verbatim transcript: `docs/evidence/cre-simulate.txt`.
-  TEE banner: "Trigger requested TEE Execution … AWS Nitro in us-west-2". Ends "Simulation complete!".
-- The command that works, **from the repository root**:
-  `cre workflow simulate shield-risk --target evm-settings --non-interactive --trigger-index 0 --http-payload '{"vault":"0x751D1e26d79FeffE95F8a8662aB7A022780ED023"}' -R cre -e cre/.env`
-  (`--target staging-settings` is the Solana config and demands a Solana keypair; `-R cre` makes the
-  workflow path `shield-risk`, not `cre/shield-risk`.)
-- On-chain result — **verified log by log**: tx
-  `0x2e411cea49a5c8edff69dddb7376aca1b5c2eee9f92be1fcb12f78733676bb35`, block 63584417, status 1,
-  `RiskVerdictApplied(nonce=1, reasonCode=1, realizedLossUsdc=3500000, cooldownUntil=1788776770,
-  extended=true, evidenceHash=0x4c7946…918b)`. Vault state after: `cooldownReason=2 (RISK_VERDICT)`,
-  `lastVerdictNonce=1`.
-- Safety invariant **verified in Solidity** (`ShieldVault.sol:536-558`): a verdict carries no duration,
-  floor, limit or destination; `cooldownUntil` only ever moves forward; the user's own `lossTriggerUsdc`
-  is the floor below which a verdict is rejected; cold transfers and full exit are never gated by it.
-  Worst case is bounded by `MAX_LOSS_COOLDOWN_SECS = 30 days`. Tested at `ShieldVault.t.sol:259-261`.
-- The Continuity track ($500) is **not claimable** — Shield is net-new, so there is no existing
-  project for the integration to improve. The repo already declines it; keep declining it.
+## Dynamic Trading Authority Ratchet — RED at the venue (documented, not built)
+- Hyperliquid L1 actions are signed as `Agent{source, connectionId}` with the whole action hashed into
+  `connectionId`; Privy typed-data policies see one opaque bytes32 and Privy has no Hyperliquid decoder.
+  Reduce-only, leverage, size and asset-class restrictions on a signer are impossible (research A).
+- Hyperliquid has no per-agent scoping; an agent can do every trading action; `valid_until` expiry was
+  observed to lag by minutes; the master key always retains everything; bypass ≈ 1 s (research B,
+  testnet-verified).
+- The only hard version is a Privy 2-of-2 quorum with Shield co-signing every order: co-custody and a
+  liveness dependency, not self-custody. Not built, not claimed. The hard guarantee is the capital vault.
+
+## Privy — Best Financial Flow (unchanged evidence, on v1)
+- Wallet `0x83144b99D89947703714Ee9aA3A3614985041D2B`, created by Privy, nonce 4: `registerOwner`
+  `0x80c2a48a…`, **$5.00 release → HyperCore** `0x94960d1f…` (block 63581864), `proposeLoosen`
+  `0xeeea692a…`. Not used and not claimed: policies, quorums, session signers, Cards, `useFundWallet`.
+  Session signers were evaluated and declined on purpose (a Shield session has 0–2 vault signatures).
+
+## Chainlink — Best Confidential Workflow (on v3)
+- `handlerInTee` at `cre/shield-risk/main.ts`, `[{ tee: "nitro", regions: ["us-west-2"] }]`.
+- Sensitive inputs processed in-enclave: the verifier key **and the user's private ladder** (secret
+  `LADDER_<vault>`, mapped in `cre/secrets.yaml`), plus the venue's fills fetched over the TeeRuntime
+  HTTP overload. Output: `{tier, ladderHash, nonce, expiry}`; no threshold, no drawdown, no bundle.
+- Evidence `docs/evidence/cre-simulate.txt`: run 1 REDUCED verdict signed and relayed on v3
+  (`0x089727…`); run 2 a LOCKED vault refused further descent; run 3 broken verifier secret → fails
+  before HTTP; run 4 ladder secret withheld → the CLI refuses to run.
+- The CRE CLI's login token expired once mid-session ("Credential validation failed… try again in a
+  few minutes") and recovered; `cre/shield-risk/dryrun.ts` reproduces the same evaluation without it.
+- Still not done: deployment on the CRE network (confidential workflows are invite-only beta).
 
 ## The Graph
-- Package `substreams-evm/shield-evm-behavioral-memory-v0.1.0.spkg`, **committed**, five modules,
-  composed on The Graph's foundational `ethereum-common@v0.3.3`: its `index_events` module is the
-  declared `blockFilter` for both maps. `substreams info` prints the populated filter query.
-- **Live stream proven.** `docs/evidence/substreams-live.txt`: the full stateful pipeline
-  (`map_vault_flows`) run against `hyperevm.substreams.pinax.network:443` — a Graph Market provider —
-  ending "Completed successfully". The Graph Market JWT in `.env` is valid to 2027-10-28.
-- **The honest limitation, which must be stated wherever the claim is made:** the run emits no rows.
-  The Graph indexes HyperEVM **mainnet (999)** only — there is no HyperEVM testnet entry in its
-  networks registry — and the vault is on testnet (998). The running server therefore reports
-  `source.mode: "rpc"`, and `/api/health` says so in plain words.
-- Pool: **Start Fresh**. First commit 2026-09-04, after the event opened.
-- There is **no AI in the shipped product**. Do not claim the AI track on the basis of
-  `docs/AI_USAGE.md`, which is about AI writing the repo — a different thing entirely.
+- **Real rows from two Graph Market providers** (`docs/evidence/substreams-live.txt` §1–2): the
+  Sepolia twin's three flows (DEPOSIT $10,000, TOP_UP_INSTANT $1,500, DEPOSIT $80) from
+  `sepolia.eth.streamingfast.io:443` and `sepolia.substreams.pinax.network:443`. Reproduce:
+  `cd substreams-evm && substreams run shield-evm-behavioral-memory-sepolia-v0.1.0.spkg map_vault_flows -e sepolia.eth.streamingfast.io:443 -s 11654048 -t +12 -o jsonl`.
+- The product-chain package (`network: hyper-evm`, filters on the v3 vault) still streams zero rows
+  from Pinax: The Graph indexes HyperEVM mainnet only. Solana devnet streams with the same JWT (zero
+  rows). The no-token control returns Unauthenticated.
+- Both packages decode the v3 events (`RiskTierChanged`, `LadderCommitted`, `LadderChangeProposed`,
+  `LadderChangeExecuted`, `RiskVerdictApplied` with `tier`). Both pass `substreams registry verify`.
+- Not done: the general `custody-boundary` package split and a `map_signals` module the server consumes
+  (research E's second lever). The server still derives behaviour in `server/behaviour.ts`.
+- Analyser fix: `server/hyperliquid.ts` now counts `accountClassTransfer` (spot→perps) and `send`
+  ledger entries as capital flows, so spot-funded reloads are visible.
 
 ## Tests and toolchain
-- `cd contracts && forge test` → **44 passed** (41 invariants in ShieldVault.t.sol, 3 pinned defects in KnownDefects.t.sol). Needs `forge install foundry-rs/forge-std --no-git` first.
-- `bun test tests/ server/` → **66 passed** after `bun run build:program`. Without the Solana program
-  built the suite **skips rather than fails**: 20 pass, 46 skip, with a printed reason. That program is
-  v0; the shipped product is contracts/ShieldVault.sol.
-- `bun run typecheck` → clean. `bun run build:app` → clean.
-- `substreams build` needs the `substreams` CLI, `protoc` and the Rust `wasm32-unknown-unknown` target.
-  None are listed in the README prerequisites today.
-- The Anvil hero sequence reproduces cold, end to end, and is the most reliable thing in the repo.
-  It arms a **12h** cooldown, not the 18h the README claims.
+- `cd contracts && forge test` → **64 passed** (41 invariants, 6 fixed-defect regressions, 2 isolation,
+  15 ladder). Compiles with `via_ir`; test helpers use `vm.getBlockTimestamp()` because via_ir treats
+  `block.timestamp` as constant within one test transaction.
+- `bun test tests/ server/` → **70 passed** (66 + 4 ladder). `bun run typecheck` clean. `bun run build:app` clean.
+- Browser flow verified on 998 with the ladder demo vault: Home "Reduced by your plan · release budget
+  is $3 until …", Protection "Your bad-session plan" with REDUCED · now, Activity "Moved to REDUCED —
+  by your monitor, against the plan you wrote".
 
-## Explorers — important
-There is **no public block explorer that indexes HyperEVM testnet**. Verified:
-`explore-testnet.hyperpc.app` returns "unable to locate this transaction hash" and shows the vault as
-an EOA with 0 transactions; `app.hyperliquid-testnet.xyz/explorer/tx/<hash>` renders blank;
-`testnet.purrsec.com` 404s; `testnet.hyperevmscan.io` does not resolve.
-Do not link any of them. The verifiable form is:
-`cast tx <hash> --rpc-url https://rpc.hyperliquid-testnet.xyz/evm`
-On HyperEVM **mainnet**, `hyperevmscan.io` works — one more reason the mainnet deploy matters.
-
-## Contract defects, found by this gauntlet and pinned in contracts/test/KnownDefects.t.sol
-1. Cancelling a top-up proposal parked past 24h refunds into a bucket that is current again after a
-   full lap, erasing unrelated spend. Verified: $3,000 released against a $1,600 limit in one window.
-2. `tighten` places no upper bound on `loosenCooldownSecs` or `fullExitCooldownSecs`, so a user can
-   lock themselves out of their own exit. The app now caps what it will submit; a direct call cannot be.
-3. `_rollBuckets` clamps `elapsed` before advancing `bucketStart` and never advances
-   `currentBucketIndex`, so an idle gap refunds the whole daily limit once per idle day, in a single
-   block. Verified: **$6,000 released in one block against a stated $1,000 per 24 hours**, with
-   `velocityNow` reporting zero. The protected floor still bounds the total drain.
-
-Separately, and not a contract bug so much as a hazard: `deposit()` is the only path that credits a
-vault, so USDC sent to the contract by a raw transfer belongs to no vault and cannot be recovered.
-Measured on chain 998: contract holds $696.50, the four vaults account for $666.00, $30.50 stranded.
-The demo and the indexer now both use `deposit()`.
-
-## Still open — human decisions, not doc claims
-1. The repository is **private**. All three sponsors require a public repo. Nothing else matters until this is done.
-2. HyperEVM **mainnet deploy** is the one change that turns The Graph's hardest clause from FAIL to
-   PASS. Deployer holds 0.0000564 HYPE on mainnet EVM (not enough for gas) and 4.8 USDC on HyperCore.
-3. The 2–4 minute demo video is required by every track and does not exist.
+## Still open — human decisions
+1. Repository is **private**; branch `office-hours` is far ahead of `main`.
+2. HyperEVM **mainnet** deploy of v3 (rows on the product chain).
+3. Demo video, with the REDUCED beat on a trader-sized vault (needs the testnet drip).
+4. `substreams registry publish` both packages; CRE network deploy access.

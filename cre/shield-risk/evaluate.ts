@@ -8,6 +8,7 @@ import { deriveProfile, type Flow, type FlowKind } from "../../server/behaviour"
 import { assess, buildUnsignedVerdict, signVerdict, type PolicyView, type VenueLoss } from "../../server/policy";
 import { toHex, verdictToJson } from "../../client/verdict";
 import { evmAddressOf, evmVerdictToJson, signEvmVerdict } from "./evm-verdict";
+import { decideLadder, ladderFromJson, ladderHashOf, tierInForce, trailingDrawdownUsdc, TIER_NAME, TIER_REDUCED, ZERO32, type Ladder } from "../../client/ladder";
 
 export interface EnclaveConfig {
   shieldApiUrl: string;
@@ -17,6 +18,7 @@ export interface EnclaveConfig {
   /** "solana" (default) or "evm" (ShieldVault.sol: EIP-712 verdict signed with a secp256k1 key held only in the enclave). */
   chain?: "solana" | "evm";
   chainId?: number;
+  ladderSecretPrefix?: string;
 }
 
 export interface EnclaveIO {
@@ -43,7 +45,7 @@ export interface EvaluationResult {
 }
 
 interface VaultView {
-  state: { lossTriggerUsdc: string; lossCooldownSecs: string; cooldownUntil: string; lastVerdictNonce: string; riskVerifier: string };
+  state: { lossTriggerUsdc: string; lossCooldownSecs: string; cooldownUntil: string; lastVerdictNonce: string; riskVerifier: string; ladderHash?: string | null; activeTier?: number; tierUntil?: string; reducedVelocityThreshold?: string; tierResetSecs?: string };
   verdicts?: Array<{ relayed: boolean; issuedAt: number }>;
   registry?: Array<{ owner: string; kind: number; route: number; active: boolean }>;
 }
@@ -83,6 +85,20 @@ export function base64Encode(bytes: Uint8Array): string {
   return out;
 }
 
+let venueDrawdown: bigint | null = null;
+
+/** The user's private ladder, released only into the enclave. Absent = no ladder. */
+function readLadder(io: EnclaveIO, config: EnclaveConfig, vault: string): Ladder | null {
+  const id = `${config.ladderSecretPrefix ?? "LADDER_"}${vault.toLowerCase()}`;
+  try {
+    const raw = io.getSecret(id);
+    if (!raw || !raw.trim()) return null;
+    return ladderFromJson(raw.trim());
+  } catch {
+    return null;
+  }
+}
+
 /** The venue's own settled PnL over the window, read from its public info API. */
 function readVenueLoss(io: EnclaveIO, view: VaultView, config: EnclaveConfig, now: number): VenueLoss | null {
   const host = config.chainId === 999 ? "https://api.hyperliquid.xyz/info" : config.chainId === 998 ? "https://api.hyperliquid-testnet.xyz/info" : null;
@@ -101,6 +117,9 @@ function readVenueLoss(io: EnclaveIO, view: VaultView, config: EnclaveConfig, no
       lastFillAt = Math.max(lastFillAt ?? 0, Math.floor(f.time / 1000));
     }
     const network = config.chainId === 999 ? "mainnet" : "testnet";
+    // Trailing drawdown from the session's realised peak feeds the private ladder; it
+    // stays inside the enclave and is never posted or logged as a figure.
+    venueDrawdown = trailingDrawdownUsdc(fills);
     return { source: "hyperliquid", network, account, realisedLossUsdc: net < 0 ? BigInt(Math.round(-net * 1e6)) : 0n, fills: fills.length, lastFillAt };
   } catch {
     return null; // unreachable: fall back to the flow view, never guess
@@ -149,6 +168,7 @@ export function evaluateVault(io: EnclaveIO, config: EnclaveConfig, vault: strin
    * Unreachable venue falls back to the flow view, exactly as the server does:
    * over-counting exposure is the safe direction to be wrong in.
    */
+  venueDrawdown = null; // set by readVenueLoss when the venue answers; consumed by the ladder below
   const venue = readVenueLoss(io, view, config, now);
   const a = assess(profile, policy, now, sinceLossAt, venue);
 
@@ -171,14 +191,32 @@ export function evaluateVault(io: EnclaveIO, config: EnclaveConfig, vault: strin
     signature: "",
     error: "",
   };
-  if (!a.actionable) return summary;
+  // 3b. The private ladder (EVM only). LOCKED is the public rule and wins; otherwise
+  //     the enclave checks the user's own REDUCED threshold against trailing drawdown.
+  //     Nothing about the threshold or the drawdown leaves this block as a number.
+  let ladderVerdict: { tier: number; ladderHash: string; allowance: bigint; resetSecs: bigint } | null = null;
+  if (isEvm && !a.actionable) {
+    const ladder = readLadder(io, config, vault);
+    const drawdown = venueDrawdown ?? profile.windows.h24.realisedLoss; // no venue (Anvil): the flow view
+    const tier = tierInForce({ activeTier: view.state.activeTier ?? 0, tierUntil: view.state.tierUntil ?? "0", cooldownUntil: view.state.cooldownUntil }, now);
+    const d = decideLadder(ladder, view.state.ladderHash ?? null, tier, drawdown);
+    io.log(`Enclave ladder: vault=${vault} ladder=${ladder ? "present" : "none"} tierInForce=${TIER_NAME[tier]} decision=${d.reason}`);
+    if (d.tier === TIER_REDUCED && ladder) {
+      const target = BigInt(now) + ladder.tierResetSecs;
+      if (target > BigInt(view.state.tierUntil ?? "0")) ladderVerdict = { tier: TIER_REDUCED, ladderHash: ladderHashOf(ladder), allowance: ladder.reducedVelocityThreshold, resetSecs: ladder.tierResetSecs };
+    }
+  }
+  if (!a.actionable && !ladderVerdict) return summary;
 
   // 4. Sign inside the enclave.
   let verdictJson: { nonce: string; verifier: string; evidenceHash: string } & Record<string, unknown>;
   if (isEvm) {
     const key = secret.trim();
     const verifierAddr = evmAddressOf(key);
-    const ev = { vault, nonce: policy.lastVerdictNonce + 1n, issuedAt: BigInt(now), expiry: BigInt(now + 15 * 60), reasonCode: a.reasonCode, realizedLossUsdc: a.realizedLossUsdc, evidenceHash: `0x${toHex(a.evidenceHash)}` };
+    // REDUCED: no dollar figure, no evidence bundle; the commitment hash binds the verdict to the ladder the user wrote.
+    const ev = ladderVerdict
+      ? { vault, nonce: policy.lastVerdictNonce + 1n, issuedAt: BigInt(now), expiry: BigInt(now + 15 * 60), tier: TIER_REDUCED, ladderHash: ladderVerdict.ladderHash, reasonCode: 0, realizedLossUsdc: 0n, evidenceHash: `0x${toHex(a.evidenceHash)}` }
+      : { vault, nonce: policy.lastVerdictNonce + 1n, issuedAt: BigInt(now), expiry: BigInt(now + 15 * 60), tier: 2, ladderHash: ZERO32, reasonCode: a.reasonCode, realizedLossUsdc: a.realizedLossUsdc, evidenceHash: `0x${toHex(a.evidenceHash)}` };
     const signature = signEvmVerdict(BigInt(config.chainId ?? 0), config.programId, ev, key);
     verdictJson = evmVerdictToJson(ev, signature, verifierAddr);
   } else {
@@ -194,8 +232,12 @@ export function evaluateVault(io: EnclaveIO, config: EnclaveConfig, vault: strin
   let relayed = false;
   let signature = "";
   let error = "";
+  if (ladderVerdict) io.log(`Enclave ladder verdict: vault=${vault} tier=REDUCED ladderHash=${ladderVerdict.ladderHash} nonce=${verdictJson.nonce}`);
   if (config.deliver) {
-    const res = io.postJson(`${config.shieldApiUrl}/api/verdicts`, JSON.stringify({ verdict: verdictJson, evidence: a.evidence, headline: a.headline, lines: a.lines }));
+    const body = ladderVerdict
+      ? { verdict: verdictJson, headline: "Your ladder moved you to REDUCED.", lines: [`Release budget is $${Number(ladderVerdict.allowance) / 1e6} for the next ${Math.round(Number(ladderVerdict.resetSecs) / 3600)}h. The threshold that did it stays private.`] }
+      : { verdict: verdictJson, evidence: a.evidence, headline: a.headline, lines: a.lines };
+    const res = io.postJson(`${config.shieldApiUrl}/api/verdicts`, JSON.stringify(body));
     try {
       const parsed = JSON.parse(res.body) as { relayed?: boolean; signature?: string | null; error?: string | null };
       relayed = Boolean(parsed.relayed);
@@ -207,5 +249,5 @@ export function evaluateVault(io: EnclaveIO, config: EnclaveConfig, vault: strin
     io.log(`Verdict #${verdictJson.nonce} ${relayed ? `relayed on-chain: ${signature}` : `not relayed: ${error}`}`);
   }
 
-  return { ...summary, nonce: verdictJson.nonce, verifier: verdictJson.verifier, evidenceHash: verdictJson.evidenceHash, relayed, signature, error };
+  return { ...summary, triggered: summary.triggered || !!ladderVerdict, actionable: true, headline: ladderVerdict ? "Your ladder moved you to REDUCED." : summary.headline, nonce: verdictJson.nonce, verifier: verdictJson.verifier, evidenceHash: verdictJson.evidenceHash, relayed, signature, error };
 }

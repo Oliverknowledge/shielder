@@ -6,11 +6,11 @@ attacker trying to get around them. Everything else — scammers, a compromised
 Shield server, a malicious monitor — is secondary and easier.
 
 The spec below is `contracts/src/ShieldVault.sol`, deployed and immutable on
-HyperEVM testnet (chain 998) at `0xcdB6d631A00857584e70a21d800f51C5776302Fe`.
+HyperEVM testnet (chain 998) at `0xDaA8B6a85391d54397c3847F006a49A16d0F37b3` (v3, `VERSION() = 3`).
 Each invariant is stated as a property, then where the contract enforces it
 (`ShieldVault.sol:line`), then the test that pins it
 (`contracts/test/ShieldVault.t.sol`). `cd contracts && forge test` runs 44
-tests: those 41 invariants plus 3 in `contracts/test/KnownDefects.t.sol`, which
+tests: those 41 invariants plus 6 regressions in `contracts/test/FixedDefects.t.sol`, 2 in `contracts/test/Isolation.t.sol` and 15 in `contracts/test/Ladder.t.sol`, which
 assert what the contract *does* and are therefore all bugs — each one is
 written up under "Known gaps" below.
 
@@ -72,7 +72,7 @@ Tests: `test_registerWhileFundedIsRefused`, `test_typeIsPermanent`,
 Registries are namespaced per authority (`registry` is
 `mapping(address => mapping(address => RegistryEntry))`, `212`), so a second
 vault cannot borrow the first vault's destinations. This one is structural
-rather than test-pinned; see Known gaps 3.
+and test-pinned in `Isolation.t.sol` (v2); see Known gaps 4.
 
 ### 4. Tightening is instant; loosening waits and must be positively reconfirmed
 
@@ -266,7 +266,7 @@ Three precise caveats, all verified:
 - For `ACTION_UNINSTALL` the **amount is the live balance at execution**
   (`617`), not the balance at proposal time — deposits made while the exit is
   pending leave with it. Only `ACTION_COLD_ABOVE_CAP` locks an amount.
-- The delay itself is not upper-bounded. See Known gaps 2.
+- The delay is bounded at 30 days (v2). See Known gaps 2.
 
 ### 12. Effects before interactions, with a reentrancy lock
 
@@ -276,132 +276,112 @@ proposals deleted before any external call (`481-482`, `527-529`, `596-597`,
 `621-623`). The USDC and CoreDepositWallet addresses are immutable (`208-209`),
 so no external callee can be swapped after deployment.
 
-Not pinned by a dedicated test; see Known gaps 3.
+Pinned by `Isolation.t.sol:test_reentrancyThroughAHostileCoreDepositWalletIsRefused` (v2).
+
+
+### 13. (v3) The risk ladder: a verdict may only descend it, and only to a rung the user wrote
+
+`commitLadder(ladderHash, reducedVelocityThreshold, tierResetSecs)` stores a salted
+commitment to the user's private drawdown threshold, the public REDUCED budget and
+the REDUCED duration (1h–7d). `applyRiskVerdict` accepts `tier ∈ {REDUCED, LOCKED}`
+only: REDUCED requires `rv.ladderHash == v.ladderHash` and a current rung below
+REDUCED; LOCKED keeps the public `realizedLossUsdc >= lossTriggerUsdc`; a verdict
+that names NORMAL reverts. REDUCED makes every release path use
+`min(velocityThreshold, reducedVelocityThreshold)` and expires on the user's
+clock; LOCKED is the cooldown. `setReducedTier()` lets the user drop a rung
+instantly; `proposeLadderChange(resetTier=true)` + `executeLadderChange()` is the
+only way up, after `loosenCooldownSecs`, and any tightening strands it. Replacing
+the commitment is always the delayed path, because the chain cannot compare two
+hashes for strictness. Pinned by `Ladder.t.sol` (15 tests, including "a gated
+top-up proposed at NORMAL cannot execute past a REDUCED budget" and "a rogue key
+that burns the nonce range is recoverable by changing the verifier").
+
+What the ladder's privacy buys and costs: chain observers, Shield's server and
+Chainlink node operators never see the threshold; the enclave holds it; Shield's
+operators can read it if they kept the secret at creation, and the simulator is
+not real hardware. A false REDUCED is indistinguishable on chain from a true one;
+its consequence is bounded to the budget the user pre-wrote and expires on the
+clock the user set.
+
+### 14. (v3) Two fixes from the judge passes
+
+`executeRuleChange` now resets `lastVerdictNonce` when the verifier changes, so a
+compromised key that signs `nonce = 2^64-1` cannot leave a vault permanently
+unprotectable (research F). `executeTopUp` re-checks the budget in force, so a
+gated top-up reserved at NORMAL cannot execute after a drop to REDUCED (research C).
 
 ## Known gaps — properties the contract does not have
 
-### 1. Cancelling an aged proposal can reset the 24h budget
+Gaps 1–3 below were found by our own gauntlet in **v1**
+(`0xcdB6d631…`, deployed 2026-09-06) and are **fixed in v2**
+(`0xba1Bb356…`, deployed 2026-09-07, `VERSION() = 2`) and carried into v3
+(`0xDaA8B6a85391d54397c3847F006a49A16d0F37b3`, `VERSION() = 3`), which is what
+the app, the server, the Substreams filters and the CRE workflow now point at. Each is pinned as a regression test in
+`contracts/test/FixedDefects.t.sol`, whose comments keep the original v1
+behaviour so the reader can see exactly what changed. v1 is immutable and
+still holds its four vaults; nothing uses it any more.
 
-`_refundVelocity` (`731-735`) subtracts the cancelled amount from
+### 1. (v1) Cancelling an aged proposal could reset the 24h budget — fixed
+
+In v1 `_refundVelocity` subtracted the cancelled amount from
 `pr.reservedBucketIndex`, the bucket that was current when the proposal was
-created. If the buckets have rolled since, that index now holds *unrelated,
-recent* spend, and the refund deletes it.
+created. If the six buckets had lapped since, that index held *unrelated,
+recent* spend, and the refund deleted it: $3,000 released inside one
+24-hour window against a $1,600 limit.
 
-Reproduced on the deployed logic with a $1,600 daily limit:
+**v2:** `cancelProposal` rolls the buckets first and refunds only if the
+reserved bucket still represents the 4-hour window the reservation was made
+in (`_reservationStillCurrent`, which compares `pr.createdAt` with that
+bucket's current window start). An aged reservation is simply dropped.
+Regressions: `test_cancellingAnAgedProposalDoesNotEraseUnrelatedSpend`,
+`test_cancellingAFreshProposalStillRefunds`,
+`test_cancellingAfterTheReservedBucketRolledOutDoesNotRefund`.
 
-1. `proposeTopUp($1,500)` — reserves $1,500 in bucket 0. Nothing moves.
-2. Wait 24 hours. The reservation ages out of the window; `velocityNow` is 0.
-3. `instantTopUp($1,500)` — a full day's budget, lands in bucket 0.
-4. `cancelProposal(TOP_UP)` — refunds $1,500 against bucket 0. `velocityNow`
-   is now 0 again.
-5. `instantTopUp($1,500)` — succeeds.
+### 2. (v1) A user could tighten themselves into a permanent lock — fixed
 
-$3,000 released inside one 24-hour window against a $1,600 limit, in the same
-block as step 3. Pinned by
-`KnownDefects.t.sol:test_defect_cancellingAnAgedProposalErasesUnrelatedSpend`.
+v1 `tighten` bounded `lossCooldownSecs` and the self-pause at 30 days but
+placed no upper bound on `loosenCooldownSecs`, `fullExitCooldownSecs` or
+`topUpCooldownSecs`; it accepted `type(uint64).max / 2`, after which a full
+exit matured roughly 292 billion years out.
 
-**The bound this document previously gave — "about twice the daily limit per
-window, with a day of setup" — is wrong, and is corrected here.** It was
-derived from this defect in isolation: one proposal slot, one refund, capped at
-the amount reserved. That reasoning holds for this mechanism on its own, but
-Known gap 3 refunds the entire accumulator with no proposal and no waiting, and
-the two compose. The only limit on how much can leave in a 24-hour window is
-the protected floor. The registry, the cooldown and the exit delay are
-unaffected.
+**v2:** `MAX_TOP_UP_COOLDOWN_SECS`, `MAX_LOOSEN_COOLDOWN_SECS` and
+`MAX_FULL_EXIT_COOLDOWN_SECS` are all 30 days; anything above reverts
+`InvalidParameter`. "A user can always weaken or leave" is now true without
+qualification: the longest wait a user can impose on themselves is 30 days.
+Regression: `test_exitDelayIsBounded`. The app's own caps
+(`app/src/lib/rules.ts`) are tighter still and unchanged.
 
-This contradicts the previous version of this document, which claimed the
-accumulator was "checked and reserved atomically" with no qualification, and
-it contradicts "a rolling 24h cap that sees through splitting" as an
-unconditional statement. The contract is immutable, so this is a disclosed
-limitation, not a fix: the correct repair (store the reserved amount against
-`bucketStart` and drop the refund if the window has rolled) belongs to a v2.
+### 3. (v1) An idle gap refunded the whole 24h limit, once per idle day, in one block — fixed
 
-### 2. A user can tighten themselves into a permanent lock
+The worst of the three. v1 `_rollBuckets` clamped `elapsed` to six before
+advancing `bucketStart` and never advanced `currentBucketIndex` in that
+branch, so after an idle gap of N days every call re-entered the long-idle
+branch and re-zeroed the accumulator with no time passing: **$6,000
+released in one block against a stated $1,000 per 24 hours**, with
+`velocityNow` reporting zero throughout.
 
-`tighten` bounds `lossCooldownSecs` (30 days, `368`) and `pauseTopUpsUntil`
-(30 days, `377`), but places **no upper bound** on `loosenCooldownSecs`
-(`372`) or `fullExitCooldownSecs` (`373`). Verified: `tighten` accepts
-`type(uint64).max / 2` for both, after which a full exit proposal matures
-roughly 292 billion years out and the loosening path that would undo it is
-just as far away. The funds are unreachable, permanently, with no third party
-able to help — there is no admin to ask.
+**v2:** `bucketStart` and `currentBucketIndex` always advance by the real
+elapsed bucket count, so a gap is consumed exactly once and the ring pointer
+is right afterwards. Regressions:
+`test_anIdleGapRefundsTheDailyLimitExactlyOnce`,
+`test_ringPointerSurvivesAnOddGap`. The same clamp in the Solana v0 program
+(`programs/shield-vault/src/state.rs`) is fixed in the same way; the 66
+LiteSVM tests still pass against the rebuilt program.
 
-This contradicts the previous accepted limitation "a determined user who waits
-24h / 7d can always weaken or leave". The accurate statement is: *a user who
-has not tightened their own delays* can always weaken or leave.
-
-The app never offers these values, and both are reached only by hand-crafting
-a `tighten` call. It is still a real property of the deployed contract and a
-judge is entitled to hear it.
-
-### 3. An idle gap refunds the whole 24h limit, once per idle day, in one block
-
-The worst of the three. It costs nothing, needs no setup and no waiting, and
-the person it is waiting for is a user coming back after a quiet week — which
-is exactly the user this product is for.
-
-`_rollBuckets` (`697-717`) computes `elapsed` in whole buckets, and when
-`elapsed >= NUM_VELOCITY_BUCKETS` it zeroes all six buckets, clamps `elapsed`
-to six, and advances `bucketStart` by `elapsed * BUCKET_LEN_SECS` — 24 hours.
-That branch never touches `currentBucketIndex`. So after an idle gap of N days,
-`bucketStart` catches up only one day per call: the next call re-enters the
-same branch and zeroes the accumulator again, with no time having passed
-between them.
-
-Reproduced on the deployed logic
-(`KnownDefects.t.sol:test_defect_anIdleGapRefundsTheDailyLimitOncePerDay`), with
-a $1,000 per 24h limit, $20,000 in the vault and a $1,000 floor:
-
-1. `instantTopUp($1,000)` — the day's limit, spent. `velocityNow` is $1,000.
-2. Nothing happens for seven days.
-3. `instantTopUp($1,000)` six times, in the same block. All six succeed.
-
-**$6,000 released in one block against a stated $1,000 per 24 hours**, and
-`velocityNow` reports zero throughout, so neither the app nor an observer sees
-the budget being consumed. Six is not a ceiling of the mechanism, it is how
-many idle days the test skipped; a longer gap refunds proportionally more.
-
-What still holds, and bounds it:
-
-- **The protected floor is the real backstop, and it holds.** Re-running the
-  same exploit against a vault holding $10,000 behind an $8,000 floor: the
-  first post-gap release goes through, and the next one reverts
-  `ProtectedFloorBreached` while `velocityNow` still reports zero — so it is
-  demonstrably the floor refusing, not the limit. `_checkFloor` is a separate
-  check on `balance - amount` and has nothing to do with the buckets. Total
-  drain is bounded at `balance - protectedFloor`.
-- The registry is unaffected: the money can still only go to a destination the
-  user registered, and a new destination still waits 24 hours.
-- The loss cooldown is unaffected: while `cooldownUntil` is in the future,
-  every top-up path reverts regardless of the accumulator.
-- Cold-transfer amounts above the emergency cap, and the exit path, are
-  unaffected.
-
-So the honest statement is: **the 24h limit is not a reliable bound, and the
-protected floor is.** A user who is relying on the daily limit to pace a
-reload, rather than on the floor, is relying on the wrong number. The floor is
-the one the setup flow should be treated as configuring.
-
-The correct repair is to advance `currentBucketIndex` in the long-idle branch
-(or, better, to store `bucketStart` as the true window origin and derive the
-index) and to set `bucketStart = nowTs` rather than adding a clamped delta.
-The contract is immutable, so this belongs to a v2.
-
-**The same clamp is in the Solana v0 program**, at
-`programs/shield-vault/src/state.rs` (`buckets_elapsed` is `.min()`-ed to
-`NUM_VELOCITY_BUCKETS`, and `current_bucket_index` is only updated in the
-`else` branch). v0 is not deployed and is not the product, but the appendix
-below should be read with this in mind.
+What was always true, and is still the deeper backstop: the **protected
+floor** is a separate check on `balance - amount`, the registry limits where
+money can go, and a live loss cooldown blocks every top-up path regardless
+of the accumulator.
 
 ### 4. Invariants without tests
 
-The 44 tests do not cover: reentrancy through a hostile `CoreDepositWallet` or
-a hostile token (invariant 12); per-vault registry isolation as a direct
-assertion (invariant 3); the stranded-transfer hole in Known gaps 7, which is
-an absence of code rather than a behaviour a test can assert against the
-deployed contract. All three were checked by reading. All three known defects
-above *are* covered, by `contracts/test/KnownDefects.t.sol`; those tests assert
-the wrong behaviour on purpose, so that it cannot change unnoticed.
+Two invariants that the v1 gauntlet had only checked by reading now have
+tests in `contracts/test/Isolation.t.sol`: reentrancy through a hostile
+`CoreDepositWallet` (invariant 12 — the re-entry is refused by the lock
+before the authority check runs) and per-vault registry isolation
+(invariant 3). What remains untested by construction is the
+stranded-transfer hole in Known gaps 7, which is an absence of code rather
+than a behaviour a test can assert.
 
 ### 5. The HyperCore credit cannot be confirmed on-chain
 
@@ -439,14 +419,16 @@ a venue — belongs to no vault, is invisible to every rule and every screen, an
 This is not hypothetical. Measured on chain 998 on 2026-09-07:
 
 ```
-usdc.balanceOf(0xcdB6d631A00857584e70a21d800f51C5776302Fe)   $696.50
+usdc.balanceOf(0xcdB6d631A00857584e70a21d800f51C5776302Fe)   $696.50   (v1, measured 2026-09-07)
 sum of the four vaults' getVault(...).balance                $666.00
                                                              -------
 stranded, unrecoverable                                       $30.50
 ```
 
-($600.00 + $45.00 + $21.00 + $0.00 across the four authorities listed in
-`docs/internal/gauntlet/FACTS.md`.) The same thing is visible on the local Anvil
+($600.00 + $45.00 + $21.00 + $0.00 across the four v1 authorities.) On v2
+every return so far has gone through `deposit()`, so nothing is stranded there
+yet; the hazard is unchanged, which is why the demo script and the indexer
+both insist on `deposit()`. The same thing is visible on the local Anvil
 stack, where `bun run demo:evm return 80` hands money back with a raw transfer:
 the contract holds $7,080 and the vault accounts for $7,000.
 
@@ -466,6 +448,24 @@ endpoint — `cast send` reaches every path, and the app is a convenience over
 the same calls. The claim "recovery needs nothing Shield operates" is still
 true; the specific artefact the old document cited does not cover EVM.
 
+
+## What a determined tilted user can still do (v3, stated plainly)
+
+Shield governs money inside the vault and nothing else. After a loss a user can:
+reload once before any verdict lands (a verdict takes seconds to minutes; a reload
+takes one block); route the emergency cold cap to a safe wallet and deposit it to
+the venue from there; add margin to a losing position they never close, which no
+realised-loss rule sees; trade from an address Shield does not read; or use any
+other venue. A Shield-held agent key, a Privy policy on the embedded wallet, or a
+time-bound session signer stops none of that: Hyperliquid has no per-agent
+scoping and the master key always retains full authority, so any such layer is
+friction, not enforcement, and Shield does not ship one. What tilt cannot do is
+breach the floor, exceed the 24-hour budget from the vault (or the REDUCED budget
+once the rung is in force), skip the large-move wait, shorten a cooldown, weaken a
+rule or climb a rung early, or send vault money anywhere not registered while
+calm. The hard guarantee is the capital vault; the ladder adds pre-authorised
+degrees of freedom to what a verdict may do, behind the same soft loss reader.
+
 ## Attacks, by attacker
 
 ### Alex, five minutes after a loss
@@ -484,8 +484,8 @@ true; the specific artefact the old document cited does not cover EVM.
 | Schedule a large top-up, wait out the 30 minutes, but a loss cooldown lands first | `executeTopUp` re-reads the cooldown: `CooldownActive`. | 8 · `test_checkOrderIsCooldownFloorVelocityThreshold` |
 | Un-pause | There is no function that lowers `cooldownUntil`. Pauses expire by time only. | 8 · `test_selfPauseBlocksTopUpsAndIsMonotonic` |
 | Use a second vault to reach the first vault's registry | Registry entries are keyed by authority; the other vault has none. | 3 |
-| Park a top-up proposal for a day, then cancel it to clear the accumulator | **This works.** The refund lands on unrelated recent spend and erases it. | Known gaps 1 · `test_defect_cancellingAnAgedProposalErasesUnrelatedSpend` |
-| Come back after a quiet week and top up repeatedly in one block | **This works, with no setup at all.** Each call zeroes the whole accumulator again. $6,000 released against a $1,000 daily limit, measured. The protected floor is what stops it. | Known gaps 3 · `test_defect_anIdleGapRefundsTheDailyLimitOncePerDay` |
+| Park a top-up proposal for a day, then cancel it to clear the accumulator | Worked in v1. **Refused in v2:** an aged reservation is dropped, not refunded. | Known gaps 1 · `test_cancellingAnAgedProposalDoesNotEraseUnrelatedSpend` |
+| Come back after a quiet week and top up repeatedly in one block | Worked in v1 ($6,000 against $1,000/24h, measured). **Refused in v2:** the second call reverts `VelocityThresholdExceeded`. | Known gaps 3 · `test_anIdleGapRefundsTheDailyLimitExactlyOnce` |
 | Send trading capital back to the vault address with a plain ERC-20 transfer | Not an attack, but it destroys the money: nothing credits it and nothing can withdraw it. Use `deposit()`. | Known gaps 7 |
 | Deposit somewhere else and trade there | Out of scope by design: Shield governs what leaves the vault, not money that never entered it. | accepted limitation |
 
@@ -525,7 +525,7 @@ verified, not assumed.
 
 There is nothing to say. `ShieldVault.sol` has no owner, no admin, no proxy
 and no upgrade path; the deployed bytecode at
-`0xcdB6d631A00857584e70a21d800f51C5776302Fe` is the final bytecode. Shield
+`0xDaA8B6a85391d54397c3847F006a49A16d0F37b3` is the final bytecode. Shield
 cannot move a user's funds, change a user's rules, or turn the contract off.
 The one thing Shield can influence is whether a verdict gets signed, and
 invariant 9 bounds what a verdict can do.
@@ -585,7 +585,7 @@ The v0 invariants, condensed, with the EVM invariant that replaces each:
 | 3 | Registered owners are `Execution` or `Cold` permanently. | 3 |
 | 4 | `tighten` instant and monotonic; `propose_loosen` delayed, ≥ 1h. | 4 |
 | 5 | Every tighten bumps `config_version`; older proposals cannot execute. | 5 |
-| 6 | One 24h accumulator across top-ups and capped cold transfers. | 6 (with the holes in Known gaps 1 and 3 — v0 carries the same `_rollBuckets` clamp, at `programs/shield-vault/src/state.rs`) |
+| 6 | One 24h accumulator across top-ups and capped cold transfers. | 6 (the `_rollBuckets` clamp of Known gaps 3 was fixed in `programs/shield-vault/src/state.rs` alongside v2) |
 | 7 | `cooldown_until` blocks every top-up path and only extends. | 8 |
 | 8 | `apply_risk_verdict` (Ed25519 precompile introspection) can only set `cooldown_until = max(current, now + loss_cooldown_secs)`. | 9 |
 | 9 | Proposals are one-shot; destination and amount locked at creation; the account closes on execute or cancel. | 11 (with the uninstall-amount caveat) |

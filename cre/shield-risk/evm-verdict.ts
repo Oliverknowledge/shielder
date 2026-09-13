@@ -22,21 +22,23 @@ const kk = (b: Uint8Array) => keccak_256(b);
 const kstr = (s: string) => kk(enc.encode(s));
 
 const DOMAIN_TYPEHASH = kstr("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
-const VERDICT_TYPEHASH = kstr("RiskVerdict(address vault,uint64 nonce,uint64 issuedAt,uint64 expiry,uint8 reasonCode,uint64 realizedLossUsdc,bytes32 evidenceHash)");
+const VERDICT_TYPEHASH = kstr("RiskVerdict(address vault,uint64 nonce,uint64 issuedAt,uint64 expiry,uint8 tier,bytes32 ladderHash,uint64 realizedLossUsdc,bytes32 evidenceHash)");
 
 export interface EvmVerdict {
   vault: string; // authority address the verdict binds to
   nonce: bigint;
   issuedAt: bigint;
   expiry: bigint;
-  reasonCode: number;
+  tier: number; // 2 = LOCKED (public loss rule), 1 = REDUCED (private ladder)
+  ladderHash: string; // 0x + 32 bytes; zero for LOCKED
+  reasonCode: number; // display only, not signed
   realizedLossUsdc: bigint;
   evidenceHash: string; // 0x + 32 bytes
 }
 
 export function verdictDigest(chainId: bigint, verifyingContract: string, v: EvmVerdict): Uint8Array {
   const domain = kk(cat(DOMAIN_TYPEHASH, kstr("ShieldVault"), kstr("1"), uint(chainId), addr(verifyingContract)));
-  const structHash = kk(cat(VERDICT_TYPEHASH, addr(v.vault), uint(v.nonce), uint(v.issuedAt), uint(v.expiry), uint(BigInt(v.reasonCode)), uint(v.realizedLossUsdc), fromHex(v.evidenceHash)));
+  const structHash = kk(cat(VERDICT_TYPEHASH, addr(v.vault), uint(v.nonce), uint(v.issuedAt), uint(v.expiry), uint(BigInt(v.tier)), fromHex(v.ladderHash), uint(v.realizedLossUsdc), fromHex(v.evidenceHash)));
   return kk(cat(Uint8Array.from([0x19, 0x01]), domain, structHash));
 }
 
@@ -56,5 +58,5 @@ export function evmAddressOf(privateKeyHex: string): string {
 }
 
 export function evmVerdictToJson(v: EvmVerdict, signature: string, verifier: string) {
-  return { vault: v.vault, nonce: v.nonce.toString(), issuedAt: v.issuedAt.toString(), expiry: v.expiry.toString(), reasonCode: v.reasonCode, realizedLossUsdc: v.realizedLossUsdc.toString(), evidenceHash: v.evidenceHash, signature, verifier };
+  return { vault: v.vault, nonce: v.nonce.toString(), issuedAt: v.issuedAt.toString(), expiry: v.expiry.toString(), tier: v.tier, ladderHash: v.ladderHash, reasonCode: v.reasonCode, realizedLossUsdc: v.realizedLossUsdc.toString(), evidenceHash: v.evidenceHash, signature, verifier };
 }

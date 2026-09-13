@@ -6,7 +6,7 @@ in `docs/internal/gauntlet/FACTS.md`, checked against the chain or a command tha
 actually run.
 
 The one-line version: `ShieldVault.sol` is deployed and immutable on HyperEVM
-testnet (chain 998) at `0xcdB6d631A00857584e70a21d800f51C5776302Fe`. It holds
+testnet (chain 998) at `0xDaA8B6a85391d54397c3847F006a49A16d0F37b3` (v3). It holds
 a user's protected USDC and releases it into their Hyperliquid account under
 rules they set while calm. Tightening a rule is instant; loosening waits and
 has to be confirmed again afterwards.
@@ -28,46 +28,42 @@ leaves, each to a destination registered in advance and typed permanently;
 splitting inside one active window hits a rolling 24h budget shared by top-ups
 and cold transfers; adding a new destination to a funded vault is a delayed
 change; raising a limit is a delayed change that any tightening in between
-invalidates; leaving is a proposal at the user's own exit delay. 44 Foundry
-tests run those attacks against the deployed logic — 41 that pass because the
-contract holds, and 3 that pin the places where it does not (below). Outside the vault, of course they can:
+invalidates; leaving is a proposal at the user's own exit delay. 64 Foundry
+tests run those attacks against the deployed logic: 41 invariants, 6
+regressions for the three defects our own gauntlet found in v1 and fixed in
+v2 (below), 2 for reentrancy and registry isolation, and 15 for the v3 risk
+ladder. Outside the vault, of course they can:
 money that never entered Shield is not protected. The app says so itself, in
 the connected-venue panel on Home, under the button that opens Hyperliquid:
 "Money you send here yourself never passes through Shield, and none of your
 rules apply to it." (`app/src/pages/Overview.tsx`.) The obvious bypass deserves
 to be answered by the product rather than by a document.
 
-Two defects we found while writing the threat model and did not paper over,
-both in the same mechanism — the rolling 24h budget:
+Three defects we found while writing the threat model, disclosed in v1 and
+fixed in v2 (`0xba1Bb356…`, deployed 2026-09-07), all in the same mechanism —
+the rolling 24h budget and the delays a user can set on themselves:
 
 1. A top-up proposal left pending for more than 24 hours, then cancelled,
-   refunds velocity that has already expired and erases unrelated recent spend.
-2. Worse, and cheaper: after any idle gap longer than the window,
-   `_rollBuckets` clamps how far it advances the window but never advances the
-   bucket index, so **every** call re-zeroes the whole accumulator. Coming back
-   after a quiet week, a user can spend the daily limit over and over in a
-   single block, while `velocityNow` reports zero. Measured: **$6,000 released
-   in one block against a stated $1,000 per 24 hours.** It needs no setup and
-   no waiting.
+   refunded velocity that had already expired and erased unrelated recent
+   spend. v2 drops an aged reservation instead of refunding it.
+2. Worse, and cheaper: after any idle gap longer than the window, v1's
+   `_rollBuckets` clamped how far it advanced the window but never advanced
+   the bucket index, so **every** call re-zeroed the whole accumulator.
+   Measured on v1: **$6,000 released in one block against a stated $1,000 per
+   24 hours.** v2 advances the window by the real elapsed count; the second
+   call now reverts `VelocityThresholdExceeded`.
+3. `tighten` accepted an unbounded loosen or exit delay, so one call could
+   lock a user out of their own exit forever. v2 caps every self-set delay at
+   30 days.
 
-An earlier version of this answer said the ceiling was "about twice the daily
-limit in a window, with a day of setup". That was derived from defect 1 alone
-and it is wrong: the two compose, and defect 2 has no ceiling of its own.
-
-What does hold: **the protected floor.** It is a separate check on
-`balance - amount`, neither defect touches it, and a reproduction attempt
-against a vault with a high floor is refused with `ProtectedFloorBreached`. So
-the total that can leave is bounded at `balance - protectedFloor`, the money
-can still only reach a pre-registered destination, and a live loss cooldown
-still blocks every top-up path. The honest summary is that the **floor**, not
-the daily limit, is the number a user should be relying on.
-
-Both are pinned by `contracts/test/KnownDefects.t.sol` so they cannot change
-unnoticed, and written up in full in `docs/THREAT_MODEL.md` (Known gaps 1 and
-3). The same clamp is in the Solana v0 program
-(`programs/shield-vault/src/state.rs`), which is not deployed. The contract is
-immutable, so these are disclosed limitations rather than fixes; the repair
-belongs to a v2.
+We published the v1 defects before fixing them, and kept the tests: each one
+in `contracts/test/FixedDefects.t.sol` asserts the correct behaviour with a
+comment recording exactly what v1 did. v1 is immutable and still on chain at
+`0xcdB6d631…` with its four vaults; nothing points at it any more. What was
+always true, and still is: **the protected floor** is a separate check on
+`balance - amount`, the money can only reach a pre-registered destination,
+and a live loss cooldown blocks every top-up path. Full write-up:
+`docs/THREAT_MODEL.md`, Known gaps 1–3.
 
 **What if they genuinely need the money?**
 Two exits, neither of which any cooldown can block. Up to the emergency cap
@@ -218,8 +214,8 @@ which no function can shorten; the destination registry and its permanent
 types; instant tightening; delayed loosening with mandatory reconfirmation;
 staleness of any proposal that a tightening has overtaken; the exit delay; and
 the exact bound on what a risk verdict may do. The rolling 24h release budget
-is also enforced on-chain, but it has the two defects described above and does
-not hold across an idle gap; the floor does.
+is also enforced on-chain; the v1 defects that let it be exceeded are fixed in
+v2, and the floor remains the deeper backstop.
 
 Convention, i.e. the server and the app: which sessions are grouped together,
 what counts as a realised loss, when a verdict gets signed at all, every
@@ -402,9 +398,26 @@ of them. The verifiable form is direct:
 
 ```
 cast tx 0x94960d1f937a3e36e1b16e69922a2579e77b584ed25b2ced044da7991fe889be --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
-cast call 0xcdB6d631A00857584e70a21d800f51C5776302Fe "usdc()(address)" --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
-cd contracts && forge install foundry-rs/forge-std --no-git && forge test    # 44 passing
+cast call 0xDaA8B6a85391d54397c3847F006a49A16d0F37b3 "usdc()(address)" --rpc-url https://rpc.hyperliquid-testnet.xyz/evm
+cd contracts && forge install foundry-rs/forge-std --no-git && forge test    # 64 passing
 ```
 
 On HyperEVM mainnet `hyperevmscan.io` works — one more reason the mainnet
 deploy matters.
+
+
+## "Why don't you just restrict the trading itself — reduce-only, lower leverage — when the session goes bad?"
+
+Because it cannot be done for a self-custodial trader, and a fake restriction is
+worse than none. Every Hyperliquid trading action is signed as
+`Agent{source, connectionId}` with the whole order hashed into `connectionId`, so
+a Privy policy sees one opaque `bytes32` and cannot tell a reduce-only close from
+a 40× open; Privy ships no Hyperliquid decoder. Hyperliquid has no per-agent
+scoping; an agent can do every trading action; the master key always keeps full
+authority; a Shield-held agent is bypassed by the master wallet or one
+`approveAgent` in about a second. The only hard version is a Privy 2-of-2 quorum
+where Shield co-signs every order — co-custody and a liveness dependency, which is
+not what Shield is. We researched it against current docs and on testnet
+(`docs/internal/research/A…C`) and wrote it down as impossible rather than
+shipping a toggle that reads "reduce-only" and does nothing. What ratchets is the
+capital: the vault's release budget, on chain, by rules you wrote while calm.

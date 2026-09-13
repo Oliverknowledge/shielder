@@ -193,3 +193,21 @@ credentials, and its threat model is unchanged. Its limitation, which the
 2026-09-06 decision resolves, is that the user's actual venue is
 Hyperliquid, and there is no enforced path from a Solana vault into a
 Hyperliquid account.
+
+
+---
+
+## Addendum (2026-09-07): the Dynamic Trading Authority Ratchet is not real for a self-custodial trader
+
+Investigated with live docs and testnet experiments (`docs/internal/research/A…I`).
+Every Hyperliquid trading action is signed as `Agent{source, connectionId}` with the
+whole action hashed into `connectionId`, so a Privy policy cannot see reduce-only,
+leverage, size or asset class, and Privy ships no Hyperliquid decoder. Hyperliquid
+offers no per-agent scoping; an agent can do everything trading-side; the master
+key always retains full authority; `valid_until` expiry lags by minutes. The only
+hard version is a Privy 2-of-2 quorum with Shield co-signing every order, which is
+co-custody plus a liveness dependency. Decision: RED at the venue, not built, not
+claimed. The enforceable ratchet is the capital side, shipped as the v3 risk
+ladder: the protected capital the trading account can draw on ratchets down with
+the session, on chain, by rules written while calm, with the selecting threshold
+private to the user and the enclave.

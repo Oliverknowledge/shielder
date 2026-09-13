@@ -28,6 +28,7 @@ import {
   type TightenView,
   type VaultView,
   SHIELD_ERROR_NAMES,
+  type LadderProposalView,
 } from "./views";
 
 export { SHIELD_VAULT_ABI };
@@ -105,10 +106,12 @@ export const encodeLabel = (text: string): Hex => {
 type RawVault = {
   exists: boolean; riskVerifier: Address; protectedFloor: bigint; topUpThresholdBps: number; emergencyCap: bigint; velocityThreshold: bigint;
   lossTriggerUsdc: bigint; lossCooldownSecs: bigint; topUpCooldownSecs: bigint; loosenCooldownSecs: bigint; fullExitCooldownSecs: bigint;
-  cooldownUntil: bigint; cooldownReason: number; cooldownSetAt: bigint; lastVerdictNonce: bigint; lastVerdictReason: number; lastVerdictEvidence: Hex;
+  cooldownUntil: bigint; cooldownReason: number; cooldownSetAt: bigint; lastVerdictNonce: bigint; lastVerdictEvidence: Hex;
   velocityBuckets: readonly [bigint, bigint, bigint, bigint, bigint, bigint]; bucketStart: bigint; currentBucketIndex: number; configVersion: bigint;
   proposalNonceCounter: bigint; createdAt: bigint; balance: bigint;
+  ladderHash: Hex; reducedVelocityThreshold: bigint; tierResetSecs: bigint; activeTier: number; tierUntil: bigint;
 };
+const ZERO32 = "0x0000000000000000000000000000000000000000000000000000000000000000";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 
@@ -132,7 +135,12 @@ function vaultViewOf(raw: RawVault, cfg: EvmConfig, authority: Address): VaultVi
     cooldownReason: Number(raw.cooldownReason),
     cooldownSetAt: raw.cooldownSetAt,
     lastVerdictNonce: raw.lastVerdictNonce,
-    lastVerdictReason: Number(raw.lastVerdictReason),
+    lastVerdictReason: 0,
+    ladderHash: raw.ladderHash.toLowerCase() === ZERO32 ? null : raw.ladderHash,
+    reducedVelocityThreshold: raw.reducedVelocityThreshold,
+    tierResetSecs: raw.tierResetSecs,
+    activeTier: Number(raw.activeTier),
+    tierUntil: raw.tierUntil,
     velocityBuckets: [...raw.velocityBuckets],
     bucketStart: raw.bucketStart,
     currentBucketIndex: Number(raw.currentBucketIndex),
@@ -205,6 +213,12 @@ const PROPOSAL_CATEGORIES = [0, 1, 2] as const;
 
 function registryViewOf(owner: Address, e: { kind: number; route: number; active: boolean; registeredAt: bigint; label: Hex }): RegistryView {
   return { owner, kind: Number(e.kind) as OwnerKind, route: Number(e.route) as Route, active: e.active, registeredAt: e.registeredAt, label: label(e.label) };
+}
+
+export async function readLadderProposal(client: PublicClient, cfg: EvmConfig, authority: Address): Promise<LadderProposalView | null> {
+  const lp = (await client.readContract({ address: cfg.vault, abi: SHIELD_VAULT_ABI, functionName: "getLadderProposal", args: [authority] })) as { exists: boolean; resetTier: boolean; nonce: bigint; createdAt: bigint; executeAfter: bigint; expiry: bigint; configVersionAtCreation: bigint; ladderHash: Hex; reducedVelocityThreshold: bigint; tierResetSecs: bigint };
+  if (!lp.exists) return null;
+  return { nonce: lp.nonce, createdAt: lp.createdAt, executeAfter: lp.executeAfter, expiry: lp.expiry, configVersionAtCreation: lp.configVersionAtCreation, resetTier: lp.resetTier, ladderHash: lp.ladderHash, reducedVelocityThreshold: lp.reducedVelocityThreshold, tierResetSecs: lp.tierResetSecs };
 }
 
 export async function readProposals(client: PublicClient, cfg: EvmConfig, authority: Address): Promise<ProposalView[]> {
@@ -332,8 +346,14 @@ export const evmCalls = {
   proposeColdTransferAboveCap: (cfg: EvmConfig, destinationOwner: Address, amount: bigint): EvmCall => vaultCall(cfg, "proposeColdTransferAboveCap", [destinationOwner, amount]),
   proposeUninstallVault: (cfg: EvmConfig, destinationOwner: Address): EvmCall => vaultCall(cfg, "proposeUninstallVault", [destinationOwner]),
   executeFullExit: (cfg: EvmConfig): EvmCall => vaultCall(cfg, "executeFullExit", []),
-  applyRiskVerdict: (cfg: EvmConfig, v: { vault: Address; nonce: bigint; issuedAt: bigint; expiry: bigint; reasonCode: number; realizedLossUsdc: bigint; evidenceHash: Hex }, signature: Hex): EvmCall =>
+  applyRiskVerdict: (cfg: EvmConfig, v: { vault: Address; nonce: bigint; issuedAt: bigint; expiry: bigint; tier: number; ladderHash: Hex; realizedLossUsdc: bigint; evidenceHash: Hex }, signature: Hex): EvmCall =>
     vaultCall(cfg, "applyRiskVerdict", [v, signature]),
+  // v3 risk ladder
+  commitLadder: (cfg: EvmConfig, ladderHash: Hex, reducedVelocityThreshold: bigint, tierResetSecs: bigint): EvmCall => vaultCall(cfg, "commitLadder", [ladderHash, reducedVelocityThreshold, tierResetSecs]),
+  setReducedTier: (cfg: EvmConfig): EvmCall => vaultCall(cfg, "setReducedTier", []),
+  proposeLadderChange: (cfg: EvmConfig, ladderHash: Hex, reducedVelocityThreshold: bigint, tierResetSecs: bigint, resetTier: boolean): EvmCall => vaultCall(cfg, "proposeLadderChange", [ladderHash, reducedVelocityThreshold, tierResetSecs, resetTier]),
+  executeLadderChange: (cfg: EvmConfig): EvmCall => vaultCall(cfg, "executeLadderChange", []),
+  cancelLadderChange: (cfg: EvmConfig): EvmCall => vaultCall(cfg, "cancelLadderChange", []),
 };
 
 // ---------------------------------------------------------------------

@@ -129,7 +129,7 @@ export function AddFunds() {
     if (decision.path === "instant") return { tone: "protect", icon: "check" as const, text: <>Moves instantly. <span className="muted">{usd(remainingToday - amountRaw)} of today's limit left after this.</span></> };
     if (decision.path === "gated") return { tone: "pending", icon: "clock" as const, text: <>Large release: waits <b>30 minutes</b> before it can move. Your treasury stays protected until then.</> };
     if (decision.reason === "CooldownActive") return { tone: "blocked", icon: "lock" as const, text: <>Will be blocked: new capital is paused until <b>{clockTime(Number(vault.cooldownUntil), now)}</b>.</> };
-    if (decision.reason === "VelocityThresholdExceeded") return { tone: "blocked", icon: "lock" as const, text: <>Over today's limit: only <b>{usd(remainingToday)}</b> of your {usd(vault.velocityThreshold)} is left.</> };
+    if (decision.reason === "VelocityThresholdExceeded") return { tone: "blocked", icon: "lock" as const, text: Number(vault.activeTier) === 1 && Number(vault.tierUntil) > now ? <>Reduced by your plan until {clockTime(Number(vault.tierUntil), now)}: only <b>{usd(remainingToday)}</b> of a {usd(vault.reducedVelocityThreshold)} budget is left.</> : <>Over today's limit: only <b>{usd(remainingToday)}</b> of your {usd(vault.velocityThreshold)} is left.</> };
     if (decision.reason === "ProtectedFloorBreached") return { tone: "blocked", icon: "lock" as const, text: <>Would breach your floor: only <b>{usd(headroom)}</b> sits above {usd(vault.protectedFloor)}.</> };
     return { tone: "blocked", icon: "lock" as const, text: <>Will be blocked.</> };
   })();
@@ -176,6 +176,9 @@ export function AddFunds() {
               <h2 className="title-l" style={{ marginTop: 10 }}>{usd(shown.amount)} stays protected.</h2>
             )}
             <BlockedReason reason={shown.reason} amount={shown.amount} />
+            {shown.reason === "VelocityThresholdExceeded" && Number(vault.activeTier) === 1 && Number(vault.tierUntil) > now && (
+              <p className="lead" style={{ marginTop: 8, color: "var(--ink)" }}>Your plan moved you to REDUCED: {usd(vault.reducedVelocityThreshold)} a day until {clockTime(Number(vault.tierUntil), now)}. The drawdown that did it is yours alone; the budget is on chain.</p>
+            )}
             <YourRule reason={shown.reason} />
             <p className="title-l" style={{ marginTop: 18 }}>
               {usd(vault.protectedFloor)} can never be released to trading{balance > vault.protectedFloor ? <>, and the other {usd(balance - vault.protectedFloor)} is locked until then</> : null}.

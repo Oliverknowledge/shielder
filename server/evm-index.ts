@@ -371,13 +371,15 @@ async function syncVault(authority: Address, head?: bigint): Promise<View | null
 // ---------------------------------------------------------------------
 // Monitor: EIP-712 verdict signed by the verifier, relayed by the relayer
 // ---------------------------------------------------------------------
+const ZERO32 = "0x0000000000000000000000000000000000000000000000000000000000000000";
 const VERDICT_TYPES = {
   RiskVerdict: [
     { name: "vault", type: "address" },
     { name: "nonce", type: "uint64" },
     { name: "issuedAt", type: "uint64" },
     { name: "expiry", type: "uint64" },
-    { name: "reasonCode", type: "uint8" },
+    { name: "tier", type: "uint8" },
+    { name: "ladderHash", type: "bytes32" },
     { name: "realizedLossUsdc", type: "uint64" },
     { name: "evidenceHash", type: "bytes32" },
   ],
@@ -389,7 +391,10 @@ interface EvmVerdictJson {
   nonce: string;
   issuedAt: string;
   expiry: string;
-  reasonCode: number;
+  /** v3: 2 = LOCKED (public loss rule), 1 = REDUCED (private ladder; enclave only). */
+  tier: number;
+  ladderHash: string; // 0x + 32 bytes; zero for LOCKED
+  reasonCode: number; // display only; not part of the signed struct
   realizedLossUsdc: string;
   evidenceHash: string; // 0x-prefixed 32 bytes
   signature: string;
@@ -410,7 +415,7 @@ async function relayVerdict(v: EvmVerdictJson, sourceTag: VerdictRecord["source"
   try {
     if (!relayer) throw new Error("no relayer key");
     const wc = createWalletClient({ account: relayer, chain, transport: http(RPC_URL) });
-    const call = evmCalls.applyRiskVerdict(cfg, { vault: getAddress(v.vault), nonce: BigInt(v.nonce), issuedAt: BigInt(v.issuedAt), expiry: BigInt(v.expiry), reasonCode: v.reasonCode, realizedLossUsdc: BigInt(v.realizedLossUsdc), evidenceHash: v.evidenceHash as Hex }, v.signature as Hex);
+    const call = evmCalls.applyRiskVerdict(cfg, { vault: getAddress(v.vault), nonce: BigInt(v.nonce), issuedAt: BigInt(v.issuedAt), expiry: BigInt(v.expiry), tier: v.tier ?? 2, ladderHash: (v.ladderHash ?? ZERO32) as Hex, realizedLossUsdc: BigInt(v.realizedLossUsdc), evidenceHash: v.evidenceHash as Hex }, v.signature as Hex);
     await pub.call({ account: relayer.address, to: call.to, data: call.data });
     const hash = await wc.sendTransaction({ account: relayer, chain, to: call.to, data: call.data });
     record.signature = hash;
@@ -457,10 +462,11 @@ async function monitorVault(view: View): Promise<VerdictRecord | null> {
   const now = Math.floor(Date.now() / 1000);
   const nonce = view.vault.lastVerdictNonce + 1n;
   const evidenceHash = `0x${toHex(evidenceHashOf(a.evidence))}` as Hex;
-  const message = { vault: getAddress(view.vault.authority), nonce, issuedAt: BigInt(now), expiry: BigInt(now + 15 * 60), reasonCode: a.reasonCode, realizedLossUsdc: a.realizedLossUsdc, evidenceHash };
+  // The server monitor only ever applies the PUBLIC rule (LOCKED); the private ladder (REDUCED) is evaluated in the enclave alone.
+  const message = { vault: getAddress(view.vault.authority), nonce, issuedAt: BigInt(now), expiry: BigInt(now + 15 * 60), tier: 2, ladderHash: ZERO32 as Hex, realizedLossUsdc: a.realizedLossUsdc, evidenceHash };
   const signature = await verifier.signTypedData({ domain, types: VERDICT_TYPES, primaryType: "RiskVerdict", message });
   store.putEvidence(evidenceHash.slice(2).toLowerCase(), a.evidence);
-  const json: EvmVerdictJson = { vault: message.vault, nonce: nonce.toString(), issuedAt: String(now), expiry: String(now + 900), reasonCode: a.reasonCode, realizedLossUsdc: a.realizedLossUsdc.toString(), evidenceHash, signature, verifier: verifier.address };
+  const json: EvmVerdictJson = { vault: message.vault, nonce: nonce.toString(), issuedAt: String(now), expiry: String(now + 900), tier: 2, ladderHash: ZERO32, reasonCode: a.reasonCode, realizedLossUsdc: a.realizedLossUsdc.toString(), evidenceHash, signature, verifier: verifier.address };
   const record = await relayVerdict(json, "server-monitor", a.headline, a.lines);
   if (record.relayed) {
     const rec = store.vault(view.key);

@@ -6,6 +6,7 @@ import { Countdown, Dot, Field, Icon, MoneyInput, Pill, Sheet, useToast } from "
 import { usd, hoursLabel, duration, short, clockTime } from "../lib/format";
 import { RULES, paramFor, fmtRule, isStricter, describeLoosen, type RuleDef } from "../lib/rules";
 import { ProposalKind, OwnerKind, Route, COOLDOWN_REASON, usdcToRaw } from "../../../client/views";
+import { BadSessionPlan } from "../components/Ladder";
 
 export function Protection() {
   const { vault, balance, proposals, registry, wallets, signer, now, health, actions, engine, chain } = useShield();
@@ -191,6 +192,8 @@ export function Protection() {
           ))}
         </div>
       </section>
+
+      <BadSessionPlan />
 
       <section className="section">
         <div className="section-head">
